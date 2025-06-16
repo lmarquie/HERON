@@ -200,17 +200,33 @@ class VectorStore:
         self.dimension = dimension
         self.index = None
         self.documents = []
-        # Use a smaller, faster model
-        self.bi_encoder = SentenceTransformer('all-MiniLM-L6-v2')  # Smaller and faster than multilingual
-        self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-2-v2')  # Smaller model
+        
+        # Use a smaller, faster model with local caching
+        model_name = 'paraphrase-MiniLM-L3-v2'  # Smaller model than all-MiniLM-L6-v2
+        cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'sentence_transformers')
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        try:
+            # Try to load from cache first
+            self.bi_encoder = SentenceTransformer(model_name, cache_folder=cache_dir)
+            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-2-v2', cache_folder=cache_dir)
+        except Exception as e:
+            print(f"Error loading models: {str(e)}")
+            print("Falling back to smaller models...")
+            # Fallback to even smaller models if the main ones fail
+            self.bi_encoder = SentenceTransformer('paraphrase-MiniLM-L3-v2', cache_folder=cache_dir)
+            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-TinyBERT-L-2-v2', cache_folder=cache_dir)
+        
         # Optimize model settings
         self.bi_encoder.max_seq_length = 128  # Reduced from 64 for better context
         self.cross_encoder.max_seq_length = 128
+        
         if torch.cuda.is_available():
             self.bi_encoder = self.bi_encoder.to('cuda')
             self.cross_encoder = self.cross_encoder.to('cuda')
             self.bi_encoder = self.bi_encoder.half()
             self.cross_encoder = self.cross_encoder.half()
+        
         self.embedding_cache = {}
         self.similarity_cache = {}
         self.metadata_index = {}
@@ -256,7 +272,7 @@ class VectorStore:
                 self.chunk_overlap = data.get('chunk_overlap', 50)
         
         # Reinitialize models with proper device placement
-        self.bi_encoder = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+        self.bi_encoder = SentenceTransformer('paraphrase-MiniLM-L3-v2')
         self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-TinyBERT-L-2-v2')
         self.bi_encoder.max_seq_length = 64
         self.cross_encoder.max_seq_length = 64
@@ -371,7 +387,7 @@ class VectorStore:
 ### =================== Claude Handler =================== ###
 class ClaudeHandler:
     def __init__(self):
-        self.api_key = OPENAI_API_KEY  # This will now work for both local and Litstreams
+        self.api_key = OPENAI_API_KEY
         self.api_url = "https://api.openai.com/v1/chat/completions"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -390,30 +406,19 @@ class ClaudeHandler:
 
         for attempt in range(self.max_retries):
             try:
+                # Truncate context if it's too long
+                max_context_length = 40000  # Approximately 10k tokens
+                if len(context) > max_context_length:
+                    context = context[:max_context_length] + "..."
+
                 messages = [
                     {
                         "role": "system",
-                        "content": """You are a document analysis expert. Your task is to analyze documents and provide detailed, accurate answers to questions about them.
-
-Key capabilities:
-- Analyze documents and extract relevant information
-- Provide clear and concise answers
-- Explain complex concepts in simple terms
-- Highlight important insights
-- Provide context for your answers
-
-Guidelines:
-1. Base your answers primarily on the provided context
-2. Be precise with information and data
-3. Explain terms when used
-4. Highlight any uncertainties or missing information
-5. Provide relevant context for your analysis
-6. Be clear about assumptions made
-7. If the context doesn't contain enough information, say so clearly"""
+                        "content": "You are a document analysis expert. Provide clear, concise answers based on the provided context."
                     },
                     {
                         "role": "user",
-                        "content": f"Here are the relevant documents:\n\n{context}\n\nQuestion: {question}"
+                        "content": f"Context:\n{context}\n\nQuestion: {question}"
                     }
                 ]
 
@@ -465,15 +470,27 @@ class QuestionHandler:
     def process_question(self, question: str, query_type: str = "document", k: int = 5) -> str:
         results = self.vector_store.search(question, k=k)
 
+        # Combine results into a single context with size limits
         context_parts = []
+        total_length = 0
+        max_context_length = 40000  # Approximately 10k tokens
+        
         for chunk in results:
-            metadata = chunk['metadata']
-            source_info = f"Source: {metadata['source']}"
-            if 'date' in metadata:
-                source_info += f" from {metadata['date']}"
-            context_parts.append(f"{source_info}\n{chunk['text']}")
-        context = "\n\n".join(context_parts)
-
+            chunk_text = chunk['text']
+            # If adding this chunk would exceed the limit, truncate it
+            if total_length + len(chunk_text) > max_context_length:
+                remaining_length = max_context_length - total_length
+                if remaining_length > 100:  # Only add if we have at least 100 chars left
+                    chunk_text = chunk_text[:remaining_length] + "..."
+                else:
+                    break
+            context_parts.append(chunk_text)
+            total_length += len(chunk_text)
+            
+            if total_length >= max_context_length:
+                break
+        
+        context = "\n".join(context_parts)
         answer = self.llm.generate_answer(question, context)
         return answer
 
