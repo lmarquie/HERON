@@ -569,14 +569,14 @@ def main():
             # Get answer
             answer = st.session_state.rag_system.get_answer(user_input['question'])
             
-            # Display answer
-            st.markdown("### Answer")
-            st.write(answer)
+            # Display answer with label
+            st.markdown("### Answer", help="The generated answer to your question")
+            st.write(answer, label="Answer content")
             
-            # Display sources
-            st.markdown("### Sources")
-            for source in st.session_state.rag_system.get_sources():
-                st.markdown(f"- {source}")
+            # Display sources with label
+            st.markdown("### Sources", help="References used to generate the answer")
+            for i, source in enumerate(st.session_state.rag_system.get_sources()):
+                st.markdown(f"- {source}", label=f"Source {i+1}")
 
 if __name__ == "__main__":
     main() 
