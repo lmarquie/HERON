@@ -4,7 +4,7 @@ torch==2.7.1
 transformers==4.41.0
 sentence-transformers==4.1.0
 faiss-cpu==1.7.4
-PyMuPDF==1.23.7 --no-deps --no-binary :all: --config-settings="--global-option=build_ext" --config-settings="--global-option=-DHAVE_TESSERACT=0"
+PyMuPDF==1.23.7
 requests==2.31.0
 numpy==1.24.3
 psutil==5.9.5
