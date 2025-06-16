@@ -1,9 +1,13 @@
+# Environment variables
+.env
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+env/
 build/
 develop-eggs/
 dist/
@@ -22,36 +26,10 @@ wheels/
 
 # Virtual Environment
 venv/
-env/
 ENV/
 
 # IDE
 .idea/
 .vscode/
 *.swp
-*.swo
-
-# OS
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Streamlit
-.streamlit/secrets.toml
-
-# Project specific
-*.log
-*.tmp
-temp/
-uploads/
-
-# Keep these files
-!requirements.txt
-!app.py
-!local_draft.py
-!Procfile
-!.streamlit/config.toml 
+*.swo 
