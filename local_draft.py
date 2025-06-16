@@ -321,9 +321,7 @@ class VectorStore:
 ### =================== Claude Handler =================== ###
 class ClaudeHandler:
     def __init__(self):
-        self.api_key = OPENAI_API_KEY
-        if not self.api_key:
-            raise ValueError("OPENAI_API_KEY environment variable is not set. Please set it in your .env file.")
+        self.api_key = OPENAI_API_KEY  # This will now work for both local and Litstreams
         self.api_url = "https://api.openai.com/v1/chat/completions"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -334,12 +332,6 @@ class ClaudeHandler:
         self.response_cache = {}
         self.session = requests.Session()
 
-        # Add model settings
-        self.temperature = 0.3
-        self.sequence_length = 256
-        self.batch_size = 128
-        self.use_half_precision = True
-
     def generate_answer(self, question: str, context: str) -> str:
         cache_key = f"{question}:{hash(context)}"
 
@@ -348,7 +340,10 @@ class ClaudeHandler:
 
         for attempt in range(self.max_retries):
             try:
-                system_prompt = """You are a document analysis expert. Your task is to analyze documents and provide detailed, accurate answers to questions about them.
+                messages = [
+                    {
+                        "role": "system",
+                        "content": """You are a document analysis expert. Your task is to analyze documents and provide detailed, accurate answers to questions about them.
 
 Key capabilities:
 - Analyze documents and extract relevant information
@@ -365,8 +360,7 @@ Guidelines:
 5. Provide relevant context for your analysis
 6. Be clear about assumptions made
 7. If the context doesn't contain enough information, say so clearly"""
-
-                messages = [
+                    },
                     {
                         "role": "user",
                         "content": f"Here are the relevant documents:\n\n{context}\n\nQuestion: {question}"
@@ -374,11 +368,10 @@ Guidelines:
                 ]
 
                 payload = {
-                    "model": "claude-3-opus-20240229",
-                    "max_tokens": 2000,
+                    "model": "gpt-4-turbo-preview",
                     "messages": messages,
-                    "system": system_prompt,
-                    "temperature": self.temperature
+                    "temperature": 0.3,
+                    "max_tokens": 2000
                 }
 
                 response = self.session.post(
@@ -390,7 +383,7 @@ Guidelines:
 
                 response.raise_for_status()
                 response_data = response.json()
-                answer = response_data["content"][0]["text"]
+                answer = response_data["choices"][0]["message"]["content"]
                 self.response_cache[cache_key] = answer
                 return answer
 
@@ -484,21 +477,10 @@ class RAGSystem:
         # Update question handler settings
         if hasattr(self, 'question_handler') and self.question_handler is not None:
             if hasattr(self.question_handler, 'llm') and self.question_handler.llm is not None:
-                old_temp = self.question_handler.llm.temperature
-                old_seq = self.question_handler.llm.sequence_length
-                old_batch = self.question_handler.llm.batch_size
-                old_half = self.question_handler.llm.use_half_precision
-                
-                self.question_handler.llm.temperature = settings.get('model_temperature', self.question_handler.llm.temperature)
-                self.question_handler.llm.sequence_length = settings.get('sequence_length', self.question_handler.llm.sequence_length)
-                self.question_handler.llm.batch_size = settings.get('batch_size', self.question_handler.llm.batch_size)
-                self.question_handler.llm.use_half_precision = settings.get('use_half_precision', self.question_handler.llm.use_half_precision)
-                
+                # Store the temperature setting in the class for later use
+                self.question_handler.llm.temperature = settings.get('model_temperature', 0.3)
                 print(f"LLM Settings Updated:")
-                print(f"  Temperature: {old_temp} -> {self.question_handler.llm.temperature}")
-                print(f"  Sequence Length: {old_seq} -> {self.question_handler.llm.sequence_length}")
-                print(f"  Batch Size: {old_batch} -> {self.question_handler.llm.batch_size}")
-                print(f"  Half Precision: {old_half} -> {self.question_handler.llm.use_half_precision}")
+                print(f"  Temperature: {self.question_handler.llm.temperature}")
         print("=== Settings Applied ===\n")
 
     def initialize(self):
