@@ -7,12 +7,148 @@ import torch
 import time
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
+from sentence_transformers import SentenceTransformer, CrossEncoder
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import requests
 import io
 import numpy as np
 from config import OPENAI_API_KEY
 import openai
-import streamlit as st
+
+# Define model paths
+MODEL_PATH = "models"
+BI_ENCODER_PATH = os.path.join(MODEL_PATH, "bi_encoder")
+CROSS_ENCODER_PATH = os.path.join(MODEL_PATH, "cross_encoder")
+
+### =================== Input Interface =================== ###
+class InputInterface:
+    def __init__(self):
+        self.download_dir = "local_documents"
+        os.makedirs(self.download_dir, exist_ok=True)
+
+    def get_user_question(self) -> str:
+        return input("\nEnter your question: ").strip()
+
+    def display_answer(self, answer: str):
+        print("\nAnswer:", answer)
+
+### =================== Document Loading =================== ###
+class LocalFileHandler:
+    def __init__(self):
+        self.base_path = os.getcwd()
+
+    def select_folder_interactive(self):
+        """Let user select a folder from local system"""
+        print("\nPlease enter the path to your folder containing documents.")
+        print("Example: /path/to/your/documents")
+        print("Or just the folder name if it's in the current directory")
+
+        while True:
+            folder_path = input("\nEnter folder path: ").strip()
+
+            if not os.path.isabs(folder_path):
+                folder_path = os.path.join(self.base_path, folder_path)
+
+            if os.path.exists(folder_path) and os.path.isdir(folder_path):
+                print(f"✓ Selected folder: {folder_path}")
+                return {
+                    'name': os.path.basename(folder_path),
+                    'path': folder_path
+                }
+            else:
+                print(f" Folder not found: {folder_path}")
+                print("Please try again or enter 'q' to quit")
+                if folder_path.lower() == 'q':
+                    return None
+
+    def process_selected_folder(self, folder_path):
+        """Process all files in the selected folder"""
+        try:
+            print(f"\nScanning folder: {folder_path}")
+            files = []
+            for item in os.listdir(folder_path):
+                full_path = os.path.join(folder_path, item)
+                if os.path.isfile(full_path):
+                    files.append({
+                        'name': item,
+                        'path': full_path
+                    })
+
+            if not files:
+                print("No files found in the selected folder.")
+                return []
+
+            print(f"\nFound {len(files)} files. Processing...")
+            documents = []
+            for file in files:
+                if file['name'].endswith(('.txt', '.pdf')):
+                    try:
+                        if file['name'].endswith('.pdf'):
+                            doc = fitz.open(file['path'])
+                            content = ""
+                            for page in doc:
+                                content += page.get_text()
+                            doc.close()
+                        else:
+                            with open(file['path'], 'r', encoding='utf-8') as f:
+                                content = f.read()
+
+                        documents.append({
+                            'text': content,
+                            'metadata': {
+                                'source': file['name'],
+                                'path': file['path'],
+                                'date': datetime.now().isoformat()
+                            }
+                        })
+                        print(f"✓ Processed: {file['name']}")
+                    except Exception as e:
+                        print(f" Error processing {file['name']}: {str(e)}")
+
+            return documents
+        except Exception as e:
+            print(f" Error processing folder: {str(e)}")
+            return []
+
+### =================== Text Processing =================== ###
+class TextProcessor:
+    def __init__(self, chunk_size: int = 500, overlap: int = 30):
+        self.chunk_size = chunk_size
+        self.overlap = overlap
+
+    def extract_text_from_pdf(self, pdf_path: str) -> str:
+        try:
+            doc = fitz.open(pdf_path)
+            text = "\n".join([page.get_text() for page in doc])
+            return text
+        except Exception as e:
+            print(f"Error extracting text from {pdf_path}: {e}")
+            return ""
+
+    def chunk_text(self, text: str) -> List[str]:
+        words = text.split()
+        chunks = []
+        for i in range(0, len(words), self.chunk_size - self.overlap):
+            chunk = " ".join(words[i:i + self.chunk_size])
+            if chunk.strip():
+                chunks.append(chunk)
+        return chunks
+
+    def prepare_documents(self, pdf_paths: List[str]) -> List[Dict]:
+        documents = []
+        for pdf_path in pdf_paths:
+            text = self.extract_text_from_pdf(pdf_path)
+            chunks = self.chunk_text(text)
+            for i, chunk in enumerate(chunks):
+                documents.append({
+                    "text": chunk,
+                    "metadata": {
+                        "source": os.path.basename(pdf_path),
+                        "chunk_id": i,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                })
+        return documents
 
 ### =================== Vector Store =================== ###
 class VectorStore:
@@ -115,227 +251,223 @@ class VectorStore:
         
         return []
 
-### =================== RAG System =================== ###
-class RAGSystem:
-    def __init__(self, settings: Optional[Dict] = None):
-        self.vector_store = VectorStore()
-        self.settings = settings or {
-            'model': 'gpt-4',
-            'temperature': 0.3,
-            'chunk_size': 500,
-            'chunk_overlap': 50
+### =================== Claude Handler =================== ###
+class ClaudeHandler:
+    def __init__(self):
+        self.api_key = OPENAI_API_KEY  # This will now work for both local and Litstreams
+        self.api_url = "https://api.openai.com/v1/chat/completions"
+        self.headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
         }
-        self.question_handler = None
-        self.document_processor = None
-        self.answer_generator = None
-        self.sources = []
-        print("Initialized RAG System")
+        self.max_retries = 10
+        self.timeout = 600
+        self.response_cache = {}
+        self.session = requests.Session()
 
-    def process_document(self, document_text: bytes):
-        """Process a document and add it to the vector store"""
-        try:
-            # Convert bytes to text
-            if isinstance(document_text, bytes):
-                document_text = document_text.decode('utf-8')
-            
-            # Split into chunks
-            chunks = self._split_text(document_text)
-            
-            # Add to vector store
-            documents = [{
-                'text': chunk,
-                'metadata': {
-                    'source': 'Uploaded Document',
-                    'chunk_index': i
+    def generate_answer(self, question: str, context: str) -> str:
+        cache_key = f"{question}:{hash(context)}"
+
+        if cache_key in self.response_cache:
+            return self.response_cache[cache_key]
+
+        for attempt in range(self.max_retries):
+            try:
+                messages = [
+                    {
+                        "role": "system",
+                        "content": """You are a document analysis expert. Your task is to analyze documents and provide detailed, accurate answers to questions about them.
+
+Key capabilities:
+- Analyze documents and extract relevant information
+- Provide clear and concise answers
+- Explain complex concepts in simple terms
+- Highlight important insights
+- Provide context for your answers
+
+Guidelines:
+1. Base your answers primarily on the provided context
+2. Be precise with information and data
+3. Explain terms when used
+4. Highlight any uncertainties or missing information
+5. Provide relevant context for your analysis
+6. Be clear about assumptions made
+7. If the context doesn't contain enough information, say so clearly"""
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Here are the relevant documents:\n\n{context}\n\nQuestion: {question}"
+                    }
+                ]
+
+                payload = {
+                    "model": "gpt-4-turbo-preview",
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_tokens": 2000
                 }
-            } for i, chunk in enumerate(chunks)]
-            
-            self.vector_store.add_documents(documents)
-            print("Document processed successfully")
-            
-        except Exception as e:
-            print(f"Error processing document: {str(e)}")
-            raise
 
-    def _split_text(self, text: str) -> List[str]:
-        """Split text into chunks"""
-        chunks = []
-        start = 0
-        text_length = len(text)
+                response = self.session.post(
+                    self.api_url,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=self.timeout
+                )
+
+                response.raise_for_status()
+                response_data = response.json()
+                answer = response_data["choices"][0]["message"]["content"]
+                self.response_cache[cache_key] = answer
+                return answer
+
+            except requests.exceptions.Timeout:
+                if attempt < self.max_retries - 1:
+                    print(f"Request timed out. Retrying... (Attempt {attempt + 1}/{self.max_retries})")
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    return "Error: Request timed out after multiple attempts. Please try again."
+
+            except requests.exceptions.RequestException as e:
+                error_msg = f"API Error: {str(e)}"
+                if hasattr(e, 'response') and e.response is not None:
+                    error_msg += f"\nResponse: {e.response.text}"
+                return f"Error generating answer: {error_msg}"
+
+            except Exception as e:
+                return f"Error generating answer: {str(e)}"
+
+        return "Error: Maximum retry attempts reached. Please try again."
+
+### =================== Question Handler =================== ###
+class QuestionHandler:
+    def __init__(self, vector_store: VectorStore):
+        self.vector_store = vector_store
+        self.llm = ClaudeHandler()
+
+    def process_question(self, question: str, query_type: str = "document", k: int = 5) -> str:
+        results = self.vector_store.search(question, k=k)
+
+        context_parts = []
+        for chunk in results:
+            metadata = chunk['metadata']
+            source_info = f"Source: {metadata['source']}"
+            if 'date' in metadata:
+                source_info += f" from {metadata['date']}"
+            context_parts.append(f"{source_info}\n{chunk['text']}")
+        context = "\n\n".join(context_parts)
+
+        answer = self.llm.generate_answer(question, context)
+        return answer
+
+### =================== Main RAG System =================== ###
+class RAGSystem:
+    def __init__(self, settings=None):
+        self.file_handler = LocalFileHandler()
+        self.vector_store = VectorStore()
+        self.question_handler = QuestionHandler(self.vector_store)
+        self.running = True
         
-        while start < text_length:
-            end = start + self.settings['chunk_size']
-            if end > text_length:
-                end = text_length
+        # Initialize with default settings
+        default_settings = {
+            'chunk_size': 500,
+            'chunk_overlap': 50,
+            'model_temperature': 0.3,
+            'sequence_length': 256,
+            'batch_size': 128,
+            'use_half_precision': True,
+            'doc_percentage': 15,
+            'num_results': 3
+        }
+        
+        # Update defaults with provided settings
+        if settings:
+            default_settings.update(settings)
+        
+        # Apply settings
+        self.apply_settings(default_settings)
+    
+    def apply_settings(self, settings):
+        """Apply new settings to the RAG system components."""
+        if not settings:
+            return
+            
+        print("\n=== Applying Settings ===")
+        print(f"Settings received: {settings}")
+            
+        # Update vector store settings
+        if hasattr(self, 'vector_store') and self.vector_store is not None:
+            old_chunk_size = self.vector_store.chunk_size
+            old_chunk_overlap = self.vector_store.chunk_overlap
+            
+            self.vector_store.chunk_size = settings.get('chunk_size', self.vector_store.chunk_size)
+            self.vector_store.chunk_overlap = settings.get('chunk_overlap', self.vector_store.chunk_overlap)
+            
+            print(f"Vector Store Settings Updated:")
+            print(f"  Chunk Size: {old_chunk_size} -> {self.vector_store.chunk_size}")
+            print(f"  Chunk Overlap: {old_chunk_overlap} -> {self.vector_store.chunk_overlap}")
+            
+        # Update question handler settings
+        if hasattr(self, 'question_handler') and self.question_handler is not None:
+            if hasattr(self.question_handler, 'llm') and self.question_handler.llm is not None:
+                # Store the temperature setting in the class for later use
+                self.question_handler.llm.temperature = settings.get('model_temperature', 0.3)
+                print(f"LLM Settings Updated:")
+                print(f"  Temperature: {self.question_handler.llm.temperature}")
+        print("=== Settings Applied ===\n")
+
+    def initialize(self):
+        print("\n=== Welcome to the Local RAG System ===")
+
+        selected_folder = self.file_handler.select_folder_interactive()
+        if not selected_folder:
+            print("No folder selected. Please try again.")
+            return self.initialize()
+
+        print(f"\nProcessing folder: {selected_folder['name']}")
+        documents = self.file_handler.process_selected_folder(selected_folder['path'])
+
+        if not documents:
+            print("No documents found to process. Please try again.")
+            return self.initialize()
+
+        print("\nIndexing documents...")
+        self.vector_store.add_documents(documents)
+        print("Documents indexed successfully!")
+        return True
+
+    def show_menu(self):
+        print("\n=== RAG System Menu ===")
+        print("1. Ask a question")
+        print("2. Select a different folder")
+        print("3. Exit")
+        return input("Enter your choice (1-3): ")
+
+    def run(self):
+        if not self.initialize():
+            return
+
+        while self.running:
+            choice = self.show_menu()
+
+            if choice == "1":
+                question = input("\nEnter your question: ")
+                answer = self.question_handler.process_question(question)
+                print("\nAnswer:", answer)
+
+            elif choice == "2":
+                if self.initialize():
+                    print("Successfully switched to new folder!")
+                else:
+                    print("Failed to switch folders.")
+
+            elif choice == "3":
+                print("\nThank you for using the RAG System. Goodbye!")
+                self.running = False
+
             else:
-                # Try to find a good breaking point
-                last_period = text.rfind('.', start, end)
-                if last_period != -1 and last_period > start + self.settings['chunk_size'] // 2:
-                    end = last_period + 1
-            
-            chunks.append(text[start:end].strip())
-            start = end - self.settings['chunk_overlap']
-        
-        return chunks
-
-    def get_answer(self, question: str) -> str:
-        """Get answer for a question"""
-        try:
-            # Search for relevant documents
-            results = self.vector_store.search(question)
-            
-            if not results:
-                return "I couldn't find any relevant information to answer your question."
-            
-            # Prepare context from results
-            context = "\n\n".join([r['text'] for r in results])
-            
-            # Store sources
-            self.sources = [r['metadata']['source'] for r in results]
-            
-            # Generate answer using OpenAI
-            response = openai.ChatCompletion.create(
-                model=self.settings['model'],
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that answers questions based on the provided context. If the answer cannot be found in the context, say so."},
-                    {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
-                ],
-                temperature=self.settings['temperature']
-            )
-            
-            return response.choices[0].message.content
-            
-        except Exception as e:
-            print(f"Error getting answer: {str(e)}")
-            return f"Error generating answer: {str(e)}"
-
-    def get_sources(self) -> List[str]:
-        """Get sources used for the last answer"""
-        return self.sources
-
-    def apply_settings(self, settings: Dict):
-        """Apply new settings"""
-        self.settings.update(settings)
-        print(f"Applied new settings: {settings}")
-
-### =================== Streamlit Interface =================== ###
-def main():
-    # Set page config
-    st.set_page_config(
-        page_title="Document Q&A System",
-        page_icon="📚",
-        layout="wide"
-    )
-    
-    # Initialize session state
-    if 'rag_system' not in st.session_state:
-        st.session_state.rag_system = None
-        st.session_state.document_processed = False
-    
-    # Title and description
-    st.title("📚 Document Q&A System")
-    st.markdown("""
-    Upload a PDF document and ask questions about its content. The system will use AI to find relevant information and provide answers.
-    """)
-    
-    # File upload
-    uploaded_file = st.file_uploader(
-        "Upload a PDF document",
-        type=['pdf'],
-        help="Upload a PDF file to analyze"
-    )
-    
-    # Process document if uploaded
-    if uploaded_file is not None and not st.session_state.document_processed:
-        with st.spinner("Processing document..."):
-            # Initialize RAG system
-            st.session_state.rag_system = RAGSystem()
-            
-            # Process document
-            document_text = uploaded_file.read()
-            st.session_state.rag_system.process_document(document_text)
-            st.session_state.document_processed = True
-            
-            st.success("Document processed successfully!")
-    
-    # Question input
-    question = st.text_input(
-        "Ask a question about the document",
-        placeholder="Type your question here...",
-        help="Enter your question about the uploaded document"
-    )
-    
-    # Advanced settings in expander
-    with st.expander("Advanced Settings"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Model selection
-            model = st.selectbox(
-                "Select Model",
-                options=["gpt-4", "gpt-3.5-turbo"],
-                index=0,
-                help="Choose the OpenAI model to use"
-            )
-            
-            # Temperature slider
-            temperature = st.slider(
-                "Temperature",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.3,
-                step=0.1,
-                help="Higher values make the output more creative but less focused"
-            )
-        
-        with col2:
-            # Chunk size input
-            chunk_size = st.number_input(
-                "Chunk Size",
-                min_value=100,
-                max_value=1000,
-                value=500,
-                step=50,
-                help="Size of text chunks for processing"
-            )
-            
-            # Chunk overlap input
-            chunk_overlap = st.number_input(
-                "Chunk Overlap",
-                min_value=0,
-                max_value=200,
-                value=50,
-                step=10,
-                help="Overlap between chunks to maintain context"
-            )
-    
-    # Submit button
-    if st.button("Get Answer", help="Process your question"):
-        if not st.session_state.document_processed:
-            st.error("Please upload a document first!")
-        elif not question:
-            st.error("Please enter a question!")
-        else:
-            with st.spinner("Generating answer..."):
-                # Apply settings
-                st.session_state.rag_system.apply_settings({
-                    'model': model,
-                    'temperature': temperature,
-                    'chunk_size': chunk_size,
-                    'chunk_overlap': chunk_overlap
-                })
-                
-                # Get answer
-                answer = st.session_state.rag_system.get_answer(question)
-                
-                # Display answer
-                st.markdown("### Answer")
-                st.write(answer)
-                
-                # Display sources
-                st.markdown("### Sources")
-                for source in st.session_state.rag_system.get_sources():
-                    st.markdown(f"- {source}")
+                print("\nInvalid choice. Please try again.")
 
 if __name__ == "__main__":
-    main() 
+    rag_system = RAGSystem()
+    rag_system.run() 
