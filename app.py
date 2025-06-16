@@ -17,6 +17,28 @@ import gc
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
+# Create necessary directories with proper error handling
+def ensure_directories():
+    """Create necessary directories with proper error handling."""
+    directories = ['app_data', 'temp', 'local_documents']
+    for directory in directories:
+        try:
+            os.makedirs(directory, exist_ok=True)
+            # Test write permissions
+            test_file = os.path.join(directory, '.test')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+        except Exception as e:
+            st.error(f"Error creating/accessing directory {directory}: {str(e)}")
+            st.error("Please ensure the application has write permissions.")
+            return False
+    return True
+
+# Initialize directories
+if not ensure_directories():
+    st.error("Failed to initialize required directories. Some features may not work properly.")
+
 def clear_caches():
     """Clear all caches and temporary files."""
     # Clear Streamlit's cache
@@ -331,7 +353,7 @@ documents_restored = load_document_state()
 
 # Initialize RAG system with settings if it doesn't exist
 if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
-    st.session_state.rag_system = RAGSystem(settings)
+    st.session_state.rag_system = RAGSystem(settings, is_web=True)
 elif hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
     st.session_state.rag_system.apply_settings(settings)
 
@@ -598,8 +620,14 @@ def get_memory_usage():
 
 def should_cleanup():
     """Check if cleanup is needed based on memory usage."""
-    memory_usage = get_memory_usage()
-    return memory_usage > 1000  # Cleanup if memory usage exceeds 1GB
+    try:
+        memory_usage = get_memory_usage()
+        # Increase threshold for cloud environments
+        threshold = 2000 if os.environ.get('CLOUD_ENVIRONMENT') else 1000
+        return memory_usage > threshold  # Cleanup if memory usage exceeds threshold
+    except Exception as e:
+        st.warning(f"Error checking memory usage: {str(e)}")
+        return False
 
 def cleanup_resources():
     """Clean up all resources when the session ends."""
@@ -608,25 +636,30 @@ def cleanup_resources():
         st.cache_data.clear()
         st.cache_resource.clear()
         
-        # Clear PyTorch's cache
+        # Clear PyTorch's cache only if CUDA is available
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         
         # Clear temporary files
         temp_dir = "temp"
         if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            os.makedirs(temp_dir)
+            try:
+                shutil.rmtree(temp_dir)
+                os.makedirs(temp_dir)
+            except Exception as e:
+                st.warning(f"Could not clean temp directory: {str(e)}")
         
-        # Clear session state
+        # Clear session state selectively
+        keys_to_keep = ['rag_system', 'documents_loaded', 'vector_store']
         for key in list(st.session_state.keys()):
-            del st.session_state[key]
+            if key not in keys_to_keep:
+                del st.session_state[key]
             
         # Force garbage collection
         gc.collect()
             
     except Exception as e:
-        st.error(f"Error during cleanup: {str(e)}")
+        st.warning(f"Error during cleanup: {str(e)}")
 
 def type_text(text, container, speed=0.01):
     """Type out text with a typing effect"""
@@ -837,6 +870,28 @@ def show_main_page():
     
     # Sidebar
     with st.sidebar:
+        # File uploader at the top of sidebar for better visibility
+        st.markdown("### Upload Documents")
+        try:
+            uploaded_files = st.file_uploader(
+                "Upload your documents to analyze",
+                type=['pdf', 'txt'],
+                accept_multiple_files=True,
+                help="Upload PDF or text files to analyze"
+            )
+            
+            if uploaded_files:
+                if st.session_state.rag_system.process_web_uploads(uploaded_files):
+                    st.success(f"Successfully processed {len(uploaded_files)} file(s)")
+                    st.session_state.documents_loaded = True
+                else:
+                    st.error("Failed to process uploaded files")
+        except Exception as e:
+            st.error(f"Error with file uploader: {str(e)}")
+            st.info("If you're running this in a cloud environment, please ensure you have proper permissions.")
+        
+        st.markdown("---")
+        
         # Get speed_accuracy from session state or use default
         speed_accuracy = st.session_state.rag_system.speed_accuracy if hasattr(st.session_state.rag_system, 'speed_accuracy') else 50
         
@@ -958,15 +1013,6 @@ def show_main_page():
         # Memory usage display
         memory = psutil.Process().memory_info().rss / 1024 / 1024
         st.write(f"Memory Usage: {memory:.1f} MB")
-        
-        # File uploader at the bottom
-        st.markdown("---")
-        uploaded_files = st.file_uploader(
-            "",
-            type=['pdf', 'txt'],
-            accept_multiple_files=True,
-            help="Upload your documents to analyze"
-        )
 
     # Main content area
     st.markdown("""
