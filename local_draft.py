@@ -1,5 +1,6 @@
 # Import necessary libraries
 import os
+import base64
 import faiss
 import fitz  # PyMuPDF
 import pickle
