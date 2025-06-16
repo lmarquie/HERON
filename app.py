@@ -685,17 +685,34 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         
         # Get document-based answer with reduced context
         if is_follow_up and 'main_answer' in st.session_state:
-            context = f"Previous: {st.session_state.question}\nAnswer: {st.session_state.main_answer}\nFollow-up: {question}"
+            # Limit the previous context to a shorter version
+            prev_context = f"Previous Q: {st.session_state.question[:100]}...\nA: {st.session_state.main_answer[:200]}...\nFollow-up: {question}"
         else:
-            context = question
+            prev_context = question
         
-        # Reduce number of results for faster processing
-        results = st.session_state.rag_system.vector_store.search(question, k=2)
+        # Get search results
+        results = st.session_state.rag_system.vector_store.search(question, k=3)  # Get more results initially
         
-        # Combine results into a single context
+        # Combine results into a single context with token limit
         context_parts = []
+        total_length = 0
+        max_context_length = 40000  # Approximately 10k tokens
+        
         for chunk in results:
-            context_parts.append(chunk['text'])
+            chunk_text = chunk['text']
+            # If adding this chunk would exceed the limit, truncate it
+            if total_length + len(chunk_text) > max_context_length:
+                remaining_length = max_context_length - total_length
+                if remaining_length > 100:  # Only add if we have at least 100 chars left
+                    chunk_text = chunk_text[:remaining_length] + "..."
+                else:
+                    break
+            context_parts.append(chunk_text)
+            total_length += len(chunk_text)
+            
+            if total_length >= max_context_length:
+                break
+        
         context = "\n".join(context_parts)
         
         # Generate answer with optimized parameters
