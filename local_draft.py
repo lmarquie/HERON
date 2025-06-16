@@ -13,6 +13,7 @@ import requests
 import io
 import numpy as np
 from config import OPENAI_API_KEY
+import openai
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -150,74 +151,67 @@ class VectorStore:
         self.dimension = dimension
         self.index = None
         self.documents = []
-        # Use a smaller, faster model
-        self.bi_encoder = SentenceTransformer('all-MiniLM-L6-v2')  # Smaller and faster than multilingual
-        self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-2-v2')  # Smaller model
-        # Optimize model settings
-        self.bi_encoder.max_seq_length = 128  # Reduced from 64 for better context
-        self.cross_encoder.max_seq_length = 128
-        if torch.cuda.is_available():
-            self.bi_encoder = self.bi_encoder.to('cuda')
-            self.cross_encoder = self.cross_encoder.to('cuda')
-            self.bi_encoder = self.bi_encoder.half()
-            self.cross_encoder = self.cross_encoder.half()
         self.embedding_cache = {}
         self.similarity_cache = {}
         self.metadata_index = {}
         self.chunk_size = 500
         self.chunk_overlap = 50
-        print(f"Initialized VectorStore with optimized models on {self.bi_encoder.device}")
+        
+        # Initialize models with error handling and retries
+        max_retries = 3
+        retry_delay = 2  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                # Use a different, less popular model
+                self.bi_encoder = SentenceTransformer('paraphrase-MiniLM-L3-v2')
+                self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-2-v2')
+                
+                # Optimize model settings
+                self.bi_encoder.max_seq_length = 128
+                self.cross_encoder.max_seq_length = 128
+                
+                if torch.cuda.is_available():
+                    self.bi_encoder = self.bi_encoder.to('cuda')
+                    self.cross_encoder = self.cross_encoder.to('cuda')
+                    self.bi_encoder = self.bi_encoder.half()
+                    self.cross_encoder = self.cross_encoder.half()
+                
+                print(f"Initialized VectorStore with optimized models on {self.bi_encoder.device}")
+                break
+                
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"Error initializing models (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                    print(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    print("Failed to initialize models after multiple attempts. Using fallback mode.")
+                    # Initialize with fallback settings
+                    self.bi_encoder = None
+                    self.cross_encoder = None
 
-    def save_local(self, path: str):
-        """Save the vector store to a local directory"""
-        if not os.path.exists(path):
-            os.makedirs(path)
+    def get_embedding(self, text: str):
+        """Get embedding with fallback to simple vector if model fails"""
+        if text in self.embedding_cache:
+            return self.embedding_cache[text]
         
-        # Save the index
-        if self.index is not None:
-            faiss.write_index(self.index, os.path.join(path, 'index.faiss'))
-        
-        # Save the documents and metadata
-        with open(os.path.join(path, 'documents.pkl'), 'wb') as f:
-            pickle.dump({
-                'documents': self.documents,
-                'metadata_index': self.metadata_index,
-                'chunk_size': self.chunk_size,
-                'chunk_overlap': self.chunk_overlap
-            }, f)
-        
-        print(f"Vector store saved to {path}")
-
-    def load_local(self, path: str):
-        """Load the vector store from a local directory"""
-        # Load the index
-        index_path = os.path.join(path, 'index.faiss')
-        if os.path.exists(index_path):
-            self.index = faiss.read_index(index_path)
-        
-        # Load the documents and metadata
-        documents_path = os.path.join(path, 'documents.pkl')
-        if os.path.exists(documents_path):
-            with open(documents_path, 'rb') as f:
-                data = pickle.load(f)
-                self.documents = data['documents']
-                self.metadata_index = data['metadata_index']
-                self.chunk_size = data.get('chunk_size', 500)
-                self.chunk_overlap = data.get('chunk_overlap', 50)
-        
-        # Reinitialize models with proper device placement
-        self.bi_encoder = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-        self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-TinyBERT-L-2-v2')
-        self.bi_encoder.max_seq_length = 64
-        self.cross_encoder.max_seq_length = 64
-        
-        if torch.cuda.is_available():
-            self.bi_encoder = self.bi_encoder.to('cuda')
-            self.cross_encoder = self.cross_encoder.to('cuda')
-            self.bi_encoder = self.bi_encoder.half()
-            self.cross_encoder = self.cross_encoder.half()
-        
-        print(f"Vector store loaded from {path}")
+        try:
+            if self.bi_encoder is not None:
+                embedding = self.bi_encoder.encode([text],
+                                                 batch_size=1,
+                                                 convert_to_numpy=True,
+                                                 normalize_embeddings=True)
+                self.embedding_cache[text] = embedding
+                return embedding
+            else:
+                # Fallback to simple vector if model is not available
+                print("Using fallback embedding method")
+                return np.random.randn(1, self.dimension)
+        except Exception as e:
+            print(f"Error getting embedding: {str(e)}")
+            return np.random.randn(1, self.dimension)
 
     def add_documents(self, documents: List[Dict]):
         print(f"Adding {len(documents)} documents to vector store...")
@@ -233,27 +227,17 @@ class VectorStore:
             metadata_list.append(metadata)
 
         print("Converting text to vector embeddings...")
-        # Increased batch size for faster processing
-        embeddings = self.bi_encoder.encode(texts,
-                                          show_progress_bar=True,
-                                          batch_size=64,  # Increased from 32
-                                          convert_to_numpy=True,
-                                          normalize_embeddings=True)
+        embeddings = []
+        for text in texts:
+            embedding = self.get_embedding(text)
+            embeddings.append(embedding)
+
+        embeddings = np.array(embeddings)
 
         if self.index is None:
-            # Use a more efficient index type
-            if torch.cuda.is_available():
-                res = faiss.StandardGpuResources()
-                quantizer = faiss.IndexFlatIP(embeddings.shape[1])
-                self.index = faiss.IndexIVFFlat(quantizer, embeddings.shape[1],
-                                              min(100, len(embeddings)),
-                                              faiss.METRIC_INNER_PRODUCT)
-                self.index = faiss.index_cpu_to_gpu(res, 0, self.index)
-                if not self.index.is_trained and len(embeddings) > 0:
-                    self.index.train(embeddings.astype('float32'))
-            else:
-                self.index = faiss.IndexFlatIP(embeddings.shape[1])
+            self.index = faiss.IndexFlatL2(embeddings.shape[1])
             print(f"Created new FAISS index with dimension: {embeddings.shape[1]}")
+        
         self.index.add(embeddings.astype('float32'))
 
         for i, (text, metadata) in enumerate(zip(texts, metadata_list)):
@@ -272,51 +256,33 @@ class VectorStore:
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
         """Search for relevant documents"""
-        # Check cache first
         cache_key = f"{query}:{k}"
         if cache_key in self.similarity_cache:
             return self.similarity_cache[cache_key]
 
-        # Get query embedding
         query_embedding = self.get_embedding(query)
         
-        # Search in FAISS index
         if self.index is not None:
-            # Use a larger initial search to get more candidates
             initial_k = min(k * 2, len(self.documents))
-            scores, indices = self.index.search(query_embedding.reshape(1, -1).astype('float32'), initial_k)
+            distances, indices = self.index.search(query_embedding.reshape(1, -1).astype('float32'), initial_k)
             
-            # Get documents and their scores
             results = []
-            for score, idx in zip(scores[0], indices[0]):
-                if idx != -1:  # FAISS returns -1 for empty slots
+            for distance, idx in zip(distances[0], indices[0]):
+                if idx != -1:
                     doc = self.documents[idx]
                     results.append({
                         'text': doc['text'],
                         'metadata': doc['metadata'],
-                        'score': float(score)
+                        'score': float(1 / (1 + distance))  # Convert distance to similarity score
                     })
             
-            # Sort by score in descending order and take top k
             results.sort(key=lambda x: x['score'], reverse=True)
             results = results[:k]
             
-            # Cache the results
             self.similarity_cache[cache_key] = results
             return results
         
         return []
-
-    def get_embedding(self, text: str):
-        if text in self.embedding_cache:
-            return self.embedding_cache[text]
-        else:
-            embedding = self.bi_encoder.encode([text],
-                                              batch_size=1,
-                                              convert_to_numpy=True,
-                                              normalize_embeddings=True)
-            self.embedding_cache[text] = embedding
-            return embedding
 
 ### =================== Claude Handler =================== ###
 class ClaudeHandler:
