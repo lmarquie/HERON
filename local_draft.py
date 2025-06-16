@@ -14,18 +14,87 @@ import io
 import numpy as np
 from config import OPENAI_API_KEY
 import openai
+import streamlit as st
+
+# Define model paths
+MODEL_PATH = "models"
+BI_ENCODER_PATH = os.path.join(MODEL_PATH, "bi_encoder")
+CROSS_ENCODER_PATH = os.path.join(MODEL_PATH, "cross_encoder")
 
 ### =================== Input Interface =================== ###
-class InputInterface:
-    def __init__(self):
-        self.download_dir = "local_documents"
-        os.makedirs(self.download_dir, exist_ok=True)
-
-    def get_user_question(self) -> str:
-        return input("\nEnter your question: ").strip()
-
-    def display_answer(self, answer: str):
-        print("\nAnswer:", answer)
+def get_user_input() -> Dict:
+    """Get user input through Streamlit interface"""
+    st.title("Document Q&A System")
+    
+    # File uploader with label
+    uploaded_file = st.file_uploader(
+        "Upload a PDF document",
+        type=['pdf'],
+        help="Upload a PDF file to analyze"
+    )
+    
+    # Text input for question with label
+    question = st.text_input(
+        "Ask a question about the document",
+        placeholder="Type your question here...",
+        help="Enter your question about the uploaded document"
+    )
+    
+    # Advanced settings in expander
+    with st.expander("Advanced Settings"):
+        # Model selection with label
+        model = st.selectbox(
+            "Select Model",
+            options=["gpt-4", "gpt-3.5-turbo"],
+            index=0,
+            help="Choose the OpenAI model to use"
+        )
+        
+        # Temperature slider with label
+        temperature = st.slider(
+            "Temperature",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.3,
+            step=0.1,
+            help="Higher values make the output more creative but less focused"
+        )
+        
+        # Chunk size input with label
+        chunk_size = st.number_input(
+            "Chunk Size",
+            min_value=100,
+            max_value=1000,
+            value=500,
+            step=50,
+            help="Size of text chunks for processing"
+        )
+        
+        # Chunk overlap input with label
+        chunk_overlap = st.number_input(
+            "Chunk Overlap",
+            min_value=0,
+            max_value=200,
+            value=50,
+            step=10,
+            help="Overlap between chunks to maintain context"
+        )
+    
+    # Submit button with label
+    submit = st.button(
+        "Submit",
+        help="Process your question"
+    )
+    
+    return {
+        'uploaded_file': uploaded_file,
+        'question': question,
+        'model': model,
+        'temperature': temperature,
+        'chunk_size': chunk_size,
+        'chunk_overlap': chunk_overlap,
+        'submit': submit
+    }
 
 ### =================== Document Loading =================== ###
 class LocalFileHandler:
@@ -147,7 +216,7 @@ class TextProcessor:
 
 ### =================== Vector Store =================== ###
 class VectorStore:
-    def __init__(self, dimension: int = 768):
+    def __init__(self, dimension: int = 1536):  # OpenAI's embedding dimension
         self.dimension = dimension
         self.index = None
         self.documents = []
@@ -156,62 +225,24 @@ class VectorStore:
         self.metadata_index = {}
         self.chunk_size = 500
         self.chunk_overlap = 50
-        
-        # Initialize models with error handling and retries
-        max_retries = 3
-        retry_delay = 2  # seconds
-        
-        for attempt in range(max_retries):
-            try:
-                # Use a different, less popular model
-                self.bi_encoder = SentenceTransformer('paraphrase-MiniLM-L3-v2')
-                self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-2-v2')
-                
-                # Optimize model settings
-                self.bi_encoder.max_seq_length = 128
-                self.cross_encoder.max_seq_length = 128
-                
-                if torch.cuda.is_available():
-                    self.bi_encoder = self.bi_encoder.to('cuda')
-                    self.cross_encoder = self.cross_encoder.to('cuda')
-                    self.bi_encoder = self.bi_encoder.half()
-                    self.cross_encoder = self.cross_encoder.half()
-                
-                print(f"Initialized VectorStore with optimized models on {self.bi_encoder.device}")
-                break
-                
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    print(f"Error initializing models (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                    print(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                else:
-                    print("Failed to initialize models after multiple attempts. Using fallback mode.")
-                    # Initialize with fallback settings
-                    self.bi_encoder = None
-                    self.cross_encoder = None
+        print(f"Initialized VectorStore with OpenAI embeddings")
 
     def get_embedding(self, text: str):
-        """Get embedding with fallback to simple vector if model fails"""
+        """Get embedding using OpenAI's API"""
         if text in self.embedding_cache:
             return self.embedding_cache[text]
         
         try:
-            if self.bi_encoder is not None:
-                embedding = self.bi_encoder.encode([text],
-                                                 batch_size=1,
-                                                 convert_to_numpy=True,
-                                                 normalize_embeddings=True)
-                self.embedding_cache[text] = embedding
-                return embedding
-            else:
-                # Fallback to simple vector if model is not available
-                print("Using fallback embedding method")
-                return np.random.randn(1, self.dimension)
+            response = openai.Embedding.create(
+                input=text,
+                model="text-embedding-ada-002"
+            )
+            embedding = np.array(response['data'][0]['embedding'])
+            self.embedding_cache[text] = embedding
+            return embedding
         except Exception as e:
             print(f"Error getting embedding: {str(e)}")
-            return np.random.randn(1, self.dimension)
+            return np.zeros(self.dimension)
 
     def add_documents(self, documents: List[Dict]):
         print(f"Adding {len(documents)} documents to vector store...")
@@ -501,6 +532,51 @@ class RAGSystem:
             else:
                 print("\nInvalid choice. Please try again.")
 
+### =================== Main Application =================== ###
+def main():
+    # Initialize session state
+    if 'rag_system' not in st.session_state:
+        st.session_state.rag_system = None
+        st.session_state.document_processed = False
+    
+    # Get user input
+    user_input = get_user_input()
+    
+    # Process document if uploaded
+    if user_input['uploaded_file'] is not None and not st.session_state.document_processed:
+        with st.spinner("Processing document..."):
+            # Initialize RAG system
+            st.session_state.rag_system = RAGSystem()
+            
+            # Process document
+            document_text = user_input['uploaded_file'].read()
+            st.session_state.rag_system.process_document(document_text)
+            st.session_state.document_processed = True
+            
+            st.success("Document processed successfully!")
+    
+    # Handle question submission
+    if user_input['submit'] and user_input['question'] and st.session_state.rag_system is not None:
+        with st.spinner("Generating answer..."):
+            # Apply settings
+            st.session_state.rag_system.apply_settings({
+                'model': user_input['model'],
+                'temperature': user_input['temperature'],
+                'chunk_size': user_input['chunk_size'],
+                'chunk_overlap': user_input['chunk_overlap']
+            })
+            
+            # Get answer
+            answer = st.session_state.rag_system.get_answer(user_input['question'])
+            
+            # Display answer
+            st.markdown("### Answer")
+            st.write(answer)
+            
+            # Display sources
+            st.markdown("### Sources")
+            for source in st.session_state.rag_system.get_sources():
+                st.markdown(f"- {source}")
+
 if __name__ == "__main__":
-    rag_system = RAGSystem()
-    rag_system.run() 
+    main() 
