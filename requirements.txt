@@ -1,0 +1,13 @@
+streamlit==1.32.0
+torch==2.2.0
+transformers==4.37.2
+sentence-transformers==2.5.1
+faiss-cpu==1.7.4
+PyMuPDF==1.23.8
+requests==2.31.0
+numpy==1.26.4
+psutil==5.9.8
+reportlab==4.1.0
+python-dotenv==1.0.1
+pandas==2.2.1
+tiktoken==0.6.0 
