@@ -11,4 +11,4 @@ psutil==5.9.5
 reportlab==4.0.4
 python-dotenv==1.0.0
 pandas==2.0.3
-tiktoken==0.5.2 
+tiktoken==0.5.2 --only-binary :all: 
