@@ -16,7 +16,6 @@ import psutil
 import gc
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import as_completed
 
 def clear_caches():
     """Clear all caches and temporary files."""
@@ -196,7 +195,7 @@ def save_settings(settings):
             'sequence_length': 256,
             'batch_size': 128,
             'use_half_precision': True,
-            'doc_percentage': 30,  # Increased from 15 to 30 for better coverage
+            'doc_percentage': 15,
             'speed_accuracy': 50
         }
         
@@ -263,7 +262,7 @@ def load_settings():
                     'sequence_length': 256,
                     'batch_size': 128,
                     'use_half_precision': True,
-                    'doc_percentage': 30,  # Increased from 15 to 30 for better coverage
+                    'doc_percentage': 15,
                     'speed_accuracy': 50
                 }
                 
@@ -289,7 +288,7 @@ def load_settings():
         'sequence_length': 256,
         'batch_size': 128,
         'use_half_precision': True,
-        'doc_percentage': 30,  # Increased from 15 to 30 for better coverage
+        'doc_percentage': 15,
         'speed_accuracy': 50
     }
 
@@ -340,7 +339,7 @@ def get_current_settings():
     """Get the current settings from session state or defaults"""
     if not hasattr(st.session_state, 'settings'):
         st.session_state.settings = {
-            'num_documents': 5,  # Fixed number of best documents to use
+            'doc_percentage': 15,
             'chunk_size': 500,
             'chunk_overlap': 50,
             'model_temperature': 0.3,
@@ -378,21 +377,33 @@ def update_settings_from_main_slider():
         st.error(f"Error updating settings: {str(e)}")
 
 def update_settings_from_individual_sliders():
-    """Update settings from individual sliders"""
-    settings = {
-        'num_documents': st.session_state.num_documents_slider,
-        'chunk_size': st.session_state.chunk_size_slider,
-        'chunk_overlap': st.session_state.chunk_overlap_slider,
-        'model_temperature': st.session_state.model_temp_slider,
-        'sequence_length': st.session_state.seq_length_slider,
-        'batch_size': st.session_state.batch_size_slider,
-        'use_half_precision': st.session_state.half_precision_toggle,
-        'speed_accuracy': st.session_state.speed_accuracy_slider
-    }
-    
-    st.session_state.settings = settings
-    if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
-        st.session_state.rag_system.apply_settings(settings)
+    """Update settings based on individual slider changes"""
+    try:
+        settings = get_current_settings()
+        
+        # Update settings from individual sliders with explicit type conversion
+        settings.update({
+            'doc_percentage': int(st.session_state.doc_percentage_slider),
+            'chunk_size': int(st.session_state.chunk_size_slider),
+            'chunk_overlap': int(st.session_state.chunk_overlap_slider),
+            'model_temperature': float(st.session_state.model_temp_slider),
+            'sequence_length': int(st.session_state.seq_length_slider),
+            'batch_size': int(st.session_state.batch_size_slider),
+            'use_half_precision': bool(st.session_state.half_precision_toggle)
+        })
+        
+        # Calculate new speed_accuracy based on individual settings
+        new_speed_accuracy = int(calculate_speed_accuracy_from_settings(settings))
+        settings['speed_accuracy'] = new_speed_accuracy
+        
+        # Apply settings to RAG system
+        if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
+            st.session_state.rag_system.apply_settings(settings)
+            save_settings(settings)
+            st.session_state.update_trigger = True
+            st.rerun()
+    except Exception as e:
+        st.error(f"Error updating settings: {str(e)}")
 
 def calculate_speed_accuracy_from_settings(settings):
     """Calculate speed-accuracy value from settings (0-100)"""
@@ -430,23 +441,6 @@ def calculate_speed_accuracy_from_settings(settings):
     
     return speed_accuracy
 
-def update_speed_accuracy_indicator():
-    """Update the speed vs accuracy indicator based on the current slider value."""
-    speed_accuracy = st.session_state.speed_accuracy_slider
-    progress_value = min(max(speed_accuracy / 100, 0.0), 1.0)
-    
-    if progress_value < 0.33:
-        color = '#ff4b4b'  # Red
-        mode = 'Fast'
-    elif progress_value < 0.66:
-        color = '#00cc96'  # Green
-        mode = 'Balanced'
-    else:
-        color = '#1f77b4'  # Blue
-        mode = 'Accurate'
-    
-    return color, mode
-
 def show_settings_page():
     # Ensure RAG system exists
     if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
@@ -481,12 +475,12 @@ def show_settings_page():
         with st.expander("Advanced Settings", expanded=False):
             with st.form("sidebar_advanced_settings_form"):
                 st.markdown("### Document Processing")
-                num_documents = st.slider(
-                    "Number of Best Documents",
-                    1, 10,
-                    settings['num_documents'],
-                    help="Number of most relevant documents to analyze",
-                    key="num_documents_slider"
+                doc_percentage = st.slider(
+                    "Document Coverage (%)",
+                    5, 100,
+                    settings['doc_percentage'],
+                    help="Percentage of documents to analyze",
+                    key="doc_percentage_slider"
                 )
                 chunk_size = st.slider(
                     "Chunk Size (words)",
@@ -578,17 +572,6 @@ def generate_pdf_summary():
     story.append(Paragraph(st.session_state.main_answer, styles['Normal']))
     story.append(Spacer(1, 20))
     
-    # Add follow-up question and answer if available
-    if hasattr(st.session_state, 'follow_up_question') and st.session_state.follow_up_question:
-        story.append(Paragraph("Follow-up Question:", styles['Heading2']))
-        story.append(Paragraph(st.session_state.follow_up_question, styles['Normal']))
-        story.append(Spacer(1, 10))
-        
-        if hasattr(st.session_state, 'follow_up_answer') and st.session_state.follow_up_answer:
-            story.append(Paragraph("Follow-up Answer:", styles['Heading2']))
-            story.append(Paragraph(st.session_state.follow_up_answer, styles['Normal']))
-            story.append(Spacer(1, 20))
-    
     # Add sources if available
     if hasattr(st.session_state, 'main_results') and st.session_state.main_results:
         story.append(Paragraph("Sources:", styles['Heading2']))
@@ -596,6 +579,12 @@ def generate_pdf_summary():
             story.append(Paragraph(f"Source {i}: {result['metadata']['source']}", styles['Normal']))
             story.append(Paragraph(f"Relevance: {result['score']:.2f}", styles['Normal']))
             story.append(Spacer(1, 10))
+    
+    # Add follow-up if available
+    if hasattr(st.session_state, 'follow_up_question') and st.session_state.follow_up_question:
+        story.append(Paragraph("Follow-up Question:", styles['Heading2']))
+        story.append(Paragraph(st.session_state.follow_up_question, styles['Normal']))
+        story.append(Spacer(1, 20))
     
     # Build the PDF
     doc.build(story)
@@ -652,32 +641,32 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         st.session_state.processing = True
         start_time = time.time()
         
-        # Optimized settings for better performance and cost reduction
-        accuracy_settings = {
-            'doc_percentage': 30,    # Reduced from 80 for cost savings
-            'chunk_size': 500,       # Reduced from 800 for cost savings
-            'chunk_overlap': 50,     # Reduced from 100 for cost savings
-            'model_temperature': 0.1, # Keep low for focused responses
-            'sequence_length': 256,   # Keep optimized
-            'batch_size': 128,       # Keep optimized
-            'use_half_precision': True,
-            'speed_accuracy': 50     # Reduced from 80 for cost savings
-        }
-        
-        # Apply settings
-        if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
-            st.session_state.rag_system.apply_settings(accuracy_settings)
-        
         progress_bar = st.progress(0)
         status_text = st.empty()
-        answer_container = st.empty()
+        answer_container = st.empty()  # Container for the typing effect
         
-        # Process question
+        # Combine document search and processing
+        process_start = time.time()
         progress_bar.progress(25)
         status_text.text("🤔 Processing your question...")
         
-        # Get document-based answer
-        answer = st.session_state.rag_system.question_handler.process_question(question)
+        # Get document-based answer with reduced context
+        if is_follow_up and 'main_answer' in st.session_state:
+            context = f"Previous: {st.session_state.question}\nAnswer: {st.session_state.main_answer}\nFollow-up: {question}"
+        else:
+            context = question
+        
+        # Reduce number of results for faster processing
+        results = st.session_state.rag_system.vector_store.search(question, k=2)
+        
+        # Combine results into a single context
+        context_parts = []
+        for chunk in results:
+            context_parts.append(chunk['text'])
+        context = "\n".join(context_parts)
+        
+        # Generate answer with optimized parameters
+        answer = st.session_state.rag_system.question_handler.process_question(context)
         
         # Type out the answer
         type_text(answer, answer_container)
@@ -686,11 +675,14 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
             st.session_state.follow_up_answer = answer
         else:
             st.session_state.main_answer = answer
+            st.session_state.main_results = results
         
-        # Handle internet search if requested
+        # If internet search is requested, do it in parallel
         if use_internet:
-            internet_context = """Financial expert. Provide concise answer using internet knowledge.
-            Focus on key facts and data. Cite sources briefly. State if no source exists."""
+            internet_context = """You are a document analysis expert with access to the internet.
+            Provide a concise answer using your knowledge and internet access.
+            Cite sources for data. If no source exists, mention that.
+            Focus on accurate, up-to-date information."""
             
             internet_start = time.time()
             status_text.text("🌐 Searching the internet...")
@@ -726,6 +718,7 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         st.session_state.processing = False
 
 def generate_multi_analyst_answer(question, use_internet=False):
+    """Generate an answer using multiple analysts with different perspectives."""
     try:
         st.session_state.processing = True
         start_time = time.time()
@@ -758,43 +751,23 @@ def generate_multi_analyst_answer(question, use_internet=False):
             }
         }
         
-        # Get initial perspectives in parallel using ThreadPoolExecutor
+        # Get initial perspectives
         progress_bar.progress(25)
         status_text.text("🤔 Gathering different perspectives...")
         
         perspectives = {}
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            future_to_analyst = {
-                executor.submit(
-                    st.session_state.rag_system.question_handler.process_question,
-                    info["perspective"]
-                ): name
-                for name, info in analysts.items()
-            }
-            
-            for future in as_completed(future_to_analyst):
-                name = future_to_analyst[future]
-                try:
-                    perspectives[name] = future.result()
-                except Exception as e:
-                    st.error(f"Error getting {name} perspective: {str(e)}")
-                    perspectives[name] = f"Error: Could not generate {name} perspective"
+        for name, info in analysts.items():
+            perspectives[name] = st.session_state.rag_system.question_handler.process_question(info["perspective"])
         
-        # Display the debate with typing effect
+        # Display the debate
         progress_bar.progress(50)
         status_text.text("💭 Analysts are debating...")
         
         st.markdown("### Analyst Perspectives")
-        analyst_responses = []
         for name, info in analysts.items():
             st.markdown(f"#### {info['role']}")
             st.markdown(f"*{info['focus']}*")
-            
-            # Create a container for the typing effect
-            analyst_container = st.empty()
-            type_text(perspectives[name], analyst_container)
-            analyst_responses.append(f"### {info['role']}\n*{info['focus']}*\n\n{perspectives[name]}")
-            
+            st.markdown(perspectives[name])
             st.markdown("---")
         
         # Generate consensus
@@ -815,13 +788,9 @@ def generate_multi_analyst_answer(question, use_internet=False):
         
         consensus = st.session_state.rag_system.question_handler.process_question(consensus_context)
         
-        # Display the consensus with typing effect
+        # Display the consensus
         st.markdown("### Consensus")
-        consensus_container = st.empty()
-        type_text(consensus, consensus_container)
-        
-        # Store the complete response in session state
-        st.session_state.main_answer = "\n\n".join(analyst_responses + [f"### Consensus\n\n{consensus}"])
+        st.markdown(consensus)
         
         # If internet search is requested
         if use_internet:
@@ -832,24 +801,11 @@ def generate_multi_analyst_answer(question, use_internet=False):
             
             internet_start = time.time()
             status_text.text("🌐 Searching the internet for additional information...")
-            
-            # Use ThreadPoolExecutor for internet search
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                internet_future = executor.submit(
-                    st.session_state.rag_system.question_handler.llm.generate_answer,
-                    question,
-                    internet_context
-                )
-                internet_answer = internet_future.result()
-            
+            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
             internet_time = time.time() - internet_start
             
             st.markdown("### Internet Search Results")
-            internet_container = st.empty()
-            type_text(internet_answer, internet_container)
-            
-            # Add internet results to the main answer
-            st.session_state.main_answer += f"\n\n### Internet Search Results\n\n{internet_answer}"
+            st.markdown(internet_answer)
         
         progress_bar.progress(100)
         status_text.text("✅ Done!")
@@ -888,25 +844,19 @@ def show_main_page():
         if 'speed_accuracy' not in st.session_state:
             st.session_state.speed_accuracy = speed_accuracy
         
-        # Performance Settings Section
-        st.markdown("### Performance Settings")
+        # Calculate mode and colors based on current speed_accuracy
+        progress_value = min(max(st.session_state.speed_accuracy / 100, 0.0), 1.0)
+        if progress_value < 0.33:
+            color = '#ff4b4b'  # Red
+            mode = 'Fast'
+        elif progress_value < 0.66:
+            color = '#00cc96'  # Green
+            mode = 'Balanced'
+        else:
+            color = '#1f77b4'  # Blue
+            mode = 'Accurate'
         
-        # Get current settings from our central settings store
-        settings = get_current_settings()
-        
-        # Speed vs Accuracy Slider with automatic application
-        speed_accuracy = st.slider(
-            "Speed vs Accuracy",
-            0, 100,
-            int(get_current_settings()['speed_accuracy']),
-            step=1,
-            help="Adjust the balance between processing speed and accuracy",
-            key="speed_accuracy_slider",
-            on_change=update_settings_from_main_slider
-        )
-        
-        # Update the indicator whenever the slider changes
-        color, mode = update_speed_accuracy_indicator()
+        # Display the mode indicator
         st.markdown(f"""
             <div style="
                 background: {color}15;
@@ -927,16 +877,33 @@ def show_main_page():
             </div>
         """, unsafe_allow_html=True)
         
+        # Performance Settings Section
+        st.markdown("### Performance Settings")
+        
+        # Get current settings from our central settings store
+        settings = get_current_settings()
+        
+        # Speed vs Accuracy Slider with automatic application
+        speed_accuracy = st.slider(
+            "Speed vs Accuracy",
+            0, 100,
+            int(get_current_settings()['speed_accuracy']),
+            step=1,
+            help="Adjust the balance between processing speed and accuracy",
+            key="speed_accuracy_slider",
+            on_change=update_settings_from_main_slider
+        )
+        
         # Advanced Settings Button and Expander
         with st.expander("Advanced Settings", expanded=False):
             with st.form("advanced_settings_form"):
                 st.markdown("### Document Processing")
-                num_documents = st.slider(
-                    "Number of Best Documents",
-                    1, 10,
-                    settings['num_documents'],
-                    help="Number of most relevant documents to analyze",
-                    key="num_documents_slider"
+                doc_percentage = st.slider(
+                    "Document Coverage (%)",
+                    5, 100,
+                    settings['doc_percentage'],
+                    help="Percentage of documents to analyze",
+                    key="doc_percentage_slider"
                 )
                 chunk_size = st.slider(
                     "Chunk Size (words)",
@@ -1000,43 +967,6 @@ def show_main_page():
             accept_multiple_files=True,
             help="Upload your documents to analyze"
         )
-        
-        # Add load files button if files are uploaded
-        if uploaded_files:
-            if st.button("Load Files", use_container_width=True):
-                with st.spinner("Loading files..."):
-                    try:
-                        # Create a temporary directory for the files
-                        temp_dir = "temp"
-                        os.makedirs(temp_dir, exist_ok=True)
-                        
-                        # Save uploaded files
-                        for uploaded_file in uploaded_files:
-                            file_path = os.path.join(temp_dir, uploaded_file.name)
-                            with open(file_path, "wb") as f:
-                                f.write(uploaded_file.getbuffer())
-                        
-                        # Process files using the file handler
-                        documents = st.session_state.rag_system.file_handler.process_selected_folder(temp_dir)
-                        
-                        if documents:
-                            # Add documents to vector store
-                            st.session_state.rag_system.vector_store.add_documents(documents)
-                            st.session_state.documents_loaded = True
-                            st.success(f"Successfully loaded {len(documents)} documents!")
-                        else:
-                            st.error("No valid documents found to process.")
-                        
-                        # Clean up temporary files
-                        shutil.rmtree(temp_dir)
-                        os.makedirs(temp_dir)
-                        
-                    except Exception as e:
-                        st.error(f"Error loading files: {str(e)}")
-                        # Clean up on error
-                        if os.path.exists(temp_dir):
-                            shutil.rmtree(temp_dir)
-                            os.makedirs(temp_dir)
 
     # Main content area
     st.markdown("""
@@ -1084,28 +1014,25 @@ def show_main_page():
             else:
                 generate_answer(question, use_internet)
     
-    # Show follow-up question form only after getting a response
+    # Display main answer if available
     if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
+        st.markdown("### Answer")
+        st.markdown(st.session_state.main_answer)
+        
+        # Show follow-up question form only after getting a response
         st.markdown("### Follow-up Question")
         with st.form(key="follow_up_form"):
             follow_up_question = st.text_input("Ask a follow-up question:", value=st.session_state.follow_up_question)
             follow_up_use_internet = st.toggle("Internet", key="follow_up_internet")
-            follow_up_use_analysts = st.toggle("Multi-Analyst", key="follow_up_analysts")
             follow_up_submitted = st.form_submit_button("Generate Follow-up Answer")
             
             if follow_up_submitted and follow_up_question:
                 st.session_state.follow_up_question = follow_up_question
-                if follow_up_use_analysts:
-                    generate_multi_analyst_answer(
-                        follow_up_question,
-                        use_internet=follow_up_use_internet
-                    )
-                else:
-                    generate_answer(
-                        follow_up_question,
-                        use_internet=follow_up_use_internet,
-                        is_follow_up=True
-                    )
+                generate_answer(
+                    follow_up_question, 
+                    follow_up_use_internet,
+                    is_follow_up=True
+                )
     
     # Display follow-up answer if available
     if hasattr(st.session_state, 'follow_up_answer') and st.session_state.follow_up_answer:
