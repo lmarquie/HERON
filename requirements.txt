@@ -2,7 +2,7 @@ streamlit==1.32.0
 --find-links https://download.pytorch.org/whl/torch_stable.html
 torch==2.7.1
 transformers==4.36.2
-sentence-transformers==2.2.2
+sentence-transformers==4.1.0
 faiss-cpu==1.7.4
 PyMuPDF==1.23.7
 requests==2.31.0
@@ -11,5 +11,4 @@ psutil==5.9.5
 reportlab==4.0.4
 python-dotenv==1.0.0
 pandas==2.0.3
---only-binary :all:
 tiktoken==0.5.2
