@@ -1,7 +1,7 @@
 # Import necessary libraries
 import os
-import base64
 import faiss
+import base64
 import fitz  # PyMuPDF
 import pickle
 import torch
@@ -302,7 +302,6 @@ class OpenAIHandler:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
-        
         self.max_retries = 2
         self.timeout = 30
         self.response_cache = {}
