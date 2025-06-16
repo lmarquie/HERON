@@ -644,6 +644,6 @@ class RAGSystem:
             return True
         return False
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
     rag_system = RAGSystem()
     rag_system.run() 
