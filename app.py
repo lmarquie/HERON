@@ -879,264 +879,135 @@ def generate_multi_analyst_answer(question, use_internet=False):
 
 def show_main_page():
     """Show the main page with file upload and question input."""
-    # Initialize session state variables if they don't exist
-    if 'question' not in st.session_state:
-        st.session_state.question = ""
-    if 'follow_up_question' not in st.session_state:
-        st.session_state.follow_up_question = ""
-    
-    # Sidebar
-    with st.sidebar:
-        # File uploader at the top of sidebar for better visibility
-        st.markdown("### Upload Documents")
-        try:
-            uploaded_files = st.file_uploader(
-                label="Upload your documents to analyze",
-                type=['pdf', 'txt'],
-                accept_multiple_files=True,
-                help="Upload PDF or text files to analyze",
-                label_visibility="visible"
-            )
-            
-            if uploaded_files:
-                if st.session_state.rag_system.process_web_uploads(uploaded_files):
-                    st.success(f"Successfully processed {len(uploaded_files)} file(s)")
-                    st.session_state.documents_loaded = True
-                else:
-                    st.error("Failed to process uploaded files")
-        except Exception as e:
-            st.error(f"Error with file uploader: {str(e)}")
-            st.info("If you're running this in a cloud environment, please ensure you have proper permissions.")
+    try:
+        # Initialize session state variables if they don't exist
+        if 'question' not in st.session_state:
+            st.session_state.question = ""
+        if 'follow_up_question' not in st.session_state:
+            st.session_state.follow_up_question = ""
         
-        st.markdown("---")
+        # Sidebar
+        with st.sidebar:
+            # File uploader at the top of sidebar for better visibility
+            st.markdown("### Upload Documents")
+            try:
+                uploaded_files = st.file_uploader(
+                    label="Upload your documents to analyze",
+                    type=['pdf', 'txt'],
+                    accept_multiple_files=True,
+                    help="Upload PDF or text files to analyze",
+                    label_visibility="visible"
+                )
+                
+                if uploaded_files:
+                    if st.session_state.rag_system.process_web_uploads(uploaded_files):
+                        st.success(f"Successfully processed {len(uploaded_files)} file(s)")
+                        st.session_state.documents_loaded = True
+                    else:
+                        st.error("Failed to process uploaded files")
+            except Exception as e:
+                st.error(f"Error with file uploader: {str(e)}")
+                st.info("If you're running this in a cloud environment, please ensure you have proper permissions.")
         
-        # Get speed_accuracy from session state or use default
-        speed_accuracy = st.session_state.rag_system.speed_accuracy if hasattr(st.session_state.rag_system, 'speed_accuracy') else 50
-        
-        # Initialize speed_accuracy in session state if it doesn't exist
-        if 'speed_accuracy' not in st.session_state:
-            st.session_state.speed_accuracy = speed_accuracy
-        
-        # Calculate mode and colors based on current speed_accuracy
-        progress_value = min(max(st.session_state.speed_accuracy / 100, 0.0), 1.0)
-        if progress_value < 0.33:
-            color = '#ff4b4b'  # Red
-            mode = 'Fast'
-        elif progress_value < 0.66:
-            color = '#00cc96'  # Green
-            mode = 'Balanced'
-        else:
-            color = '#1f77b4'  # Blue
-            mode = 'Accurate'
-        
-        # Display the mode indicator
-        st.markdown(f"""
-            <div style="
-                background: {color}15;
-                border: 2px solid {color};
-                border-radius: 10px;
-                padding: 15px;
-                margin-bottom: 20px;
+        # Main content area
+        st.markdown("""
+            <style>
+            .main-content {
+                padding: 2rem;
+                max-width: 1200px;
+                margin: 0 auto;
+            }
+            .app-title {
+                font-size: 3.5rem;
+                font-weight: 700;
+                color: #1f77b4;
                 text-align: center;
-                transition: all 0.3s ease;
-            ">
-                <div style="
-                    font-size: 24px;
-                    font-weight: bold;
-                    color: {color};
-                ">
-                    {mode}
-                </div>
-            </div>
+                margin-bottom: 2rem;
+                font-family: 'Helvetica Neue', sans-serif;
+                letter-spacing: 2px;
+            }
+            </style>
+            <div class="main-content">
+            <div class="app-title">HERON</div>
         """, unsafe_allow_html=True)
         
-        # Performance Settings Section
-        st.markdown("### Performance Settings")
-        
-        # Get current settings from our central settings store
-        settings = get_current_settings()
-        
-        # Speed vs Accuracy Slider with automatic application
-        speed_accuracy = st.slider(
-            "Speed vs Accuracy",
-            0, 100,
-            int(get_current_settings()['speed_accuracy']),
-            step=1,
-            help="Adjust the balance between processing speed and accuracy",
-            key="speed_accuracy_slider",
-            on_change=update_settings_from_main_slider
+        # Question input
+        question = st.text_input(
+            label="Ask a question",
+            value=st.session_state.question,
+            label_visibility="collapsed",
+            placeholder="Ask a question...",
+            key="question_input"
         )
         
-        # Advanced Settings Button and Expander
-        with st.expander("Advanced Settings", expanded=False):
-            with st.form("advanced_settings_form"):
-                st.markdown("### Document Processing")
-                doc_percentage = st.slider(
-                    "Document Coverage (%)",
-                    5, 100,
-                    settings['doc_percentage'],
-                    help="Percentage of documents to analyze",
-                    key="doc_percentage_slider"
-                )
-                chunk_size = st.slider(
-                    "Chunk Size (words)",
-                    100, 1000,
-                    settings['chunk_size'],
-                    help="Number of words per text chunk",
-                    key="chunk_size_slider"
-                )
-                chunk_overlap = st.slider(
-                    "Chunk Overlap (words)",
-                    10, 200,
-                    settings['chunk_overlap'],
-                    help="Number of overlapping words between chunks",
-                    key="chunk_overlap_slider"
-                )
+        # Process question if entered
+        if question and question != st.session_state.question:
+            try:
+                st.session_state.question = question
+                st.session_state.processing = True
                 
-                st.markdown("### Model Configuration")
-                model_temp = st.slider(
-                    "Model Temperature",
-                    0.0, 0.3,
-                    settings['model_temperature'],
-                    step=0.01,
-                    help="Lower values make responses more focused",
-                    key="model_temp_slider"
-                )
-                seq_length = st.slider(
-                    "Sequence Length",
-                    64, 512,
-                    settings['sequence_length'],
-                    help="Maximum number of tokens to process",
-                    key="seq_length_slider"
-                )
-                batch_size = st.slider(
-                    "Batch Size",
-                    32, 256,
-                    settings['batch_size'],
-                    help="Number of items to process at once",
-                    key="batch_size_slider"
-                )
-                half_precision = st.toggle(
-                    "Half Precision",
-                    settings['use_half_precision'],
-                    help="Enable for faster processing",
-                    key="half_precision_toggle"
-                )
+                # Show processing status
+                with st.spinner("Processing your question..."):
+                    # Get answer
+                    answer = st.session_state.rag_system.question_handler.process_question(question)
+                    if answer:
+                        st.session_state.main_answer = answer
+                        st.markdown("### Answer")
+                        st.markdown(answer)
+                    else:
+                        st.error("Failed to generate an answer. Please try again.")
                 
-                # Add submit button
-                submitted = st.form_submit_button("Apply Settings")
-                if submitted:
-                    update_settings_from_individual_sliders()
+            except Exception as e:
+                st.error(f"Error processing question: {str(e)}")
+                st.info("Please try again or rephrase your question.")
+            finally:
+                st.session_state.processing = False
         
-        # Memory usage display
-        memory = psutil.Process().memory_info().rss / 1024 / 1024
-        st.write(f"Memory Usage: {memory:.1f} MB")
-
-    # Main content area
-    st.markdown("""
-        <style>
-        .main-content {
-            padding: 2rem;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        .app-title {
-            font-size: 3.5rem;
-            font-weight: 700;
-            color: #1f77b4;
-            text-align: center;
-            margin-bottom: 2rem;
-            font-family: 'Helvetica Neue', sans-serif;
-            letter-spacing: 2px;
-        }
-        </style>
-        <div class="main-content">
-        <div class="app-title">HERON</div>
-    """, unsafe_allow_html=True)
-    
-    # Question input
-    question = st.text_input(
-        label="Ask a question",
-        value=st.session_state.question,
-        label_visibility="collapsed",
-        placeholder="Ask a question...",
-        key="question_input"
-    )
-
-    # Options
-    use_internet = st.toggle("Internet")
-    use_analysts = st.toggle("Multi-Analyst")
-
-    # Generate answer button
-    if st.button("Generate Answer"):
-        if not question:
-            st.markdown('<div class="custom-warning">Please enter a question.</div>', unsafe_allow_html=True)
-        else:
-            st.session_state.question = question
-            if use_analysts:
-                generate_multi_analyst_answer(question, use_internet)
-            else:
-                generate_answer(question, use_internet)
-    
-    # Display main answer if available
-    if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
-        st.markdown("### Answer")
-        st.markdown(st.session_state.main_answer)
+        # Options
+        use_internet = st.toggle("Internet")
+        use_analysts = st.toggle("Multi-Analyst")
         
-        # Show follow-up question form only after getting a response
-        st.markdown("### Follow-up Question")
-        with st.form(key="follow_up_form"):
-            follow_up_question = st.text_input("Ask a follow-up question:", value=st.session_state.follow_up_question)
-            follow_up_use_internet = st.toggle("Internet", key="follow_up_internet")
-            follow_up_submitted = st.form_submit_button("Generate Follow-up Answer")
+        # Add reset conversation and export PDF buttons at the bottom
+        if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
+            st.markdown("---")
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col2:
+                if st.button("Reset Conversation", type="secondary"):
+                    # Clear all conversation-related session state
+                    if 'main_answer' in st.session_state:
+                        del st.session_state.main_answer
+                    if 'main_results' in st.session_state:
+                        del st.session_state.main_results
+                    if 'question' in st.session_state:
+                        st.session_state.question = ""
+                    if 'follow_up_question' in st.session_state:
+                        st.session_state.follow_up_question = ""
+                    if 'follow_up_answer' in st.session_state:
+                        del st.session_state.follow_up_answer
+                    st.rerun()
             
-            if follow_up_submitted and follow_up_question:
-                st.session_state.follow_up_question = follow_up_question
-                generate_answer(
-                    follow_up_question, 
-                    follow_up_use_internet,
-                    is_follow_up=True
-                )
-    
-    # Display follow-up answer if available
-    if hasattr(st.session_state, 'follow_up_answer') and st.session_state.follow_up_answer:
-        st.markdown("### Follow-up Answer")
-        st.markdown(st.session_state.follow_up_answer)
-    
-    # Add reset conversation and export PDF buttons at the bottom
-    if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
-        st.markdown("---")
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col2:
-            if st.button("Reset Conversation", type="secondary"):
-                # Clear all conversation-related session state
-                if 'main_answer' in st.session_state:
-                    del st.session_state.main_answer
-                if 'main_results' in st.session_state:
-                    del st.session_state.main_results
-                if 'question' in st.session_state:
-                    st.session_state.question = ""
-                if 'follow_up_question' in st.session_state:
-                    st.session_state.follow_up_question = ""
-                if 'follow_up_answer' in st.session_state:
-                    del st.session_state.follow_up_answer
-                st.rerun()
+            with col3:
+                if st.button("Export PDF", type="secondary"):
+                    try:
+                        pdf_path = generate_pdf_summary()
+                        if pdf_path:
+                            with open(pdf_path, "rb") as file:
+                                st.download_button(
+                                    label="Download PDF",
+                                    data=file,
+                                    file_name=os.path.basename(pdf_path),
+                                    mime="application/pdf"
+                                )
+                            # Clean up the temporary file
+                            os.remove(pdf_path)
+                    except Exception as e:
+                        st.error(f"Error generating PDF: {str(e)}")
         
-        with col3:
-            if st.button("Export PDF", type="secondary"):
-                pdf_path = generate_pdf_summary()
-                if pdf_path:
-                    with open(pdf_path, "rb") as file:
-                        st.download_button(
-                            label="Download PDF",
-                            data=file,
-                            file_name=os.path.basename(pdf_path),
-                            mime="application/pdf"
-                        )
-                    # Clean up the temporary file
-                    os.remove(pdf_path)
-    
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        st.info("Please refresh the page and try again.")
 
 # Main app logic
 if st.session_state.current_page == "settings":
