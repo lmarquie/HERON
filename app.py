@@ -361,14 +361,15 @@ def get_current_settings():
     """Get the current settings from session state or defaults"""
     if not hasattr(st.session_state, 'settings'):
         st.session_state.settings = {
-            'doc_percentage': 15,
-            'chunk_size': 500,
-            'chunk_overlap': 50,
+            'doc_percentage': 10,  # Reduced from 15
+            'chunk_size': 300,     # Reduced from 500
+            'chunk_overlap': 30,   # Reduced from 50
             'model_temperature': 0.3,
-            'sequence_length': 256,
-            'batch_size': 128,
+            'sequence_length': 256, # Reduced from 512
+            'batch_size': 64,      # Reduced from 128
             'use_half_precision': True,
-            'speed_accuracy': 50
+            'speed_accuracy': 50,
+            'num_results': 2       # Reduced from 3
         }
     return st.session_state.settings
 
@@ -380,12 +381,12 @@ def update_settings_from_main_slider():
         
         # Update all settings based on the main slider
         settings.update({
-            'doc_percentage': int(10 + (slider_value / 100) * 50),
-            'chunk_size': int(256 + (slider_value / 100) * 744),
-            'chunk_overlap': int(25 + (slider_value / 100) * 75),
+            'doc_percentage': int(5 + (slider_value / 100) * 25),  # Reduced range
+            'chunk_size': int(200 + (slider_value / 100) * 400),   # Reduced range
+            'chunk_overlap': int(20 + (slider_value / 100) * 40),  # Reduced range
             'model_temperature': float(0.1 + (slider_value / 100) * 0.2),
-            'sequence_length': int(128 + (slider_value / 100) * 384),
-            'batch_size': int(64 + (slider_value / 100) * 192),
+            'sequence_length': int(128 + (slider_value / 100) * 256),  # Reduced range
+            'batch_size': int(32 + (slider_value / 100) * 128),    # Reduced range
             'use_half_precision': slider_value < 50,
             'speed_accuracy': int(slider_value)
         })
@@ -891,10 +892,11 @@ def show_main_page():
         st.markdown("### Upload Documents")
         try:
             uploaded_files = st.file_uploader(
-                "Upload your documents to analyze",
+                label="Upload your documents to analyze",  # Added proper label
                 type=['pdf', 'txt'],
                 accept_multiple_files=True,
-                help="Upload PDF or text files to analyze"
+                help="Upload PDF or text files to analyze",
+                label_visibility="visible"  # Make label visible
             )
             
             if uploaded_files:
