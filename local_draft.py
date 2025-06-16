@@ -407,18 +407,18 @@ class ClaudeHandler:
         for attempt in range(self.max_retries):
             try:
                 # Truncate context if it's too long
-                max_context_length = 40000  # Approximately 10k tokens
+                max_context_length = 20000  # Reduced from 40000 to ~5k tokens
                 if len(context) > max_context_length:
                     context = context[:max_context_length] + "..."
 
                 messages = [
                     {
                         "role": "system",
-                        "content": "You are a document analysis expert. Provide clear, concise answers based on the provided context."
+                        "content": "Answer based on the context."  # Minimal system prompt
                     },
                     {
                         "role": "user",
-                        "content": f"Context:\n{context}\n\nQuestion: {question}"
+                        "content": f"Context: {context}\nQ: {question}"  # Simplified format
                     }
                 ]
 
@@ -426,7 +426,7 @@ class ClaudeHandler:
                     "model": "gpt-4-turbo-preview",
                     "messages": messages,
                     "temperature": 0.3,
-                    "max_tokens": 2000
+                    "max_tokens": 1000  # Reduced from 2000
                 }
 
                 response = self.session.post(
