@@ -1,7 +1,6 @@
 # Import necessary libraries
 import os
 import faiss
-import base64
 import fitz  # PyMuPDF
 import pickle
 import torch
@@ -13,7 +12,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import requests
 import io
 import numpy as np
-import gc
+from config import OPENAI_API_KEY
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -147,277 +146,239 @@ class TextProcessor:
 
 ### =================== Vector Store =================== ###
 class VectorStore:
-    def __init__(self):
-        self.chunk_size = 500
-        self.chunk_overlap = 50
+    def __init__(self, dimension: int = 768):
+        self.dimension = dimension
         self.index = None
         self.documents = []
-        self.model = None
-        self.cross_encoder = None
-        self._initialize_models()
+        # Use a smaller, faster model
+        self.bi_encoder = SentenceTransformer('all-MiniLM-L6-v2')  # Smaller and faster than multilingual
+        self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-2-v2')  # Smaller model
+        # Optimize model settings
+        self.bi_encoder.max_seq_length = 128  # Reduced from 64 for better context
+        self.cross_encoder.max_seq_length = 128
+        if torch.cuda.is_available():
+            self.bi_encoder = self.bi_encoder.to('cuda')
+            self.cross_encoder = self.cross_encoder.to('cuda')
+            self.bi_encoder = self.bi_encoder.half()
+            self.cross_encoder = self.cross_encoder.half()
+        self.embedding_cache = {}
+        self.similarity_cache = {}
+        self.metadata_index = {}
+        self.chunk_size = 500
+        self.chunk_overlap = 50
+        print(f"Initialized VectorStore with optimized models on {self.bi_encoder.device}")
 
-    def _initialize_models(self):
-        """Initialize models with memory optimization"""
-        try:
-            # Use smaller model for free tier
-            self.model = SentenceTransformer('all-MiniLM-L6-v2')
-            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-            
-            # Enable half precision
-            if torch.cuda.is_available():
-                self.model = self.model.half()
-                self.cross_encoder = self.cross_encoder.half()
-            
-            # Clear CUDA cache if available
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                
-        except Exception as e:
-            print(f"Error initializing models: {str(e)}")
-            raise
+    def save_local(self, path: str):
+        """Save the vector store to a local directory"""
+        if not os.path.exists(path):
+            os.makedirs(path)
+        
+        # Save the index
+        if self.index is not None:
+            faiss.write_index(self.index, os.path.join(path, 'index.faiss'))
+        
+        # Save the documents and metadata
+        with open(os.path.join(path, 'documents.pkl'), 'wb') as f:
+            pickle.dump({
+                'documents': self.documents,
+                'metadata_index': self.metadata_index,
+                'chunk_size': self.chunk_size,
+                'chunk_overlap': self.chunk_overlap
+            }, f)
+        
+        print(f"Vector store saved to {path}")
+
+    def load_local(self, path: str):
+        """Load the vector store from a local directory"""
+        # Load the index
+        index_path = os.path.join(path, 'index.faiss')
+        if os.path.exists(index_path):
+            self.index = faiss.read_index(index_path)
+        
+        # Load the documents and metadata
+        documents_path = os.path.join(path, 'documents.pkl')
+        if os.path.exists(documents_path):
+            with open(documents_path, 'rb') as f:
+                data = pickle.load(f)
+                self.documents = data['documents']
+                self.metadata_index = data['metadata_index']
+                self.chunk_size = data.get('chunk_size', 500)
+                self.chunk_overlap = data.get('chunk_overlap', 50)
+        
+        # Reinitialize models with proper device placement
+        self.bi_encoder = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+        self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-TinyBERT-L-2-v2')
+        self.bi_encoder.max_seq_length = 64
+        self.cross_encoder.max_seq_length = 64
+        
+        if torch.cuda.is_available():
+            self.bi_encoder = self.bi_encoder.to('cuda')
+            self.cross_encoder = self.cross_encoder.to('cuda')
+            self.bi_encoder = self.bi_encoder.half()
+            self.cross_encoder = self.cross_encoder.half()
+        
+        print(f"Vector store loaded from {path}")
 
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store with memory optimization"""
-        try:
-            # Process documents in smaller batches
-            batch_size = 32
-            for i in range(0, len(documents), batch_size):
-                batch = documents[i:i + batch_size]
-                self._process_batch(batch)
-                
-                # Clear memory after each batch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                gc.collect()
-                
-        except Exception as e:
-            print(f"Error adding documents: {str(e)}")
-            raise
+        print(f"Adding {len(documents)} documents to vector store...")
+        texts = []
+        metadata_list = []
+        for doc in documents:
+            metadata = {
+                'source': doc['metadata'].get('source', 'Unknown'),
+                'path': doc['metadata'].get('path', ''),
+                'date': doc['metadata'].get('date', datetime.now().isoformat())
+            }
+            texts.append(doc['text'])
+            metadata_list.append(metadata)
 
-    def _process_batch(self, batch: List[Dict]):
-        """Process a batch of documents"""
-        try:
-            # Extract text and metadata
-            texts = []
-            metadatas = []
-            
-            for doc in batch:
-                chunks = self._chunk_text(doc['text'])
-                texts.extend(chunks)
-                metadatas.extend([doc['metadata']] * len(chunks))
-            
-            # Generate embeddings in smaller sub-batches
-            sub_batch_size = 16
-            embeddings = []
-            
-            for i in range(0, len(texts), sub_batch_size):
-                sub_batch = texts[i:i + sub_batch_size]
-                batch_embeddings = self.model.encode(
-                    sub_batch,
-                    show_progress_bar=False,
-                    convert_to_tensor=True
-                )
-                embeddings.append(batch_embeddings)
-                
-                # Clear memory after each sub-batch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            
-            # Combine embeddings
-            embeddings = torch.cat(embeddings, dim=0)
-            
-            # Create or update FAISS index
-            if self.index is None:
-                dimension = embeddings.shape[1]
-                self.index = faiss.IndexFlatL2(dimension)
-            
-            # Add to index
-            self.index.add(embeddings.cpu().numpy())
-            
-            # Store documents
-            for text, metadata in zip(texts, metadatas):
-                self.documents.append({
-                    'text': text,
-                    'metadata': metadata
-                })
-                
-        except Exception as e:
-            print(f"Error processing batch: {str(e)}")
-            raise
+        print("Converting text to vector embeddings...")
+        # Increased batch size for faster processing
+        embeddings = self.bi_encoder.encode(texts,
+                                          show_progress_bar=True,
+                                          batch_size=64,  # Increased from 32
+                                          convert_to_numpy=True,
+                                          normalize_embeddings=True)
 
-    def search(self, query: str, k: int = 5) -> List[Dict]:
-        """Search for similar documents with memory optimization"""
-        try:
-            # Generate query embedding
-            query_embedding = self.model.encode(
-                [query],
-                show_progress_bar=False,
-                convert_to_tensor=True
-            )
-            
-            # Search in FAISS index
-            distances, indices = self.index.search(
-                query_embedding.cpu().numpy(),
-                k
-            )
-            
-            # Get results
-            results = []
-            for idx in indices[0]:
-                if idx < len(self.documents):
-                    results.append(self.documents[idx])
-            
-            # Clear memory
+        if self.index is None:
+            # Use a more efficient index type
             if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            
-            return results
-            
-        except Exception as e:
-            print(f"Error searching: {str(e)}")
-            return []
+                res = faiss.StandardGpuResources()
+                quantizer = faiss.IndexFlatIP(embeddings.shape[1])
+                self.index = faiss.IndexIVFFlat(quantizer, embeddings.shape[1],
+                                              min(100, len(embeddings)),
+                                              faiss.METRIC_INNER_PRODUCT)
+                self.index = faiss.index_cpu_to_gpu(res, 0, self.index)
+                if not self.index.is_trained and len(embeddings) > 0:
+                    self.index.train(embeddings.astype('float32'))
+            else:
+                self.index = faiss.IndexFlatIP(embeddings.shape[1])
+            print(f"Created new FAISS index with dimension: {embeddings.shape[1]}")
+        self.index.add(embeddings.astype('float32'))
 
-    def _chunk_text(self, text: str) -> List[str]:
-        """Split text into chunks with overlap"""
-        chunks = []
-        start = 0
-        text_length = len(text)
+        for i, (text, metadata) in enumerate(zip(texts, metadata_list)):
+            self.documents.append({
+                'text': text,
+                'metadata': metadata
+            })
+            for key, value in metadata.items():
+                if key not in self.metadata_index:
+                    self.metadata_index[key] = {}
+                if value not in self.metadata_index[key]:
+                    self.metadata_index[key][value] = set()
+                self.metadata_index[key][value].add(i)
+
+        print(f"Successfully added {len(documents)} documents. Total documents: {len(self.documents)}")
+
+    def search(self, query: str, k: int = 3) -> List[Dict]:
+        """Search for relevant documents"""
+        # Check cache first
+        cache_key = f"{query}:{k}"
+        if cache_key in self.similarity_cache:
+            return self.similarity_cache[cache_key]
+
+        # Get query embedding
+        query_embedding = self.get_embedding(query)
         
-        while start < text_length:
-            end = start + self.chunk_size
-            if end > text_length:
-                end = text_length
-            chunks.append(text[start:end])
-            start = end - self.chunk_overlap
+        # Search in FAISS index
+        if self.index is not None:
+            # Use a larger initial search to get more candidates
+            initial_k = min(k * 2, len(self.documents))
+            scores, indices = self.index.search(query_embedding.reshape(1, -1).astype('float32'), initial_k)
             
-        return chunks
+            # Get documents and their scores
+            results = []
+            for score, idx in zip(scores[0], indices[0]):
+                if idx != -1:  # FAISS returns -1 for empty slots
+                    doc = self.documents[idx]
+                    results.append({
+                        'text': doc['text'],
+                        'metadata': doc['metadata'],
+                        'score': float(score)
+                    })
+            
+            # Sort by score in descending order and take top k
+            results.sort(key=lambda x: x['score'], reverse=True)
+            results = results[:k]
+            
+            # Cache the results
+            self.similarity_cache[cache_key] = results
+            return results
+        
+        return []
 
-### =================== OpenAI Handler =================== ###
-class OpenAIHandler:
+    def get_embedding(self, text: str):
+        if text in self.embedding_cache:
+            return self.embedding_cache[text]
+        else:
+            embedding = self.bi_encoder.encode([text],
+                                              batch_size=1,
+                                              convert_to_numpy=True,
+                                              normalize_embeddings=True)
+            self.embedding_cache[text] = embedding
+            return embedding
+
+### =================== Claude Handler =================== ###
+class ClaudeHandler:
     def __init__(self):
-        encoded_key = "c2stcHJvai1aWm9VV0NKTnV3NXByRURZdWVrblNhM1hXVklWdUJqVmZTUmlkd1lhanVKQjlDYjFZSUVLSWhqak1jcHBxb1dZckxNb016MDBWRFQzQmxia0ZKY3N4ZlVwQkI5V2xCUXRZNXdFd3lMbXFZaHliQ3c0TF9HT2R5ZE1HczZycjJia1diVlloc1Rha0ZwcUY3QVdUMW0zNDZmVlRqY0E="
-        try:
-            self.api_key = base64.b64decode(encoded_key).decode('utf-8')
-            print(f"Decoded API key starts with: {self.api_key[:10]}...")  # Only print first 10 chars for security
-        except Exception as e:
-            print(f"Error decoding API key: {str(e)}")
-            raise
-            
+        self.api_key = OPENAI_API_KEY
+        if not self.api_key:
+            raise ValueError("OPENAI_API_KEY environment variable is not set. Please set it in your .env file.")
         self.api_url = "https://api.openai.com/v1/chat/completions"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
-        print(f"Authorization header starts with: {self.headers['Authorization'][:20]}...")  # Only print first 20 chars for security
-        self.max_retries = 2
-        self.timeout = 30
+        self.max_retries = 10
+        self.timeout = 600
         self.response_cache = {}
         self.session = requests.Session()
-        
-        # Optimized model settings for free tier
-        self.temperature = 0.1
-        self.max_tokens = 300  # Reduced for memory efficiency
-        self.model = "gpt-4-turbo-preview"
-        self.presence_penalty = 0.1
-        self.frequency_penalty = 0.1
-        
-        # Required attributes for compatibility
+
+        # Add model settings
+        self.temperature = 0.3
         self.sequence_length = 256
-        self.batch_size = 64  # Reduced for memory efficiency
+        self.batch_size = 128
         self.use_half_precision = True
-
-        # Rate limit settings
-        self.max_context_tokens = 4000  # Reduced for memory efficiency
-        self.rate_limit_delay = 15
-        
-        # Cache settings
-        self.max_cache_size = 100  # Limit cache size
-        self.cache_ttl = 3600  # Cache time-to-live in seconds
-
-    def _clean_cache(self):
-        """Clean old entries from cache"""
-        current_time = time.time()
-        self.response_cache = {
-            k: v for k, v in self.response_cache.items()
-            if current_time - v['timestamp'] < self.cache_ttl
-        }
-        # If still too large, remove oldest entries
-        if len(self.response_cache) > self.max_cache_size:
-            sorted_cache = sorted(
-                self.response_cache.items(),
-                key=lambda x: x[1]['timestamp']
-            )
-            self.response_cache = dict(sorted_cache[-self.max_cache_size:])
-
-    def truncate_context(self, context: str) -> str:
-        """Truncate context to stay within token limits while preserving important information."""
-        max_chars = self.max_context_tokens * 4
-        if len(context) > max_chars:
-            # Try to truncate at paragraph boundaries first
-            paragraphs = context.split('\n\n')
-            truncated = ''
-            for para in paragraphs:
-                if len(truncated) + len(para) + 2 <= max_chars:
-                    truncated += para + '\n\n'
-                else:
-                    break
-            
-            # If we still have space, try to add partial paragraphs
-            if len(truncated) < max_chars * 0.8:
-                remaining_chars = max_chars - len(truncated)
-                truncated += context[len(truncated):len(truncated) + remaining_chars]
-            
-            return truncated + "\n[Context truncated for optimization]"
-        return context
 
     def generate_answer(self, question: str, context: str) -> str:
         cache_key = f"{question}:{hash(context)}"
-        current_time = time.time()
 
-        # Check cache
         if cache_key in self.response_cache:
-            cache_entry = self.response_cache[cache_key]
-            if current_time - cache_entry['timestamp'] < self.cache_ttl:
-                return cache_entry['response']
-
-        # Clean cache before new request
-        self._clean_cache()
-
-        # Truncate context to stay within token limits
-        truncated_context = self.truncate_context(context)
+            return self.response_cache[cache_key]
 
         for attempt in range(self.max_retries):
             try:
-                # Optimized system prompt
-                system_prompt = """Financial expert. Analyze documents and provide concise answers.
-Focus on:
-- Key financial metrics
-- Important trends
-- Critical insights
-- Clear explanations
+                system_prompt = """You are a document analysis expert. Your task is to analyze documents and provide detailed, accurate answers to questions about them.
+
+Key capabilities:
+- Analyze documents and extract relevant information
+- Provide clear and concise answers
+- Explain complex concepts in simple terms
+- Highlight important insights
+- Provide context for your answers
 
 Guidelines:
-1. Be precise and concise
-2. Focus on key points
-3. Explain terms briefly
-4. Note uncertainties"""
+1. Base your answers primarily on the provided context
+2. Be precise with information and data
+3. Explain terms when used
+4. Highlight any uncertainties or missing information
+5. Provide relevant context for your analysis
+6. Be clear about assumptions made
+7. If the context doesn't contain enough information, say so clearly"""
 
                 messages = [
-                    {"role": "system", "content": system_prompt},
                     {
                         "role": "user",
-                        "content": f"Context:\n{truncated_context}\n\nQuestion: {question}"
+                        "content": f"Here are the relevant documents:\n\n{context}\n\nQuestion: {question}"
                     }
                 ]
 
                 payload = {
-                    "model": self.model,
-                    "max_tokens": self.max_tokens,
+                    "model": "claude-3-opus-20240229",
+                    "max_tokens": 2000,
                     "messages": messages,
-                    "temperature": self.temperature,
-                    "presence_penalty": self.presence_penalty,
-                    "frequency_penalty": self.frequency_penalty,
-                    "stream": False
+                    "system": system_prompt,
+                    "temperature": self.temperature
                 }
 
                 response = self.session.post(
@@ -427,59 +388,51 @@ Guidelines:
                     timeout=self.timeout
                 )
 
-                if response.status_code == 429:  # Rate limit error
-                    retry_after = int(response.headers.get('Retry-After', self.rate_limit_delay))
-                    print(f"Rate limit hit. Waiting {retry_after} seconds...")
-                    time.sleep(retry_after)
-                    continue
-
                 response.raise_for_status()
                 response_data = response.json()
-                answer = response_data["choices"][0]["message"]["content"]
-                
-                # Cache the response
-                self.response_cache[cache_key] = {
-                    'response': answer,
-                    'timestamp': current_time
-                }
-                
+                answer = response_data["content"][0]["text"]
+                self.response_cache[cache_key] = answer
                 return answer
 
             except requests.exceptions.Timeout:
-                if attempt == self.max_retries - 1:
-                    raise
-                time.sleep(2 ** attempt)  # Exponential backoff
+                if attempt < self.max_retries - 1:
+                    print(f"Request timed out. Retrying... (Attempt {attempt + 1}/{self.max_retries})")
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    return "Error: Request timed out after multiple attempts. Please try again."
+
             except requests.exceptions.RequestException as e:
-                if attempt == self.max_retries - 1:
-                    raise
-                time.sleep(2 ** attempt)  # Exponential backoff
+                error_msg = f"API Error: {str(e)}"
+                if hasattr(e, 'response') and e.response is not None:
+                    error_msg += f"\nResponse: {e.response.text}"
+                return f"Error generating answer: {error_msg}"
+
+            except Exception as e:
+                return f"Error generating answer: {str(e)}"
+
+        return "Error: Maximum retry attempts reached. Please try again."
 
 ### =================== Question Handler =================== ###
 class QuestionHandler:
     def __init__(self, vector_store: VectorStore):
         self.vector_store = vector_store
-        self.llm = OpenAIHandler()
+        self.llm = ClaudeHandler()
 
-    def process_question(self, question: str, query_type: str = "document", k: int = 3) -> str:  # Reduced k from 5 to 3
-        # Get most relevant chunks
+    def process_question(self, question: str, query_type: str = "document", k: int = 5) -> str:
         results = self.vector_store.search(question, k=k)
 
-        # Optimize context building
         context_parts = []
         for chunk in results:
             metadata = chunk['metadata']
-            # Only include essential metadata
             source_info = f"Source: {metadata['source']}"
-            if 'date' in metadata and metadata['date']:
-                source_info += f" ({metadata['date']})"
-            # Add chunk text with minimal formatting
+            if 'date' in metadata:
+                source_info += f" from {metadata['date']}"
             context_parts.append(f"{source_info}\n{chunk['text']}")
-        
-        # Join with minimal formatting
         context = "\n\n".join(context_parts)
 
-        # Generate answer
-        return self.llm.generate_answer(question, context)
+        answer = self.llm.generate_answer(question, context)
+        return answer
 
 ### =================== Main RAG System =================== ###
 class RAGSystem:
@@ -497,7 +450,7 @@ class RAGSystem:
             'sequence_length': 256,
             'batch_size': 128,
             'use_half_precision': True,
-            'num_documents': 5,  # Fixed number of best documents to use
+            'doc_percentage': 15,
             'num_results': 3
         }
         
@@ -509,22 +462,44 @@ class RAGSystem:
         self.apply_settings(default_settings)
     
     def apply_settings(self, settings):
-        """Apply settings to the RAG system"""
+        """Apply new settings to the RAG system components."""
+        if not settings:
+            return
+            
+        print("\n=== Applying Settings ===")
+        print(f"Settings received: {settings}")
+            
         # Update vector store settings
-        self.vector_store.chunk_size = settings.get('chunk_size', 500)
-        self.vector_store.chunk_overlap = settings.get('chunk_overlap', 50)
-        
+        if hasattr(self, 'vector_store') and self.vector_store is not None:
+            old_chunk_size = self.vector_store.chunk_size
+            old_chunk_overlap = self.vector_store.chunk_overlap
+            
+            self.vector_store.chunk_size = settings.get('chunk_size', self.vector_store.chunk_size)
+            self.vector_store.chunk_overlap = settings.get('chunk_overlap', self.vector_store.chunk_overlap)
+            
+            print(f"Vector Store Settings Updated:")
+            print(f"  Chunk Size: {old_chunk_size} -> {self.vector_store.chunk_size}")
+            print(f"  Chunk Overlap: {old_chunk_overlap} -> {self.vector_store.chunk_overlap}")
+            
         # Update question handler settings
-        self.question_handler.llm.temperature = settings.get('model_temperature', 0.3)
-        self.question_handler.llm.sequence_length = settings.get('sequence_length', 256)
-        self.question_handler.llm.batch_size = settings.get('batch_size', 128)
-        self.question_handler.llm.use_half_precision = settings.get('use_half_precision', True)
-        
-        # Update number of documents to use
-        self.num_documents = settings.get('num_documents', 5)
-        
-        # Store settings
-        self.settings = settings
+        if hasattr(self, 'question_handler') and self.question_handler is not None:
+            if hasattr(self.question_handler, 'llm') and self.question_handler.llm is not None:
+                old_temp = self.question_handler.llm.temperature
+                old_seq = self.question_handler.llm.sequence_length
+                old_batch = self.question_handler.llm.batch_size
+                old_half = self.question_handler.llm.use_half_precision
+                
+                self.question_handler.llm.temperature = settings.get('model_temperature', self.question_handler.llm.temperature)
+                self.question_handler.llm.sequence_length = settings.get('sequence_length', self.question_handler.llm.sequence_length)
+                self.question_handler.llm.batch_size = settings.get('batch_size', self.question_handler.llm.batch_size)
+                self.question_handler.llm.use_half_precision = settings.get('use_half_precision', self.question_handler.llm.use_half_precision)
+                
+                print(f"LLM Settings Updated:")
+                print(f"  Temperature: {old_temp} -> {self.question_handler.llm.temperature}")
+                print(f"  Sequence Length: {old_seq} -> {self.question_handler.llm.sequence_length}")
+                print(f"  Batch Size: {old_batch} -> {self.question_handler.llm.batch_size}")
+                print(f"  Half Precision: {old_half} -> {self.question_handler.llm.use_half_precision}")
+        print("=== Settings Applied ===\n")
 
     def initialize(self):
         print("\n=== Welcome to the Local RAG System ===")
