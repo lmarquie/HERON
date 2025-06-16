@@ -209,7 +209,8 @@ class VectorStore:
         try:
             # Try to load from cache first
             self.bi_encoder = SentenceTransformer(model_name, cache_folder=cache_dir)
-            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-2-v2', cache_folder=cache_dir)
+            # Use a more powerful cross-encoder for better ranking
+            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2', cache_folder=cache_dir)
         except Exception as e:
             print(f"Error loading models: {str(e)}")
             print("Falling back to smaller models...")
@@ -234,138 +235,64 @@ class VectorStore:
         self.chunk_overlap = 50
         print(f"Initialized VectorStore with optimized models on {self.bi_encoder.device}")
 
-    def save_local(self, path: str):
-        """Save the vector store to a local directory"""
-        if not os.path.exists(path):
-            os.makedirs(path)
+    def preprocess_query(self, query: str) -> str:
+        """Preprocess the query to improve search relevance"""
+        # Convert to lowercase
+        query = query.lower()
         
-        # Save the index
-        if self.index is not None:
-            faiss.write_index(self.index, os.path.join(path, 'index.faiss'))
+        # Add financial context if query seems financial
+        financial_terms = ['revenue', 'profit', 'earnings', 'income', 'financial', 'numbers', 'quarterly', 'annual', 'report']
+        if any(term in query for term in financial_terms):
+            query = f"financial report {query}"
         
-        # Save the documents and metadata
-        with open(os.path.join(path, 'documents.pkl'), 'wb') as f:
-            pickle.dump({
-                'documents': self.documents,
-                'metadata_index': self.metadata_index,
-                'chunk_size': self.chunk_size,
-                'chunk_overlap': self.chunk_overlap
-            }, f)
-        
-        print(f"Vector store saved to {path}")
-
-    def load_local(self, path: str):
-        """Load the vector store from a local directory"""
-        # Load the index
-        index_path = os.path.join(path, 'index.faiss')
-        if os.path.exists(index_path):
-            self.index = faiss.read_index(index_path)
-        
-        # Load the documents and metadata
-        documents_path = os.path.join(path, 'documents.pkl')
-        if os.path.exists(documents_path):
-            with open(documents_path, 'rb') as f:
-                data = pickle.load(f)
-                self.documents = data['documents']
-                self.metadata_index = data['metadata_index']
-                self.chunk_size = data.get('chunk_size', 500)
-                self.chunk_overlap = data.get('chunk_overlap', 50)
-        
-        # Reinitialize models with proper device placement
-        self.bi_encoder = SentenceTransformer('paraphrase-MiniLM-L3-v2')
-        self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-TinyBERT-L-2-v2')
-        self.bi_encoder.max_seq_length = 64
-        self.cross_encoder.max_seq_length = 64
-        
-        if torch.cuda.is_available():
-            self.bi_encoder = self.bi_encoder.to('cuda')
-            self.cross_encoder = self.cross_encoder.to('cuda')
-            self.bi_encoder = self.bi_encoder.half()
-            self.cross_encoder = self.cross_encoder.half()
-        
-        print(f"Vector store loaded from {path}")
-
-    def add_documents(self, documents: List[Dict]):
-        print(f"Adding {len(documents)} documents to vector store...")
-        texts = []
-        metadata_list = []
-        for doc in documents:
-            metadata = {
-                'source': doc['metadata'].get('source', 'Unknown'),
-                'path': doc['metadata'].get('path', ''),
-                'date': doc['metadata'].get('date', datetime.now().isoformat())
-            }
-            texts.append(doc['text'])
-            metadata_list.append(metadata)
-
-        print("Converting text to vector embeddings...")
-        # Increased batch size for faster processing
-        embeddings = self.bi_encoder.encode(texts,
-                                          show_progress_bar=True,
-                                          batch_size=64,  # Increased from 32
-                                          convert_to_numpy=True,
-                                          normalize_embeddings=True)
-
-        if self.index is None:
-            # Use a more efficient index type
-            if torch.cuda.is_available():
-                res = faiss.StandardGpuResources()
-                quantizer = faiss.IndexFlatIP(embeddings.shape[1])
-                self.index = faiss.IndexIVFFlat(quantizer, embeddings.shape[1],
-                                              min(100, len(embeddings)),
-                                              faiss.METRIC_INNER_PRODUCT)
-                self.index = faiss.index_cpu_to_gpu(res, 0, self.index)
-                if not self.index.is_trained and len(embeddings) > 0:
-                    self.index.train(embeddings.astype('float32'))
-            else:
-                self.index = faiss.IndexFlatIP(embeddings.shape[1])
-            print(f"Created new FAISS index with dimension: {embeddings.shape[1]}")
-        self.index.add(embeddings.astype('float32'))
-
-        for i, (text, metadata) in enumerate(zip(texts, metadata_list)):
-            self.documents.append({
-                'text': text,
-                'metadata': metadata
-            })
-            for key, value in metadata.items():
-                if key not in self.metadata_index:
-                    self.metadata_index[key] = {}
-                if value not in self.metadata_index[key]:
-                    self.metadata_index[key][value] = set()
-                self.metadata_index[key][value].add(i)
-
-        print(f"Successfully added {len(documents)} documents. Total documents: {len(self.documents)}")
+        return query
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
-        """Search for relevant documents"""
+        """Search for relevant documents with improved ranking"""
         # Check cache first
         cache_key = f"{query}:{k}"
         if cache_key in self.similarity_cache:
             return self.similarity_cache[cache_key]
 
+        # Preprocess query
+        processed_query = self.preprocess_query(query)
+        
         # Get query embedding
-        query_embedding = self.get_embedding(query)
+        query_embedding = self.get_embedding(processed_query)
         
         # Search in FAISS index
         if self.index is not None:
             # Use a larger initial search to get more candidates
-            initial_k = min(k * 2, len(self.documents))
+            initial_k = min(k * 4, len(self.documents))  # Increased from k*2 to k*4
             scores, indices = self.index.search(query_embedding.reshape(1, -1).astype('float32'), initial_k)
             
             # Get documents and their scores
-            results = []
+            candidates = []
             for score, idx in zip(scores[0], indices[0]):
                 if idx != -1:  # FAISS returns -1 for empty slots
                     doc = self.documents[idx]
-                    results.append({
+                    candidates.append({
                         'text': doc['text'],
                         'metadata': doc['metadata'],
                         'score': float(score)
                     })
             
-            # Sort by score in descending order and take top k
-            results.sort(key=lambda x: x['score'], reverse=True)
-            results = results[:k]
+            # Re-rank using cross-encoder
+            if candidates:
+                # Prepare pairs for cross-encoder
+                pairs = [(processed_query, candidate['text']) for candidate in candidates]
+                
+                # Get cross-encoder scores
+                cross_scores = self.cross_encoder.predict(pairs)
+                
+                # Update scores with cross-encoder scores
+                for candidate, cross_score in zip(candidates, cross_scores):
+                    # Combine bi-encoder and cross-encoder scores
+                    candidate['score'] = 0.3 * candidate['score'] + 0.7 * float(cross_score)
+            
+            # Sort by combined score in descending order and take top k
+            candidates.sort(key=lambda x: x['score'], reverse=True)
+            results = candidates[:k]
             
             # Cache the results
             self.similarity_cache[cache_key] = results
