@@ -104,6 +104,56 @@ class LocalFileHandler:
             print(f" Error processing folder: {str(e)}")
             return []
 
+class WebFileHandler(LocalFileHandler):
+    def __init__(self):
+        super().__init__()
+        self.temp_dir = "temp"
+        os.makedirs(self.temp_dir, exist_ok=True)
+
+    def process_uploaded_files(self, uploaded_files):
+        """Process files uploaded through Streamlit's file uploader"""
+        if not uploaded_files:
+            return []
+
+        documents = []
+        for uploaded_file in uploaded_files:
+            try:
+                # Save the uploaded file to a temporary location
+                temp_path = os.path.join(self.temp_dir, uploaded_file.name)
+                with open(temp_path, 'wb') as f:
+                    f.write(uploaded_file.getbuffer())
+
+                # Process the file based on its type
+                if uploaded_file.name.endswith('.pdf'):
+                    doc = fitz.open(temp_path)
+                    content = ""
+                    for page in doc:
+                        content += page.get_text()
+                    doc.close()
+                elif uploaded_file.name.endswith('.txt'):
+                    with open(temp_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                else:
+                    continue
+
+                documents.append({
+                    'text': content,
+                    'metadata': {
+                        'source': uploaded_file.name,
+                        'path': temp_path,
+                        'date': datetime.now().isoformat()
+                    }
+                })
+
+                # Clean up the temporary file
+                os.remove(temp_path)
+
+            except Exception as e:
+                print(f"Error processing {uploaded_file.name}: {str(e)}")
+                continue
+
+        return documents
+
 ### =================== Text Processing =================== ###
 class TextProcessor:
     def __init__(self, chunk_size: int = 500, overlap: int = 30):
@@ -429,11 +479,12 @@ class QuestionHandler:
 
 ### =================== Main RAG System =================== ###
 class RAGSystem:
-    def __init__(self, settings=None):
-        self.file_handler = LocalFileHandler()
+    def __init__(self, settings=None, is_web=False):
+        self.file_handler = WebFileHandler() if is_web else LocalFileHandler()
         self.vector_store = VectorStore()
         self.question_handler = QuestionHandler(self.vector_store)
         self.running = True
+        self.is_web = is_web
         
         # Initialize with default settings
         default_settings = {
@@ -534,6 +585,17 @@ class RAGSystem:
 
             else:
                 print("\nInvalid choice. Please try again.")
+
+    def process_web_uploads(self, uploaded_files):
+        """Process files uploaded through the web interface"""
+        if not self.is_web:
+            return False
+            
+        documents = self.file_handler.process_uploaded_files(uploaded_files)
+        if documents:
+            self.vector_store.add_documents(documents)
+            return True
+        return False
 
 if __name__ == "__main__":
     rag_system = RAGSystem()
