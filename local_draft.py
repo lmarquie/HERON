@@ -26,12 +26,26 @@ def get_user_input() -> Dict:
     """Get user input through Streamlit interface"""
     st.title("Document Q&A System")
     
-    # File uploader with label
-    uploaded_file = st.file_uploader(
-        "Upload a PDF document",
-        type=['pdf'],
-        help="Upload a PDF file to analyze"
-    )
+    # Create two columns for file options
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # File uploader with label
+        uploaded_file = st.file_uploader(
+            "Upload a PDF document",
+            type=['pdf'],
+            help="Upload a PDF file to analyze"
+        )
+    
+    with col2:
+        # File loading option
+        st.markdown("### Load Local Files")
+        file_path = st.text_input(
+            "Enter file path",
+            placeholder="Enter path to PDF file",
+            help="Enter the path to a PDF file on your system"
+        )
+        load_file = st.button("Load File", help="Load the file from the specified path")
     
     # Text input for question with label
     question = st.text_input(
@@ -88,6 +102,8 @@ def get_user_input() -> Dict:
     
     return {
         'uploaded_file': uploaded_file,
+        'file_path': file_path,
+        'load_file': load_file,
         'question': question,
         'model': model,
         'temperature': temperature,
@@ -542,14 +558,25 @@ def main():
     # Get user input
     user_input = get_user_input()
     
-    # Process document if uploaded
-    if user_input['uploaded_file'] is not None and not st.session_state.document_processed:
+    # Process document if uploaded or loaded
+    if (user_input['uploaded_file'] is not None or 
+        (user_input['load_file'] and user_input['file_path'])) and not st.session_state.document_processed:
+        
         with st.spinner("Processing document..."):
             # Initialize RAG system
             st.session_state.rag_system = RAGSystem()
             
             # Process document
-            document_text = user_input['uploaded_file'].read()
+            if user_input['uploaded_file'] is not None:
+                document_text = user_input['uploaded_file'].read()
+            else:
+                try:
+                    with open(user_input['file_path'], 'rb') as f:
+                        document_text = f.read()
+                except Exception as e:
+                    st.error(f"Error loading file: {str(e)}")
+                    return
+            
             st.session_state.rag_system.process_document(document_text)
             st.session_state.document_processed = True
             
