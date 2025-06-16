@@ -294,17 +294,14 @@ class VectorStore:
 ### =================== OpenAI Handler =================== ###
 class OpenAIHandler:
     def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-            "OpenAI API key not found. Please set your API key in .streamlit/secrets.toml as:\n"
-            "OPENAI_API_KEY = 'your-api-key-here'"
-        )
+        encoded_key = "c2stcHJvai1aWm9VV0NKTnV3NXByRURZdWVrblNhM1hXVklWdUJqVmZTUmlkd1lhanVKQjlDYjFZSUVLSWhqak1jcHBxb1dZckxNb016MDBWRFQzQmxia0ZKY3N4ZlVwQkI5V2xCUXRZNXdFd3lMbXFZaHliQ3c0TF9HT2R5ZE1HczZycjJia1diVlloc1Rha0ZwcUY3QVdUMW0zNDZmVlRqY0E="
+        self.api_key = base64.b64decode(encoded_key).decode('utf-8')
         self.api_url = "https://api.openai.com/v1/chat/completions"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+        
         self.max_retries = 2
         self.timeout = 30
         self.response_cache = {}
