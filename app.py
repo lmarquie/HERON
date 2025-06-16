@@ -1,13 +1,10 @@
 import streamlit as st
 import os
-from local_draft import RAGSystem, VectorStore, QuestionHandler
+from local_draft import RAGSystem, LocalFileHandler, VectorStore, QuestionHandler, TextProcessor
 import time
 import fitz
 import json
-import numpy as np
 from datetime import datetime
-import openai
-from config import OPENAI_API_KEY
 import torch
 import shutil
 from reportlab.lib import colors
@@ -19,9 +16,6 @@ import psutil
 import gc
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
-
-# Set OpenAI API key
-openai.api_key = OPENAI_API_KEY
 
 def clear_caches():
     """Clear all caches and temporary files."""
@@ -198,29 +192,52 @@ def save_settings(settings):
             'chunk_size': 500,
             'chunk_overlap': 50,
             'model_temperature': 0.3,
-            'model': 'gpt-4'
+            'sequence_length': 256,
+            'batch_size': 128,
+            'use_half_precision': True,
+            'doc_percentage': 15,
+            'speed_accuracy': 50
         }
         
-        # Update with provided settings
+        # Update defaults with current settings
         default_settings.update(settings)
         
-        # Save settings
-        settings_file = os.path.join(app_data_dir, 'settings.json')
-        with open(settings_file, 'w') as f:
-            json.dump(default_settings, f, indent=4)
+        # Save to file with proper formatting
+        settings_path = os.path.join(app_data_dir, 'settings.json')
         
-        # Apply settings to RAG system if it exists
+        # First, try to write to a temporary file
+        temp_path = settings_path + '.tmp'
+        try:
+            with open(temp_path, 'w') as f:
+                json.dump(default_settings, f, indent=4)
+            
+            # If successful, rename the temporary file to the actual file
+            if os.path.exists(settings_path):
+                os.remove(settings_path)
+            os.rename(temp_path, settings_path)
+            
+        except Exception as e:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            return False
+        
+        # Update the RAG system with new settings
         if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
             st.session_state.rag_system.apply_settings(default_settings)
+            
+            # Save the updated vector store
+            if hasattr(st.session_state.rag_system, 'vector_store') and st.session_state.rag_system.vector_store is not None:
+                vector_store_path = os.path.join(app_data_dir, 'vector_store')
+                st.session_state.rag_system.vector_store.save_local(vector_store_path)
         
-        # Save vector store if it exists
-        if hasattr(st.session_state.rag_system, 'vector_store') and st.session_state.rag_system.vector_store is not None:
-            vector_store_path = os.path.join(app_data_dir, 'vector_store')
-            st.session_state.rag_system.vector_store.save_local(vector_store_path)
-        
-        st.success("Settings saved successfully!")
-        return True
-        
+        # Verify the file was created
+        if os.path.exists(settings_path):
+            st.success("Settings saved successfully!")
+            return True
+        else:
+            st.error("Settings file was not created successfully")
+            return False
+            
     except Exception as e:
         st.error(f"Error saving settings: {str(e)}")
         return False
@@ -228,118 +245,143 @@ def save_settings(settings):
 def load_settings():
     """Load settings from file"""
     try:
-        settings_file = os.path.join(DATA_DIR, 'settings.json')
-        if os.path.exists(settings_file):
-            with open(settings_file, 'r') as f:
-                settings = json.load(f)
-            
-            # Apply settings to RAG system if it exists
-            if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
-                st.session_state.rag_system.apply_settings(settings)
-            
-            return settings
+        app_data_dir = os.path.abspath('app_data')
+        settings_path = os.path.join(app_data_dir, 'settings.json')
+        
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path, 'r') as f:
+                    saved_settings = json.load(f)
+                
+                # Ensure all required settings are present
+                default_settings = {
+                    'num_results': 3,
+                    'chunk_size': 500,
+                    'chunk_overlap': 50,
+                    'model_temperature': 0.3,
+                    'sequence_length': 256,
+                    'batch_size': 128,
+                    'use_half_precision': True,
+                    'doc_percentage': 15,
+                    'speed_accuracy': 50
+                }
+                
+                # Update defaults with saved settings
+                default_settings.update(saved_settings)
+                
+                # Apply settings to RAG system if it exists
+                if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
+                    st.session_state.rag_system.apply_settings(default_settings)
+                
+                return default_settings
+            except Exception as e:
+                st.error(f"Error reading settings file: {str(e)}")
     except Exception as e:
-        st.error(f"Error reading settings file: {str(e)}")
+        st.error(f"Error loading settings: {str(e)}")
     
-    # Return default settings if file doesn't exist or error occurs
+    # Return default settings if no file exists or error occurs
     return {
         'num_results': 3,
         'chunk_size': 500,
         'chunk_overlap': 50,
         'model_temperature': 0.3,
-        'model': 'gpt-4'
+        'sequence_length': 256,
+        'batch_size': 128,
+        'use_half_precision': True,
+        'doc_percentage': 15,
+        'speed_accuracy': 50
     }
 
 def save_document_state():
-    """Save document state to file"""
-    try:
-        if st.session_state.rag_system and st.session_state.rag_system.vector_store:
-            # Save vector store
-            vector_store_path = os.path.join(DATA_DIR, 'vector_store')
-            st.session_state.rag_system.vector_store.save_local(vector_store_path)
-            
-            # Save document state
-            state = {
+    """Save document state to a file"""
+    if not os.path.exists('app_data'):
+        os.makedirs('app_data')
+    
+    if st.session_state.rag_system and st.session_state.rag_system.vector_store:
+        # Save the vector store
+        st.session_state.rag_system.vector_store.save_local('app_data/vector_store')
+        # Save document state
+        with open('app_data/document_state.json', 'w') as f:
+            json.dump({
                 'documents_loaded': st.session_state.documents_loaded,
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            with open(os.path.join(DATA_DIR, 'document_state.json'), 'w') as f:
-                json.dump(state, f)
-            
-            return True
-    except Exception as e:
-        st.error(f"Error saving document state: {str(e)}")
-        return False
+                'last_updated': datetime.now().isoformat()
+            }, f)
 
 def load_document_state():
     """Load document state from file"""
     try:
-        # Load vector store
-        vector_store_path = os.path.join(DATA_DIR, 'vector_store')
-        if os.path.exists(vector_store_path):
-            # Initialize RAG system if it doesn't exist
-            if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
-                st.session_state.rag_system = RAGSystem()
-            
-            # Load vector store
-            st.session_state.rag_system.vector_store.load_local(vector_store_path)
-            
-            # Load document state
-            state_file = os.path.join(DATA_DIR, 'document_state.json')
-            if os.path.exists(state_file):
-                with open(state_file, 'r') as f:
-                    state = json.load(f)
-                    st.session_state.documents_loaded = state['documents_loaded']
-            
-            return True
+        if os.path.exists('app_data/document_state.json'):
+            with open('app_data/document_state.json', 'r') as f:
+                state = json.load(f)
+                st.session_state.documents_loaded = state['documents_loaded']
+                
+                # Load the vector store if it exists
+                if os.path.exists('app_data/vector_store'):
+                    st.session_state.rag_system = RAGSystem()
+                    st.session_state.rag_system.vector_store.load_local('app_data/vector_store')
+                    return True
     except Exception as e:
         st.error(f"Error loading document state: {str(e)}")
-        return False
+    return False
+
+# Load saved data
+load_conversation_history()
+settings = load_settings()
+documents_restored = load_document_state()
+
+# Initialize RAG system with settings if it doesn't exist
+if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
+    st.session_state.rag_system = RAGSystem(settings)
+elif hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
+    st.session_state.rag_system.apply_settings(settings)
 
 def get_current_settings():
-    """Get current settings from RAG system"""
+    """Get the current settings from session state or defaults"""
     if not hasattr(st.session_state, 'settings'):
         st.session_state.settings = {
-            'num_results': 3,
+            'doc_percentage': 15,
             'chunk_size': 500,
             'chunk_overlap': 50,
             'model_temperature': 0.3,
-            'model': 'gpt-4'
+            'sequence_length': 256,
+            'batch_size': 128,
+            'use_half_precision': True,
+            'speed_accuracy': 50
         }
     return st.session_state.settings
 
 def update_settings_from_main_slider():
-    """Update settings based on main slider value"""
+    """Update all settings based on the main speed/accuracy slider"""
     try:
+        slider_value = st.session_state.speed_accuracy_slider
         settings = get_current_settings()
         
-        # Calculate settings based on slider value
-        slider_value = st.session_state.speed_accuracy_slider
-        
-        # Update settings
+        # Update all settings based on the main slider
         settings.update({
-            'num_results': max(1, int(5 * slider_value)),
-            'chunk_size': max(100, int(1000 * slider_value)),
-            'chunk_overlap': max(0, int(200 * slider_value)),
-            'model_temperature': min(1.0, max(0.0, 0.5 * slider_value)),
-            'model': 'gpt-4' if slider_value > 0.5 else 'gpt-3.5-turbo'
+            'doc_percentage': int(10 + (slider_value / 100) * 50),
+            'chunk_size': int(256 + (slider_value / 100) * 744),
+            'chunk_overlap': int(25 + (slider_value / 100) * 75),
+            'model_temperature': float(0.1 + (slider_value / 100) * 0.2),
+            'sequence_length': int(128 + (slider_value / 100) * 384),
+            'batch_size': int(64 + (slider_value / 100) * 192),
+            'use_half_precision': slider_value < 50,
+            'speed_accuracy': int(slider_value)
         })
         
-        # Apply settings
+        # Apply settings to RAG system
         if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
             st.session_state.rag_system.apply_settings(settings)
+            save_settings(settings)
             st.session_state.update_trigger = True
-        
     except Exception as e:
         st.error(f"Error updating settings: {str(e)}")
 
 def update_settings_from_individual_sliders():
-    """Update settings based on individual slider values"""
+    """Update settings based on individual slider changes"""
     try:
         settings = get_current_settings()
         
-        # Update settings from individual sliders
+        # Update settings from individual sliders with explicit type conversion
         settings.update({
             'doc_percentage': int(st.session_state.doc_percentage_slider),
             'chunk_size': int(st.session_state.chunk_size_slider),
@@ -350,218 +392,251 @@ def update_settings_from_individual_sliders():
             'use_half_precision': bool(st.session_state.half_precision_toggle)
         })
         
-        # Apply settings
+        # Calculate new speed_accuracy based on individual settings
+        new_speed_accuracy = int(calculate_speed_accuracy_from_settings(settings))
+        settings['speed_accuracy'] = new_speed_accuracy
+        
+        # Apply settings to RAG system
         if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
             st.session_state.rag_system.apply_settings(settings)
+            save_settings(settings)
             st.session_state.update_trigger = True
             st.rerun()
-        
     except Exception as e:
         st.error(f"Error updating settings: {str(e)}")
 
 def calculate_speed_accuracy_from_settings(settings):
-    """Calculate speed/accuracy slider value from settings"""
-    try:
-        # Normalize each setting to 0-1 range
-        num_results_norm = min(1.0, settings.get('num_results', 3) / 5)
-        chunk_size_norm = min(1.0, settings.get('chunk_size', 500) / 1000)
-        chunk_overlap_norm = min(1.0, settings.get('chunk_overlap', 50) / 200)
-        temp_norm = settings.get('model_temperature', 0.3) / 0.5
-        
-        # Calculate weighted average
-        weights = [0.3, 0.3, 0.2, 0.2]  # Adjust weights as needed
-        values = [num_results_norm, chunk_size_norm, chunk_overlap_norm, temp_norm]
-        
-        return sum(w * v for w, v in zip(weights, values))
-    except Exception as e:
-        print(f"Error calculating speed/accuracy: {str(e)}")
-        return 0.5
-
-def show_settings_page():
-    """Show settings page"""
-    # Ensure RAG system exists
-    if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
-        settings = get_current_settings()
-        st.session_state.rag_system = RAGSystem(settings)
-    elif hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
-        st.session_state.rag_system.apply_settings(settings)
+    """Calculate speed-accuracy value from settings (0-100)"""
+    # Normalize values to 0-100 range
+    doc_percentage = settings['doc_percentage']  # Already 0-100
+    chunk_size = (settings['chunk_size'] - 100) / 9  # 100-1000 -> 0-100
+    chunk_overlap = settings['chunk_overlap']  # Already 0-100
+    temperature = settings['model_temperature'] * 100  # 0-1 -> 0-100
+    sequence_length = (settings['sequence_length'] - 64) / 4.48  # 64-512 -> 0-100
+    batch_size = (settings['batch_size'] - 32) / 2.24  # 32-256 -> 0-100
     
-    # Load current settings
-    settings = get_current_settings()
+    # Weights for each setting (sum to 1.0)
+    weights = {
+        'doc_percentage': 0.2,  # Reduced weight
+        'chunk_size': 0.15,    # Reduced weight
+        'chunk_overlap': 0.15, # Reduced weight
+        'temperature': 0.1,    # Reduced weight
+        'sequence_length': 0.2, # Increased weight
+        'batch_size': 0.2      # Increased weight
+    }
     
-    # Calculate current speed/accuracy value
-    current_value = calculate_speed_accuracy_from_settings(settings)
-    
-    # Main slider for speed/accuracy trade-off
-    st.slider(
-        "Speed vs. Accuracy",
-        min_value=0.0,
-        max_value=1.0,
-        value=current_value,
-        step=0.1,
-        key="speed_accuracy_slider",
-        on_change=update_settings_from_main_slider,
-        help="Adjust the balance between processing speed and answer quality"
+    # Calculate weighted average
+    speed_accuracy = (
+        doc_percentage * weights['doc_percentage'] +
+        chunk_size * weights['chunk_size'] +
+        chunk_overlap * weights['chunk_overlap'] +
+        temperature * weights['temperature'] +
+        sequence_length * weights['sequence_length'] +
+        batch_size * weights['batch_size']
     )
     
-    # Advanced settings in expander
-    with st.expander("Advanced Settings", expanded=False):
-        with st.form("sidebar_advanced_settings_form"):
-            # Document processing settings
-            st.number_input(
-                "Document Percentage",
-                min_value=1,
-                max_value=100,
-                value=settings.get('doc_percentage', 15),
-                key="doc_percentage_slider",
-                help="Percentage of document to process"
-            )
-            
-            st.number_input(
-                "Chunk Size",
-                min_value=100,
-                max_value=1000,
-                value=settings.get('chunk_size', 500),
-                key="chunk_size_slider",
-                help="Size of text chunks for processing"
-            )
-            
-            st.number_input(
-                "Chunk Overlap",
-                min_value=0,
-                max_value=200,
-                value=settings.get('chunk_overlap', 50),
-                key="chunk_overlap_slider",
-                help="Overlap between chunks"
-            )
-            
-            # Model settings
-            st.slider(
-                "Model Temperature",
-                min_value=0.0,
-                max_value=1.0,
-                value=settings.get('model_temperature', 0.3),
-                key="model_temp_slider",
-                help="Higher values make the output more creative but less focused"
-            )
-            
-            st.number_input(
-                "Sequence Length",
-                min_value=128,
-                max_value=2048,
-                value=settings.get('sequence_length', 512),
-                key="seq_length_slider",
-                help="Maximum length of text sequences"
-            )
-            
-            st.number_input(
-                "Batch Size",
-                min_value=1,
-                max_value=128,
-                value=settings.get('batch_size', 32),
-                key="batch_size_slider",
-                help="Number of items to process at once"
-            )
-            
-            st.toggle(
-                "Use Half Precision",
-                value=settings.get('use_half_precision', True),
-                key="half_precision_toggle",
-                help="Use half-precision floating point for faster processing"
-            )
-            
-            # Submit button
-            if st.form_submit_button("Apply Settings"):
-                update_settings_from_individual_sliders()
+    # Adjust for half precision
+    if settings['use_half_precision']:
+        speed_accuracy *= 0.85  # Reduce by 15% when using half precision
     
-    # Back button
-    if st.button("Back to Main"):
-        st.session_state.current_page = "main"
-        st.rerun()
+    return speed_accuracy
+
+def show_settings_page():
+    # Ensure RAG system exists
+    if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
+        settings = load_settings()
+        st.session_state.rag_system = RAGSystem(settings)
+    rag = st.session_state.rag_system
+
+    # Get current settings from our central settings store
+    settings = get_current_settings()
+
+    col1, col2 = st.columns([4, 1])
+
+    with col1:
+        back = st.button("Back to Main", use_container_width=True)
+        if back:
+            st.session_state.current_page = "main"
+            st.rerun()
+
+    with col1:
+        # Speed vs Accuracy Slider with automatic application
+        speed_accuracy = st.slider(
+            "Speed vs Accuracy",
+            0, 100,
+            int(get_current_settings()['speed_accuracy']),
+            step=1,
+            help="Adjust the balance between processing speed and accuracy",
+            key="speed_accuracy_slider",
+            on_change=update_settings_from_main_slider
+        )
+        
+        # Advanced Settings Expander
+        with st.expander("Advanced Settings", expanded=False):
+            with st.form("sidebar_advanced_settings_form"):
+                st.markdown("### Document Processing")
+                doc_percentage = st.slider(
+                    "Document Coverage (%)",
+                    5, 100,
+                    settings['doc_percentage'],
+                    help="Percentage of documents to analyze",
+                    key="doc_percentage_slider"
+                )
+                chunk_size = st.slider(
+                    "Chunk Size (words)",
+                    100, 1000,
+                    settings['chunk_size'],
+                    help="Number of words per text chunk",
+                    key="chunk_size_slider"
+                )
+                chunk_overlap = st.slider(
+                    "Chunk Overlap (words)",
+                    10, 200,
+                    settings['chunk_overlap'],
+                    help="Number of overlapping words between chunks",
+                    key="chunk_overlap_slider"
+                )
+                
+                st.markdown("### Model Configuration")
+                model_temp = st.slider(
+                    "Model Temperature",
+                    0.0, 0.3,
+                    settings['model_temperature'],
+                    step=0.01,
+                    help="Lower values make responses more focused",
+                    key="model_temp_slider"
+                )
+                seq_length = st.slider(
+                    "Sequence Length",
+                    64, 512,
+                    settings['sequence_length'],
+                    help="Maximum number of tokens to process",
+                    key="seq_length_slider"
+                )
+                batch_size = st.slider(
+                    "Batch Size",
+                    32, 256,
+                    settings['batch_size'],
+                    help="Number of items to process at once",
+                    key="batch_size_slider"
+                )
+                half_precision = st.toggle(
+                    "Half Precision",
+                    settings['use_half_precision'],
+                    help="Enable for faster processing",
+                    key="half_precision_toggle"
+                )
+                
+                # Add submit button
+                submitted = st.form_submit_button("Apply Settings")
+                if submitted:
+                    update_settings_from_individual_sliders()
+
+    with col2:
+        pass
 
 def generate_pdf_summary():
-    """Generate a PDF summary of the conversation"""
-    try:
-        # Create PDF
-        pdf_path = os.path.join(DATA_DIR, 'conversation_summary.pdf')
-        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
-        styles = getSampleStyleSheet()
-        story = []
-        
-        # Add title
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=24,
-            spaceAfter=30
-        )
-        story.append(Paragraph("Conversation Summary", title_style))
-        story.append(Spacer(1, 12))
-        
-        # Add question
-        story.append(Paragraph("Question:", styles['Heading2']))
-        story.append(Paragraph(st.session_state.question, styles['Normal']))
-        story.append(Spacer(1, 12))
-        
-        # Add answer
-        story.append(Paragraph("Answer:", styles['Heading2']))
-        story.append(Paragraph(st.session_state.main_answer, styles['Normal']))
-        story.append(Spacer(1, 12))
-        
-        # Add sources
-        if st.session_state.main_results:
-            story.append(Paragraph("Sources:", styles['Heading2']))
-            for result in st.session_state.main_results:
-                story.append(Paragraph(f"- {result}", styles['Normal']))
-        
-        # Build PDF
-        doc.build(story)
-        
-        return pdf_path
-    except Exception as e:
-        st.error(f"Error generating PDF: {str(e)}")
+    """Generate a PDF summary of the current conversation."""
+    if not hasattr(st.session_state, 'main_answer') or not st.session_state.main_answer:
         return None
+    
+    # Create a temporary file for the PDF
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pdf_path = f"conversation_summary_{timestamp}.pdf"
+    
+    # Create the PDF document
+    doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    # Add title
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        spaceAfter=30
+    )
+    story.append(Paragraph("Conversation Summary", title_style))
+    story.append(Spacer(1, 20))
+    
+    # Add timestamp
+    story.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+    story.append(Spacer(1, 20))
+    
+    # Add main question and answer
+    story.append(Paragraph("Main Question:", styles['Heading2']))
+    story.append(Paragraph(st.session_state.question, styles['Normal']))
+    story.append(Spacer(1, 10))
+    
+    story.append(Paragraph("Answer:", styles['Heading2']))
+    story.append(Paragraph(st.session_state.main_answer, styles['Normal']))
+    story.append(Spacer(1, 20))
+    
+    # Add sources if available
+    if hasattr(st.session_state, 'main_results') and st.session_state.main_results:
+        story.append(Paragraph("Sources:", styles['Heading2']))
+        for i, result in enumerate(st.session_state.main_results, 1):
+            story.append(Paragraph(f"Source {i}: {result['metadata']['source']}", styles['Normal']))
+            story.append(Paragraph(f"Relevance: {result['score']:.2f}", styles['Normal']))
+            story.append(Spacer(1, 10))
+    
+    # Add follow-up if available
+    if hasattr(st.session_state, 'follow_up_question') and st.session_state.follow_up_question:
+        story.append(Paragraph("Follow-up Question:", styles['Heading2']))
+        story.append(Paragraph(st.session_state.follow_up_question, styles['Normal']))
+        story.append(Spacer(1, 20))
+    
+    # Build the PDF
+    doc.build(story)
+    
+    return pdf_path
 
 def get_memory_usage():
-    """Get current memory usage"""
-    process = psutil.Process()
+    """Get current memory usage in MB."""
+    process = psutil.Process(os.getpid())
     return process.memory_info().rss / 1024 / 1024  # Convert to MB
 
 def should_cleanup():
-    """Check if cleanup is needed"""
+    """Check if cleanup is needed based on memory usage."""
     memory_usage = get_memory_usage()
-    return memory_usage > 1000  # Cleanup if using more than 1GB
+    return memory_usage > 1000  # Cleanup if memory usage exceeds 1GB
 
 def cleanup_resources():
-    """Clean up resources"""
+    """Clean up all resources when the session ends."""
     try:
-        # Clear caches
-        clear_caches()
+        # Clear Streamlit's cache
+        st.cache_data.clear()
+        st.cache_resource.clear()
         
-        # Force garbage collection
-        gc.collect()
+        # Clear PyTorch's cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # Clear temporary files
+        temp_dir = "temp"
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+            os.makedirs(temp_dir)
         
         # Clear session state
         for key in list(st.session_state.keys()):
-            if key not in ['current_page', 'question', 'answer', 'sources']:
-                del st.session_state[key]
-        
-        # Reinitialize RAG system
-        settings = get_current_settings()
-        st.session_state.rag_system = RAGSystem(settings)
-        
-        st.success("Resources cleaned up successfully!")
+            del st.session_state[key]
+            
+        # Force garbage collection
+        gc.collect()
+            
     except Exception as e:
-        st.error(f"Error cleaning up resources: {str(e)}")
+        st.error(f"Error during cleanup: {str(e)}")
 
 def type_text(text, container, speed=0.01):
-    """Type text with animation"""
+    """Type out text with a typing effect"""
+    full_text = ""
     for char in text:
-        container.markdown(char, unsafe_allow_html=True)
+        full_text += char
+        container.markdown(full_text)
         time.sleep(speed)
 
 def generate_answer(question, use_internet=False, is_follow_up=False):
-    """Generate answer for a question"""
     try:
         st.session_state.processing = True
         start_time = time.time()
@@ -636,10 +711,7 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         time.sleep(0.5)
         status_text.empty()
         progress_bar.empty()
-        
-        # Save conversation history
-        save_conversation_history()
-        
+
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
     finally:
@@ -720,10 +792,6 @@ def generate_multi_analyst_answer(question, use_internet=False):
         st.markdown("### Consensus")
         st.markdown(consensus)
         
-        # Store results
-        st.session_state.main_answer = consensus
-        st.session_state.main_results = perspectives
-        
         # If internet search is requested
         if use_internet:
             internet_context = """You are a document analysis expert with access to the internet.
@@ -738,9 +806,6 @@ def generate_multi_analyst_answer(question, use_internet=False):
             
             st.markdown("### Internet Search Results")
             st.markdown(internet_answer)
-            
-            # Update main answer with internet results
-            st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
         
         progress_bar.progress(100)
         status_text.text("✅ Done!")
@@ -756,10 +821,7 @@ def generate_multi_analyst_answer(question, use_internet=False):
         time.sleep(1)
         status_text.empty()
         progress_bar.empty()
-        
-        # Save conversation history
-        save_conversation_history()
-        
+
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
     finally:
@@ -900,27 +962,11 @@ def show_main_page():
         # File uploader at the bottom
         st.markdown("---")
         uploaded_files = st.file_uploader(
-            "Upload Documents",
+            "",
             type=['pdf', 'txt'],
             accept_multiple_files=True,
             help="Upload your documents to analyze"
         )
-        
-        # Process uploaded files
-        if uploaded_files:
-            with st.spinner("Processing documents..."):
-                # Initialize RAG system if needed
-                if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
-                    settings = get_current_settings()
-                    st.session_state.rag_system = RAGSystem(settings)
-                
-                # Process each file
-                for uploaded_file in uploaded_files:
-                    document_text = uploaded_file.read()
-                    st.session_state.rag_system.process_document(document_text)
-                
-                st.session_state.document_processed = True
-                st.success("Documents processed successfully!")
 
     # Main content area
     st.markdown("""
@@ -954,11 +1000,8 @@ def show_main_page():
     )
 
     # Options
-    col1, col2 = st.columns(2)
-    with col1:
-        use_internet = st.toggle("Internet Search", help="Enable internet search for additional context")
-    with col2:
-        use_analysts = st.toggle("Multi-Analyst Mode", help="Get multiple perspectives on your question")
+    use_internet = st.toggle("Internet")
+    use_analysts = st.toggle("Multi-Analyst")
 
     # Generate answer button
     if st.button("Generate Answer"):
@@ -980,7 +1023,7 @@ def show_main_page():
         st.markdown("### Follow-up Question")
         with st.form(key="follow_up_form"):
             follow_up_question = st.text_input("Ask a follow-up question:", value=st.session_state.follow_up_question)
-            follow_up_use_internet = st.toggle("Internet Search", key="follow_up_internet")
+            follow_up_use_internet = st.toggle("Internet", key="follow_up_internet")
             follow_up_submitted = st.form_submit_button("Generate Follow-up Answer")
             
             if follow_up_submitted and follow_up_question:
@@ -1032,15 +1075,9 @@ def show_main_page():
     st.markdown("</div>", unsafe_allow_html=True)
 
 # Main app logic
-if __name__ == "__main__":
-    # Load saved state
-    load_conversation_history()
-    load_document_state()
-    
-    # Show appropriate page
-    if st.session_state.current_page == "settings":
-        show_settings_page()
-    else:
-        show_main_page()
+if st.session_state.current_page == "settings":
+    show_settings_page()
+else:
+    show_main_page()
 
 # streamlit run app.py --server.maxUploadSize=200 --server.maxMessageSize=200 --server.enableCORS=false --server.enableXsrfProtection=false  --server.enableWebsocketCompression=false
