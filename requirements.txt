@@ -2,7 +2,6 @@ faiss-cpu==1.7.4
 PyMuPDF==1.23.8
 torch==2.1.0
 huggingface-hub>=0.19.3,<1.0
-transformers==4.30.2
 sentence-transformers==2.2.2
 transformers==4.37.2
 huggingface-hub==0.16.4
