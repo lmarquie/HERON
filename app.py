@@ -76,7 +76,7 @@ st.markdown("""
     <style>
         /* Main background */
         .stApp {
-            background-color: #151b2b;
+            background-color: #faebd7;
         }
         
         /* Sidebar background */
@@ -102,19 +102,19 @@ st.markdown("""
 
         /* Toggle switch label color */
         [data-testid="stToggle"] > label {
-            color: #a4a6b5 !important;
+            color: #20293d !important;
         }
 
         /* App title */
         .app-title {
-            color: #a4a6b5 !important;
+            color: #20293d !important;
         }
 
         /* Text input styling */
         .stTextInput > div > div > input {
-            background-color: #20293d;
+            background-color: #ffffff;
             border: 2px solid #1f77b4;
-            color: #a4a6b5 !important;
+            color: #20293d !important;
         }
 
         /* Remove focus outline */
@@ -125,24 +125,34 @@ st.markdown("""
 
         /* Markdown text color */
         .stMarkdown p, .stMarkdown li {
-            color: #a4a6b5 !important;
+            color: #20293d !important;
         }
 
         /* Headers color */
         .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
-            color: #a4a6b5 !important;
+            color: #20293d !important;
         }
 
         /* File uploader styling */
         .stFileUploader > div {
-            background-color: #20293d;
+            background-color: #ffffff;
             border: 2px solid #1f77b4;
-            color: #a4a6b5;
+            color: #20293d;
         }
 
         /* Progress bar color */
         .stProgress > div > div {
             background-color: #1f77b4;
+        }
+
+        /* Main content area */
+        .main-content {
+            background-color: #faebd7;
+        }
+
+        /* Toggle background */
+        [data-testid="stToggle"] {
+            background-color: #ffffff;
         }
     </style>
 """, unsafe_allow_html=True)
