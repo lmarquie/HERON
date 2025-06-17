@@ -199,7 +199,20 @@ st.markdown("""
             background-color: #2c3a52;
             color: #ffffff;
         }
+
+        /* Company name styling */
+        .company-name {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #20293d;
+            font-family: 'Helvetica Neue', sans-serif;
+            z-index: 1000;
+        }
     </style>
+    <div class="company-name">Herbert Advisory</div>
 """, unsafe_allow_html=True)
 
 # Initialize session state
