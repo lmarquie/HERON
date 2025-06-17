@@ -41,14 +41,6 @@ st.set_page_config(
 
 # Sidebar
 with st.sidebar:
-    # Company branding
-    st.markdown("""
-        <div style='text-align: center; padding: 1rem 0; border-bottom: 2px solid #1E3A8A; margin-bottom: 2rem;'>
-            <h1 style='color: #1E3A8A; font-size: 1.8rem; font-weight: 700; margin: 0; text-shadow: 0 0 10px rgba(30, 58, 138, 0.3);'>HERON</h1>
-            <p style='color: #1E3A8A; font-size: 1.2rem; margin: 0.5rem 0 0 0; text-shadow: 0 0 8px rgba(30, 58, 138, 0.3);'>Herbert Advisory</p>
-        </div>
-    """, unsafe_allow_html=True)
-    
     # File uploader
     st.header("Upload Documents")
     try:
@@ -952,33 +944,10 @@ def show_main_page():
         
         # Main content area
         st.markdown("""
-            <style>
-            .main-content {
-                padding: 2rem;
-                max-width: 1200px;
-                margin: 0 auto;
-            }
-            .app-title {
-                font-size: 3.5rem;
-                font-weight: 700;
-                color: #20293d;
-                text-align: center;
-                margin-bottom: 0.5rem;
-                font-family: 'Helvetica Neue', sans-serif;
-                letter-spacing: 2px;
-            }
-            .app-subtitle {
-                font-size: 1rem;
-                color: #20293d;
-                text-align: center;
-                margin-bottom: 2rem;
-                font-family: 'Helvetica Neue', sans-serif;
-                font-style: italic;
-            }
-            </style>
-            <div class="main-content">
-            <div class="app-title">HERON</div>
-            <div class="app-subtitle">(Herbert Embedded Retrieval and Oracle Network)</div>
+            <div style='text-align: center; padding: 2rem 0;'>
+                <h1 style='color: #1E3A8A; font-size: 2.5rem; font-weight: 700; margin: 0; text-shadow: 0 0 10px rgba(30, 58, 138, 0.3);'>HERON</h1>
+                <p style='color: #1E3A8A; font-size: 1.5rem; margin: 0.5rem 0 0 0; text-shadow: 0 0 8px rgba(30, 58, 138, 0.3);'>Herbert Advisory</p>
+            </div>
         """, unsafe_allow_html=True)
         
         # Question input
