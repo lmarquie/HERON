@@ -1213,7 +1213,7 @@ def show_main_page():
                 relevance_percentage = round(score * 100, 2)
                 st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
 
-            # Add follow-up question section only if we have a main answer
+            # Add follow-up question section
             st.markdown("---")
             st.markdown("### Follow-up Question")
             col1, col2 = st.columns([3, 1])
@@ -1236,7 +1236,6 @@ def show_main_page():
                     
                     # Get the toggle states
                     use_internet = st.session_state.get('use_internet', False)
-                    use_analysts = st.session_state.get('use_analysts', False)
                     
                     # Show processing status
                     with st.spinner("Processing your follow-up question..."):
@@ -1254,7 +1253,7 @@ def show_main_page():
                                 # If internet search is enabled, add internet results for follow-up
                                 if use_internet:
                                     try:
-                                        with st.spinner("Searching the internet for follow-up..."):
+                                        with st.spinner("Searching the internet..."):
                                             internet_context = """You are a document analysis expert with access to the internet.
                                             Provide a concise answer using your knowledge and internet access.
                                             Cite sources for data. If no source exists, mention that.
