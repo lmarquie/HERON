@@ -1275,7 +1275,7 @@ def show_main_page():
                                             file_name=os.path.basename(pdf_path),
                                             mime="application/pdf",
                                             use_container_width=True
-                                        )
+                                        ) 
                                     # Clean up the temporary file
                                     os.remove(pdf_path)
                             except Exception as e:
