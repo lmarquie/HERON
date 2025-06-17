@@ -974,12 +974,25 @@ def show_main_page():
                 
                 # Show processing status
                 with st.spinner("Processing your question..."):
-                    # Get answer
+                    # Get answer and sources
+                    results = st.session_state.rag_system.vector_store.search(question, k=3)
                     answer = st.session_state.rag_system.question_handler.process_question(question)
+                    
                     if answer:
                         st.session_state.main_answer = answer
+                        st.session_state.main_results = results
+                        
+                        # Display answer
                         st.markdown("### Answer")
                         st.markdown(answer)
+                        
+                        # Display sources
+                        if results:
+                            st.markdown("### Sources")
+                            for i, result in enumerate(results, 1):
+                                source = result.get('metadata', {}).get('source', 'Unknown source')
+                                score = result.get('score', 0)
+                                st.markdown(f"{i}. **{source}** (Relevance: {score:.2f})")
                     else:
                         st.error("Failed to generate an answer. Please try again.")
                 
