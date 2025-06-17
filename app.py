@@ -1066,10 +1066,10 @@ def show_main_page():
                 with st.spinner("Processing your question..."):
                     # Get answer and sources with improved search
                     try:
-                        # First try exact match search
+                        # First try exact match search with more results
                         results = st.session_state.rag_system.vector_store.search(
                             question,
-                            k=5  # Get more results initially
+                            k=10  # Get more results initially for better selection
                         )
                         
                         # Process and filter results
@@ -1087,14 +1087,31 @@ def show_main_page():
                             raw_score = result.get('score', 0)
                             
                             # Normalize score to 0-1 range
-                            # Assuming scores are typically between -1 and 1
                             normalized_score = (raw_score + 1) / 2  # Convert to 0-1 range
                             
-                            # Boost score if source name contains key terms from question
+                            # Boost score for exact matches in source name
                             question_terms = set(question.lower().split())
                             source_terms = set(source.lower().split())
+                            
+                            # Check for exact matches in source name
                             if any(term in source_terms for term in question_terms):
-                                normalized_score = max(normalized_score, 0.8)  # Boost score for direct matches
+                                normalized_score = max(normalized_score, 0.9)  # Higher boost for exact matches
+                            
+                            # Additional boost for financial reports and official documents
+                            if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
+                                normalized_score = max(normalized_score, 0.85)
+                            
+                            # Additional boost for recent documents
+                            if 'date' in result.get('metadata', {}):
+                                doc_date = result['metadata']['date']
+                                if doc_date:
+                                    try:
+                                        doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
+                                        days_old = (datetime.now() - doc_date).days
+                                        if days_old < 365:  # Boost for documents less than a year old
+                                            normalized_score = max(normalized_score, 0.8)
+                                    except:
+                                        pass
                             
                             processed_results.append({
                                 'metadata': result.get('metadata', {}),
@@ -1102,9 +1119,9 @@ def show_main_page():
                                 'text': result.get('text', '')
                             })
                         
-                        # Sort by score and take top 3
+                        # Sort by score and take top 5
                         processed_results.sort(key=lambda x: x['score'], reverse=True)
-                        results = processed_results[:3]
+                        results = processed_results[:5]  # Increased to 5 sources
                         
                     except Exception as e:
                         st.error(f"Error during search: {str(e)}")
