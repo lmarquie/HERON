@@ -173,7 +173,7 @@ if 'documents_loaded' not in st.session_state:
 if 'vector_store' not in st.session_state:
     st.session_state.vector_store = None
 if 'rag_system' not in st.session_state:
-    st.session_state.rag_system = None
+    st.session_state.rag_system = RAGSystem(OPENAI_API_KEY)
 if 'processing' not in st.session_state:
     st.session_state.processing = False
 if 'current_theme' not in st.session_state:
@@ -1021,13 +1021,6 @@ def show_main_page():
             </div>
         """, unsafe_allow_html=True)
         
-        # Add mode selection
-        col1, col2 = st.columns(2)
-        with col1:
-            st.session_state.use_analysts = st.checkbox("Use Multi-Analyst Mode", value=st.session_state.use_analysts)
-        with col2:
-            st.session_state.use_internet = st.checkbox("Include Internet Search", value=st.session_state.use_internet)
-        
         # Question input
         question = st.text_input(
             label="Ask a question",
@@ -1038,7 +1031,7 @@ def show_main_page():
         )
 
         # Process question if enter is pressed
-        if question and question != st.session_state.question and not st.session_state.processing:
+        if question and not st.session_state.processing:
             try:
                 st.session_state.question = question
                 st.session_state.processing = True
