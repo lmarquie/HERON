@@ -9,7 +9,6 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-from io import BytesIO
 
 # Create app data directory if it doesn't exist
 DATA_DIR = 'app_data'
@@ -19,14 +18,14 @@ def get_current_settings():
     """Get the current settings from session state or defaults"""
     if not hasattr(st.session_state, 'settings'):
         st.session_state.settings = {
-            'chunk_size': 800,  # Increased for better context
-            'chunk_overlap': 100,  # Increased for better context continuity
-            'max_chunks': 8,  # Optimized for speed while maintaining quality
-            'search_depth': 4,  # Increased for better coverage
-            'relevance_threshold': 0.75,  # Increased for better accuracy
-            'temperature': 0.2,  # Reduced for more focused responses
-            'max_tokens': 1500,  # Increased for more comprehensive answers
-            'top_p': 0.95,  # Increased for better quality
+            'chunk_size': 500,
+            'chunk_overlap': 50,
+            'max_chunks': 10,
+            'search_depth': 3,
+            'relevance_threshold': 0.7,
+            'temperature': 0.3,
+            'max_tokens': 1000,
+            'top_p': 0.9,
             'speed': 0.5,
             'accuracy': 0.5
         }
@@ -75,87 +74,35 @@ with st.sidebar:
     
     st.divider()
     
-    # Display current model settings with new design
-    st.markdown("""
-        <div style='border: 1px solid #E2E8F0; border-radius: 0.5rem; padding: 1.5rem; margin: 1.5rem 0;'>
-            <h2 style='color: #1E3A8A; font-size: 1.2rem; font-weight: 600; margin: 0 0 1rem 0; text-align: center;'>Model Settings</h2>
-        </div>
-    """, unsafe_allow_html=True)
+    # Display current model settings
+    st.header("Model Settings")
     
     settings = get_current_settings()
     
-    # Document Processing Section
-    st.markdown("""
-        <div style='margin-bottom: 1rem;'>
-            <h3 style='color: #1E3A8A; font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Document Processing</h3>
-        </div>
-    """, unsafe_allow_html=True)
+    # Document Processing
+    st.subheader("Document Processing")
+    st.write("Chunk Size")
+    st.progress(settings['chunk_size'] / 1000)  # Normalize to 0-1 range
+    st.write("Chunk Overlap")
+    st.progress(settings['chunk_overlap'] / 100)  # Normalize to 0-1 range
+    st.write("Max Chunks")
+    st.progress(settings['max_chunks'] / 20)  # Normalize to 0-1 range
     
-    for setting, value, max_value, format_str in [
-        ("Chunk Size", settings['chunk_size'], 1000, "d"),
-        ("Chunk Overlap", settings['chunk_overlap'], 100, "d"),
-        ("Max Chunks", settings['max_chunks'], 20, "d")
-    ]:
-        st.markdown(f"""
-            <div style='margin-bottom: 0.75rem;'>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 0.25rem;'>
-                    <span style='color: #4B5563; font-size: 0.9rem;'>{setting}</span>
-                    <span style='color: #1E3A8A; font-size: 0.9rem; font-weight: 500;'>{value:{format_str}}/{max_value}</span>
-                </div>
-                <div style='background-color: #E2E8F0; height: 0.35rem; border-radius: 0.25rem; overflow: hidden;'>
-                    <div style='background-color: #1E3A8A; height: 100%; width: {value/max_value*100}%; border-radius: 0.25rem;'></div>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
+    # Search Settings
+    st.subheader("Search Settings")
+    st.write("Search Depth")
+    st.progress(settings['search_depth'] / 5)  # Normalize to 0-1 range
+    st.write("Relevance Threshold")
+    st.progress(settings['relevance_threshold'])  # Already 0-1 range
     
-    # Search Settings Section
-    st.markdown("""
-        <div style='margin-bottom: 1rem;'>
-            <h3 style='color: #1E3A8A; font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Search Settings</h3>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    for setting, value, max_value, format_str in [
-        ("Search Depth", settings['search_depth'], 5, "d"),
-        ("Relevance Threshold", settings['relevance_threshold'], 1.0, ".2f")
-    ]:
-        st.markdown(f"""
-            <div style='margin-bottom: 0.75rem;'>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 0.25rem;'>
-                    <span style='color: #4B5563; font-size: 0.9rem;'>{setting}</span>
-                    <span style='color: #1E3A8A; font-size: 0.9rem; font-weight: 500;'>{value:{format_str}}/{max_value:.2f}</span>
-                </div>
-                <div style='background-color: #E2E8F0; height: 0.35rem; border-radius: 0.25rem; overflow: hidden;'>
-                    <div style='background-color: #1E3A8A; height: 100%; width: {value/max_value*100}%; border-radius: 0.25rem;'></div>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    # Model Parameters Section
-    st.markdown("""
-        <div style='margin-bottom: 1rem;'>
-            <h3 style='color: #1E3A8A; font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Model Parameters</h3>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    for setting, value, max_value, format_str in [
-        ("Temperature", settings['temperature'], 1.0, ".2f"),
-        ("Max Tokens", settings['max_tokens'], 2000, "d"),
-        ("Top P", settings['top_p'], 1.0, ".2f")
-    ]:
-        st.markdown(f"""
-            <div style='margin-bottom: 0.75rem;'>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 0.25rem;'>
-                    <span style='color: #4B5563; font-size: 0.9rem;'>{setting}</span>
-                    <span style='color: #1E3A8A; font-size: 0.9rem; font-weight: 500;'>{value:{format_str}}/{max_value:.2f}</span>
-                </div>
-                <div style='background-color: #E2E8F0; height: 0.35rem; border-radius: 0.25rem; overflow: hidden;'>
-                    <div style='background-color: #1E3A8A; height: 100%; width: {value/max_value*100}%; border-radius: 0.25rem;'></div>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("</div>", unsafe_allow_html=True)
+    # Model Parameters
+    st.subheader("Model Parameters")
+    st.write("Temperature")
+    st.progress(settings['temperature'])  # Already 0-1 range
+    st.write("Max Tokens")
+    st.progress(settings['max_tokens'] / 2000)  # Normalize to 0-1 range
+    st.write("Top P")
+    st.progress(settings['top_p'])  # Already 0-1 range
 
 # Initialize session state
 if 'current_page' not in st.session_state:
@@ -173,7 +120,7 @@ if 'documents_loaded' not in st.session_state:
 if 'vector_store' not in st.session_state:
     st.session_state.vector_store = None
 if 'rag_system' not in st.session_state:
-    st.session_state.rag_system = RAGSystem(OPENAI_API_KEY)
+    st.session_state.rag_system = None
 if 'processing' not in st.session_state:
     st.session_state.processing = False
 if 'current_theme' not in st.session_state:
@@ -184,10 +131,6 @@ if 'main_results' not in st.session_state:
     st.session_state.main_results = []
 if 'follow_up_answer' not in st.session_state:
     st.session_state.follow_up_answer = None
-if 'use_analysts' not in st.session_state:
-    st.session_state.use_analysts = False
-if 'use_internet' not in st.session_state:
-    st.session_state.use_internet = False
 
 # Create data directory if it doesn't exist
 DATA_DIR = "app_data"
@@ -588,12 +531,13 @@ def show_settings_page():
 def generate_pdf_summary():
     """Generate a PDF summary of the current conversation"""
     try:
-        # Create a BytesIO buffer for the PDF
-        buffer = BytesIO()
+        # Create a temporary PDF file with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_path = os.path.join(DATA_DIR, f'conversation_summary_{timestamp}.pdf')
         
         # Create the PDF document
         doc = SimpleDocTemplate(
-            buffer,
+            pdf_path,
             pagesize=letter,
             rightMargin=72,
             leftMargin=72,
@@ -683,17 +627,13 @@ def generate_pdf_summary():
         
         # Add footer
         story.append(Spacer(1, 30))
-        story.append(Paragraph("© 2025 Herbert Advisory. All rights reserved.", styles['Source']))
+        story.append(Paragraph("© 2024 Herbert Advisory. All rights reserved.", styles['Source']))
         story.append(Paragraph("This document was generated by HERON (Herbert Embedded Retrieval and Oracle Network)", styles['Source']))
         
         # Build the PDF
         doc.build(story)
         
-        # Get the PDF data from the buffer
-        pdf_data = buffer.getvalue()
-        buffer.close()
-        
-        return pdf_data
+        return pdf_path
     except Exception as e:
         st.error(f"Error generating PDF: {str(e)}")
         return None
@@ -896,100 +836,85 @@ def generate_multi_analyst_answer(question, use_internet=False):
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Single prompt for the debate
+        # Define different analyst perspectives
+        analysts = {
+            "Technical": {
+                "role": "Technical Analyst",
+                "focus": "Data-driven analysis, focusing on facts, metrics, and logical reasoning",
+                "perspective": "You are a technical analyst focused on data, facts, and logical reasoning. Analyze the question from a technical, data-driven perspective."
+            },
+            "Creative": {
+                "role": "Creative Analyst",
+                "focus": "Innovative thinking and out-of-the-box solutions",
+                "perspective": "You are a creative analyst focused on innovative solutions and thinking outside the box. Consider unique angles and creative approaches."
+            },
+            "Critical": {
+                "role": "Critical Analyst",
+                "focus": "Identifying potential issues, risks, and challenges",
+                "perspective": "You are a critical analyst focused on identifying potential issues and challenges. Analyze potential problems and limitations."
+            },
+            "Strategic": {
+                "role": "Strategic Analyst",
+                "focus": "Long-term implications and big-picture thinking",
+                "perspective": "You are a strategic analyst focused on long-term implications and big-picture thinking. Consider future impact and strategic value."
+            }
+        }
+        
+        # Get initial perspectives
         progress_bar.progress(25)
-        status_text.text("🤔 Initiating analyst debate...")
+        status_text.text("🤔 Gathering different perspectives...")
         
-        debate_prompt = f"""You are facilitating a passionate debate between four expert analysts who are deeply invested in their respective domains. They will analyze the following question through multiple rounds of discussion, challenging each other's assumptions and building on each other's insights. Each analyst should be passionate about their perspective while maintaining professional discourse.
-
-Question: {question}
-
-The analysts are:
-1. Technical Analyst: A data-driven purist who is passionate about metrics, facts, and logical reasoning. They believe in the power of data to reveal truth and are skeptical of approaches that lack empirical support.
-2. Creative Analyst: An innovative thinker who is passionate about breaking conventional boundaries and finding unique solutions. They believe in the power of creative thinking to solve complex problems and are excited by novel approaches.
-3. Critical Analyst: A rigorous skeptic who is passionate about identifying risks and potential issues. They believe in thorough analysis and are dedicated to preventing problems before they occur.
-4. Strategic Analyst: A big-picture thinker who is passionate about long-term implications and systemic impact. They believe in the power of strategic thinking to create lasting value and are focused on future possibilities.
-
-Format the debate in the following structure:
-
-ROUND 1 - INITIAL PERSPECTIVES:
-TECHNICAL: [2-3 passionate sentences about the data and metrics that matter most]
-CREATIVE: [2-3 passionate sentences about innovative possibilities and unique angles]
-CRITICAL: [2-3 passionate sentences about potential risks and issues that must be addressed]
-STRATEGIC: [2-3 passionate sentences about long-term implications and strategic opportunities]
-
-ROUND 2 - CHALLENGES AND BUILDING:
-TECHNICAL: [Passionately defend data-driven insights while engaging with others' perspectives]
-CREATIVE: [Passionately advocate for innovative approaches while addressing others' concerns]
-CRITICAL: [Passionately highlight risks while acknowledging others' valid points]
-STRATEGIC: [Passionately emphasize strategic implications while incorporating others' insights]
-
-ROUND 3 - SYNTHESIS AND EVIDENCE:
-TECHNICAL: [Passionately present compelling data and metrics that support key points]
-CREATIVE: [Passionately present innovative evidence and examples that support key points]
-CRITICAL: [Passionately present risk analysis and case studies that support key points]
-STRATEGIC: [Passionately present strategic frameworks and future scenarios that support key points]
-
-FINAL CONSENSUS:
-[Provide a strong, evidence-based conclusion that synthesizes the key insights from the debate. This should not be a simple summary, but rather a substantive conclusion that addresses the original question with clear reasoning and evidence. The conclusion should reflect the passion and expertise of all analysts while maintaining objectivity.]"""
-
-        # Get the debate in a single API call
-        debate_text = st.session_state.rag_system.question_handler.process_question(debate_prompt)
-        
-        # Parse the debate sections
-        sections = debate_text.split('\n\n')
-        debate_sections = {}
-        current_section = None
-        current_content = []
-        
-        for line in sections:
-            if line.startswith('ROUND 1') or line.startswith('ROUND 2') or line.startswith('ROUND 3') or line.startswith('FINAL CONSENSUS'):
-                if current_section:
-                    debate_sections[current_section] = '\n'.join(current_content)
-                current_section = line.split(':')[0].strip()
-                current_content = []
-            else:
-                current_content.append(line)
-        
-        if current_section:
-            debate_sections[current_section] = '\n'.join(current_content)
+        perspectives = {}
+        for name, info in analysts.items():
+            perspectives[name] = st.session_state.rag_system.question_handler.process_question(info["perspective"])
         
         # Display the debate
         progress_bar.progress(50)
         status_text.text("💭 Analysts are debating...")
         
-        st.markdown("### Analyst Debate")
+        st.markdown("### Analyst Perspectives")
+        for name, info in analysts.items():
+            st.markdown(f"#### {info['role']}")
+            st.markdown(f"*{info['focus']}*")
+            st.markdown(perspectives[name])
+            st.markdown("---")
         
-        # Display each round
-        for round_num in ['ROUND 1 - INITIAL PERSPECTIVES', 'ROUND 2 - CHALLENGES AND BUILDING', 'ROUND 3 - SYNTHESIS AND EVIDENCE']:
-            if round_num in debate_sections:
-                st.markdown(f"#### {round_num}")
-                st.markdown(debate_sections[round_num])
-                st.markdown("---")
-        
-        # Display the consensus
+        # Generate consensus
         progress_bar.progress(75)
         status_text.text("🤝 Reaching consensus...")
         
-        if 'FINAL CONSENSUS' in debate_sections:
-            st.markdown("### Final Consensus")
-            st.markdown(debate_sections['FINAL CONSENSUS'])
+        consensus_context = f"""Based on the following perspectives, provide a clear and concise consensus that:
+        1. Summarizes the key points from each analyst
+        2. Identifies areas of agreement and disagreement
+        3. Provides a clear, actionable conclusion
+        4. Suggests next steps or recommendations
+        
+        Question: {question}
+        
+        Analyst Perspectives:
+        {json.dumps(perspectives, indent=2)}
+        """
+        
+        consensus = st.session_state.rag_system.question_handler.process_question(consensus_context)
+        
+        # Display the consensus
+        st.markdown("### Consensus")
+        st.markdown(consensus)
         
         # If internet search is requested
         if use_internet:
-            internet_prompt = f"""Review this debate and consensus, then provide additional evidence or context from the internet that either supports or challenges the conclusions reached. Focus on factual information and cite your sources.
-
-Question: {question}
-Debate: {debate_text}"""
+            internet_context = """You are a document analysis expert with access to the internet.
+            Please provide additional context to the consensus, using your knowledge and internet access.
+            Make sure to cite your sources for all data, and if you can't find a source, mention that it does not exist.
+            Focus on providing accurate, up-to-date information from reliable sources."""
             
             internet_start = time.time()
             status_text.text("🌐 Searching the internet for additional information...")
-            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_prompt)
+            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
             internet_time = time.time() - internet_start
             
-            # Add internet results
-            st.markdown("### Additional Evidence from Internet")
-            st.markdown(internet_answer)
+            # Add internet results to the consensus
+            consensus += "\n\n### Internet Search Results\n" + internet_answer
         
         progress_bar.progress(100)
         status_text.text("✅ Done!")
@@ -1014,6 +939,18 @@ Debate: {debate_text}"""
 def show_main_page():
     """Show the main page with file upload and question input."""
     try:
+        # Initialize session state variables if they don't exist
+        if 'question' not in st.session_state:
+            st.session_state.question = ""
+        if 'follow_up_question' not in st.session_state:
+            st.session_state.follow_up_question = ""
+        if 'main_answer' not in st.session_state:
+            st.session_state.main_answer = None
+        if 'follow_up_answer' not in st.session_state:
+            st.session_state.follow_up_answer = None
+        if 'processing' not in st.session_state:
+            st.session_state.processing = False
+        
         # Main content
         st.markdown("""
             <div style='text-align: center; padding: 2rem 0; display: flex; flex-direction: column; align-items: center;'>
@@ -1031,7 +968,7 @@ def show_main_page():
         )
 
         # Process question if enter is pressed
-        if question and not st.session_state.processing:
+        if question and question != st.session_state.question and not st.session_state.processing:
             try:
                 st.session_state.question = question
                 st.session_state.processing = True
@@ -1039,11 +976,13 @@ def show_main_page():
                 # Initialize variables
                 answer_container = st.empty()  # Container for the typing effect
                 is_follow_up = False  # Flag for follow-up questions
+                use_internet = st.session_state.get('use_internet', False)  # Get internet toggle state
+                use_analysts = st.session_state.get('use_analysts', False)  # Get multi-analyst toggle state
                 
                 # Show processing status
                 with st.spinner("Processing your question..."):
-                    if st.session_state.use_analysts:
-                        generate_multi_analyst_answer(question, st.session_state.use_internet)
+                    if use_analysts:
+                        generate_multi_analyst_answer(question, use_internet)
                     else:
                         # Get search results
                         results = st.session_state.rag_system.vector_store.search(question, k=3)  # Get more results initially
@@ -1116,7 +1055,7 @@ def show_main_page():
                             st.session_state.main_results = results
                         
                         # If internet search is requested, do it in parallel
-                        if st.session_state.use_internet:
+                        if use_internet:
                             internet_context = """You are a document analysis expert with access to the internet.
                             Provide a concise answer using your knowledge and internet access.
                             Cite sources for data. If no source exists, mention that.
@@ -1185,8 +1124,8 @@ def show_main_page():
                     
                     # Initialize variables
                     follow_up_container = st.empty()  # Container for the typing effect
-                    use_internet = st.session_state.use_internet
-                    use_analysts = st.session_state.use_analysts
+                    use_internet = st.session_state.get('use_internet', False)
+                    use_analysts = st.session_state.get('use_analysts', False)
                     
                     # Show processing status
                     with st.spinner("Processing your follow-up question..."):
@@ -1289,31 +1228,41 @@ def show_main_page():
         st.session_state.use_internet = st.toggle("Internet")
         st.session_state.use_analysts = st.toggle("Multi-Analyst")
         
-        # Add reset and PDF buttons in the middle
+        # Only show reset and export buttons if there's an answer
         if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
-            col1, col2, col3 = st.columns([1, 2, 1])
+            st.markdown("---")
+            col1, col2, col3 = st.columns([2, 1, 1])
             with col2:
-                button_col1, button_col2 = st.columns(2)
-                with button_col1:
-                    if st.button("Reset Conversation", key="reset_button"):
-                        # Clear all conversation-related session state
-                        for key in list(st.session_state.keys()):
-                            if key not in ['rag_system', 'documents_loaded', 'use_internet', 'use_analysts']:
-                                del st.session_state[key]
-                        st.rerun()
-                
-                with button_col2:
+                if st.button("Reset Conversation", type="secondary"):
+                    # Clear all conversation-related session state
+                    if 'main_answer' in st.session_state:
+                        del st.session_state.main_answer
+                    if 'main_results' in st.session_state:
+                        del st.session_state.main_results
+                    if 'question' in st.session_state:
+                        st.session_state.question = ""
+                    if 'follow_up_question' in st.session_state:
+                        st.session_state.follow_up_question = ""
+                    if 'follow_up_answer' in st.session_state:
+                        del st.session_state.follow_up_answer
+                    if 'follow_up_questions' in st.session_state:
+                        del st.session_state.follow_up_questions
+                    st.rerun()
+            
+            with col3:
+                if st.button("Export PDF", type="secondary"):
                     try:
-                        pdf_data = generate_pdf_summary()
-                        if pdf_data:
-                            if st.download_button(
-                                label="Download PDF Summary",
-                                data=pdf_data,
-                                file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                                mime="application/pdf",
-                                key="pdf_download_button"
-                            ):
-                                st.success("PDF downloaded successfully!")
+                        pdf_path = generate_pdf_summary()
+                        if pdf_path:
+                            with open(pdf_path, "rb") as file:
+                                st.download_button(
+                                    label="Download PDF",
+                                    data=file,
+                                    file_name=os.path.basename(pdf_path),
+                                    mime="application/pdf"
+                                )
+                            # Clean up the temporary file
+                            os.remove(pdf_path)
                     except Exception as e:
                         st.error(f"Error generating PDF: {str(e)}")
         
