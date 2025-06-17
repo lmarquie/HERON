@@ -1202,8 +1202,7 @@ def show_main_page():
                 with st.spinner("Processing your follow-up question..."):
                     # Get answer with previous context
                     follow_up_answer = st.session_state.rag_system.question_handler.process_question(
-                        follow_up_question,
-                        context=f"Previous question: {st.session_state.question}\nPrevious answer: {st.session_state.main_answer}"
+                        f"Previous question: {st.session_state.question}\nPrevious answer: {st.session_state.main_answer}\n\nFollow-up question: {follow_up_question}"
                     )
                     
                     if follow_up_answer:
