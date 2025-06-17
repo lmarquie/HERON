@@ -1286,13 +1286,10 @@ def show_main_page():
             button_col1, button_col2 = st.columns(2)
             with button_col1:
                 if st.button("Reset Conversation", key="reset_button"):
-                    st.session_state.conversation_history = []
-                    st.session_state.follow_up_questions = []
-                    st.session_state.follow_up_answers = []
-                    st.session_state.follow_up_input = ""
-                    st.session_state.main_answer = ""
-                    st.session_state.follow_up_answer = ""
-                    st.session_state.processing = False
+                    # Clear all conversation-related session state
+                    for key in list(st.session_state.keys()):
+                        if key not in ['rag_system', 'documents_loaded', 'use_internet', 'use_analysts']:
+                            del st.session_state[key]
                     st.rerun()
             
             with button_col2:
