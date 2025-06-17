@@ -1139,7 +1139,7 @@ def show_main_page():
         st.session_state.use_internet = st.toggle("Internet")
         st.session_state.use_analysts = st.toggle("Multi-Analyst")
         
-        # Add reset conversation and export PDF buttons at the bottom
+        # Only show reset and export buttons if there's an answer
         if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
             st.markdown("---")
             col1, col2, col3 = st.columns([2, 1, 1])
