@@ -714,18 +714,12 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
             st.session_state.processing = False
             return
         
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        answer_container = st.empty()  # Container for the typing effect
-        
-        # Combine document search and processing
-        process_start = time.time()
-        progress_bar.progress(25)
-        status_text.text("🤔 Processing your question...")
+        # Create single loading indicator
+        loading_text = st.empty()
+        loading_text.text("Loading...")
         
         # Get document-based answer with reduced context
         if is_follow_up and 'main_answer' in st.session_state:
-            # Limit the previous context to a shorter version
             prev_context = f"Previous Q: {st.session_state.question[:100]}...\nA: {st.session_state.main_answer[:200]}...\nFollow-up: {question}"
         else:
             prev_context = question
@@ -738,45 +732,37 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         # Process and filter results
         processed_results = []
         seen_sources = set()
-        seen_texts = set()  # Track unique text content
+        seen_texts = set()
         
         for result in results:
             source = result.get('metadata', {}).get('source', 'Unknown source')
             text = result.get('text', '')
             
-            # Skip if we've seen this source or this exact text before
             if source in seen_sources or text in seen_texts:
                 continue
         
             seen_sources.add(source)
             seen_texts.add(text)
             
-            # Calculate relevance score
             raw_score = result.get('score', 0)
+            normalized_score = (raw_score + 1) / 2
             
-            # Normalize score to 0-1 range
-            normalized_score = (raw_score + 1) / 2  # Convert to 0-1 range
-            
-            # Boost score for exact matches in source name
             question_terms = set(question.lower().split())
             source_terms = set(source.lower().split())
             
-            # Check for exact matches in source name
             if any(term in source_terms for term in question_terms):
-                normalized_score = max(normalized_score, 0.9)  # Higher boost for exact matches
+                normalized_score = max(normalized_score, 0.9)
             
-            # Additional boost for financial reports and official documents
             if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
                 normalized_score = max(normalized_score, 0.85)
             
-            # Additional boost for recent documents
             if 'date' in result.get('metadata', {}):
                 doc_date = result['metadata']['date']
                 if doc_date:
                     try:
                         doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
                         days_old = (datetime.now() - doc_date).days
-                        if days_old < 365:  # Boost for documents less than a year old
+                        if days_old < 365:
                             normalized_score = max(normalized_score, 0.8)
                     except:
                         pass
@@ -787,9 +773,8 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
                 'text': text
             })
         
-        # Sort by score and take top 5
         processed_results.sort(key=lambda x: x['score'], reverse=True)
-        results = processed_results[:5]  # Increased to 5 sources
+        results = processed_results[:5]
         
         # Generate answer with optimized parameters
         if use_internet:
@@ -807,7 +792,6 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
             if not st.session_state.documents_loaded:
                 answer = "I cannot answer this question as there are no documents loaded. Please either upload documents or enable internet search."
             else:
-                # When not using internet, explicitly instruct to only use document information
                 doc_context = f"""you are an investment banking analyst. you are only allowed to use the information in the loaded documents to answer the questions."""
                 answer = st.session_state.rag_system.question_handler.process_question(doc_context)
         
@@ -821,7 +805,7 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         # Display the answer
         st.markdown(answer)
         
-        # If internet search is requested, do it in parallel
+        # If internet search is requested
         if use_internet:
             internet_context = """You are a document analysis expert with access to the internet.
             Provide a concise answer using your knowledge and internet access.
@@ -829,16 +813,9 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
             Focus on accurate, up-to-date information."""
             
             internet_start = time.time()
-            status_text.text("🌐 Searching the internet...")
-            
-            # Use ThreadPoolExecutor for parallel processing
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                internet_future = executor.submit(
-                    st.session_state.rag_system.question_handler.llm.generate_answer,
-                    question,
-                    internet_context
-                )
-                internet_answer = internet_future.result()
+            loading_text.text("Loading internet results...")
+            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
+            internet_time = time.time() - internet_start
             
             # Display internet results
             st.markdown("\n\n### Internet Search Results\n" + internet_answer)
@@ -848,17 +825,12 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
             else:
                 st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
         
-        progress_bar.progress(100)
-        status_text.text("✅ Done!")
-        
-        # Clear status after a shorter delay
-        time.sleep(0.5)
-        status_text.empty()
-        progress_bar.empty()
+        # Clear loading indicator
+        loading_text.empty()
+        st.session_state.processing = False
 
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
-    finally:
         st.session_state.processing = False
 
 def generate_multi_analyst_answer(question, use_internet=False):
@@ -867,62 +839,57 @@ def generate_multi_analyst_answer(question, use_internet=False):
         st.session_state.processing = True
         start_time = time.time()
         
-        # Create status container
-        status_text = st.empty()
+        # Create single loading indicator
+        loading_text = st.empty()
+        loading_text.text("Loading...")
         
-        # Define the debate prompt
-        debate_prompt = f"""You are moderating a formal debate between four expert analysts. The question is: "{question}"
+        # Define the debate prompt - optimized for speed and accuracy
+        debate_prompt = f"""You are moderating a focused debate between four expert analysts. Question: "{question}"
 
-        IMPORTANT: You must ONLY use information from the provided documents to inform your debate. Do not use any external knowledge or general information.
-        If the documents don't contain relevant information, acknowledge this limitation in your debate.
-        Do not make assumptions or use knowledge from outside the provided documents.
+        CRITICAL INSTRUCTIONS:
+        1. Use ONLY information from the provided documents
+        2. If documents lack relevant information, state this clearly
+        3. Keep responses concise but comprehensive
+        4. Focus on factual, data-driven analysis
+        5. Avoid repetition and unnecessary elaboration
 
-        The debate will follow this structure:
+        DEBATE STRUCTURE (Keep each response under 100 words):
 
-        ROUND 1: Opening Statements (2 minutes each)
-        - Technical Analyst: Data-driven, focuses on facts, metrics, and logical reasoning
-        - Creative Analyst: Innovative thinker, focuses on out-of-the-box solutions
-        - Critical Analyst: Identifies potential issues, risks, and challenges
-        - Strategic Analyst: Focuses on long-term implications and big-picture thinking
+        ROUND 1: Key Analysis (1 minute each)
+        - Technical Analyst: Core metrics, data points, and quantitative analysis
+        - Creative Analyst: Innovative perspectives and unique insights
+        - Critical Analyst: Key risks and potential issues
+        - Strategic Analyst: Strategic implications and recommendations
 
-        ROUND 2: Rebuttals (1 minute each)
+        ROUND 2: Critical Discussion (30 seconds each)
         Each analyst must:
-        - Address the strongest points from other analysts
-        - Challenge assumptions or data presented
-        - Strengthen their own position
-
-        ROUND 3: Cross-Examination (1 minute each)
-        Each analyst must:
-        - Ask one critical question to another analyst
-        - Respond to questions directed at them
-        - Use this to further their position
-
-        ROUND 4: Closing Arguments (1 minute each)
-        Each analyst must:
-        - Summarize their strongest points
-        - Address key challenges raised
-        - Present their final position
+        - Address one key point from another analyst
+        - Present one critical insight
+        - Provide one actionable recommendation
 
         FINAL VERDICT:
-        As the moderator, you must:
-        1. Evaluate the strength of each position
-        2. Identify the most compelling arguments
-        3. Reach a decisive conclusion that isn't just a compromise
-        4. Provide specific, actionable recommendations
+        As moderator, provide:
+        1. A clear, decisive conclusion
+        2. Top 3 most compelling arguments
+        3. 2-3 specific, actionable recommendations
+        4. Key risks or limitations to consider
 
-        Format the debate as a formal transcript, clearly marking each round and speaker.
-        Make it passionate and engaging, but maintain professional discourse.
-        Each analyst should maintain their unique perspective while engaging meaningfully with others' arguments.
+        Format: Use clear headers and bullet points for key insights.
+        Keep the debate focused, professional, and data-driven.
         """
-        
-        # Generate the debate
-        status_text.text("💭 Analysts are debating...")
         
         # Store the question first
         st.session_state.question = question
         
-        # Generate and store the debate
-        debate = st.session_state.rag_system.question_handler.process_question(debate_prompt)
+        # Generate and store the debate with optimized parameters
+        debate = st.session_state.rag_system.question_handler.process_question(
+            debate_prompt,
+            max_tokens=1500,
+            temperature=0.3,
+            top_p=0.9,
+            frequency_penalty=0.5,
+            presence_penalty=0.5
+        )
         st.session_state.main_answer = debate
         
         # Display the debate
@@ -932,13 +899,23 @@ def generate_multi_analyst_answer(question, use_internet=False):
         # If internet search is requested
         if use_internet:
             internet_context = """You are a debate moderator with access to the internet.
-            Please provide additional factual context to support or challenge the debate's conclusions.
-            Make sure to cite your sources for all data, and if you can't find a source, mention that it does not exist.
-            Focus on providing accurate, up-to-date information from reliable sources that could strengthen the debate's final verdict."""
+            Provide ONLY factual, verifiable information that directly supports or challenges the debate's conclusions.
+            Requirements:
+            1. Cite specific sources for ALL claims
+            2. Focus on recent, reliable sources
+            3. Include only information directly relevant to the debate
+            4. Keep the response under 200 words
+            5. Use bullet points for key facts"""
             
             internet_start = time.time()
-            status_text.text("🌐 Searching the internet for additional information...")
-            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
+            loading_text.text("Loading internet results...")
+            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(
+                question,
+                internet_context,
+                max_tokens=500,
+                temperature=0.2,
+                top_p=0.9
+            )
             internet_time = time.time() - internet_start
             
             # Add internet results
@@ -948,22 +925,19 @@ def generate_multi_analyst_answer(question, use_internet=False):
             # Update the stored answer with internet results
             st.session_state.main_answer += "\n\n### Additional Factual Context\n" + internet_answer
         
-        status_text.text("✅ Debate concluded!")
-        total_time = time.time() - start_time
-        
         # Display performance metrics
         with st.expander("Performance Metrics"):
+            total_time = time.time() - start_time
             st.write(f"Total Processing Time: {total_time:.2f} seconds")
             if use_internet:
                 st.write(f"Internet Search Time: {internet_time:.2f} seconds")
         
-        # Clear the status after a short delay
-        time.sleep(1)
-        status_text.empty()
+        # Clear loading indicator
+        loading_text.empty()
+        st.session_state.processing = False
 
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
-    finally:
         st.session_state.processing = False
 
 def show_main_page():
@@ -1213,6 +1187,12 @@ def show_main_page():
                                 del st.session_state.follow_up_answer
                             if 'follow_up_questions' in st.session_state:
                                 del st.session_state.follow_up_questions
+                            # Clear text input values
+                            st.session_state.question_input = ""
+                            # Clear all follow-up input boxes
+                            for i in range(10):  # Clear up to 10 follow-up inputs
+                                if f'follow_up_input_{i}' in st.session_state:
+                                    st.session_state[f'follow_up_input_{i}'] = ""
                             st.rerun()
                     
                     with button_col2:
