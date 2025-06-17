@@ -35,242 +35,94 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-import os
-from local_draft import RAGSystem, LocalFileHandler, VectorStore, QuestionHandler, TextProcessor
-import time
-import fitz
-import json
-from datetime import datetime
-import torch
-import shutil
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-import psutil
-import gc
-import tempfile
-from concurrent.futures import ThreadPoolExecutor
-
-# Create necessary directories with proper error handling
-def ensure_directories():
-    """Create necessary directories with proper error handling."""
-    directories = ['app_data', 'temp', 'local_documents']
-    for directory in directories:
-        try:
-            os.makedirs(directory, exist_ok=True)
-            # Test write permissions
-            test_file = os.path.join(directory, '.test')
-            with open(test_file, 'w') as f:
-                f.write('test')
-            os.remove(test_file)
-        except Exception as e:
-            st.error(f"Error creating/accessing directory {directory}: {str(e)}")
-            st.error("Please ensure the application has write permissions.")
-            return False
-    return True
-
-# Initialize directories
-if not ensure_directories():
-    st.error("Failed to initialize required directories. Some features may not work properly.")
-
-def clear_caches():
-    """Clear all caches and temporary files."""
-    try:
-        # Clear Streamlit's cache
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        
-        # Clear PyTorch's cache
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        
-        # Clear temporary files
-        temp_dir = "temp"
-        if os.path.exists(temp_dir):
-            try:
-                # First try to remove all files in the directory
-                for file in os.listdir(temp_dir):
-                    file_path = os.path.join(temp_dir, file)
-                    try:
-                        if os.path.isfile(file_path):
-                            os.unlink(file_path)
-                        elif os.path.isdir(file_path):
-                            shutil.rmtree(file_path)
-                    except Exception as e:
-                        print(f"Error removing {file_path}: {e}")
-                
-                # Then try to remove the directory itself
-                try:
-                    os.rmdir(temp_dir)
-                except OSError:
-                    pass  # Ignore if directory is not empty
-                
-                # Create fresh temp directory
-                os.makedirs(temp_dir, exist_ok=True)
-            except Exception as e:
-                print(f"Error clearing temp directory: {e}")
-                # Create temp directory if it doesn't exist
-                os.makedirs(temp_dir, exist_ok=True)
-    except Exception as e:
-        print(f"Error in clear_caches: {e}")
-        # Ensure temp directory exists
-        os.makedirs("temp", exist_ok=True)
-
-# Clear caches on startup
-try:
-    clear_caches()
-except Exception as e:
-    print(f"Error during startup cache clearing: {e}")
-    # Ensure temp directory exists
-    os.makedirs("temp", exist_ok=True)
-
-# Theme configuration
-st.markdown("""
-    <style>
-        /* Main background */
-        .stApp {
-            background-color: #faebd7;
-        }
-        
-        /* Sidebar background */
-        [data-testid="stSidebar"] {
-            background-color: #20293d;
-        }
-        
-        /* Button styling */
-        .stButton > button {
-            background-color: #ff7f50;
-            color: #ffffff;
-        }
-        
-        .stButton > button:hover {
-            background-color: #ff6b3d;
-            color: #ffffff;
-        }
-        
-        /* Text color in sidebar */
-        [data-testid="stSidebar"] * {
-            color: #a4a6b5;
-        }
-
-        /* Toggle switch label color */
-        [data-testid="stToggle"] > label {
-            color: #20293d !important;
-        }
-
-        /* App title */
-        .app-title {
-            color: #20293d !important;
-        }
-
-        /* Text input styling */
-        .stTextInput > div > div > input {
-            background-color: #ffffff;
-            border: none !important;
-            box-shadow: none !important;
-            color: #20293d !important;
-        }
-
-        /* Remove focus outline */
-        .stTextInput > div > div > input:focus {
-            outline: none !important;
-            border: none !important;
-            box-shadow: none !important;
-        }
-
-        /* Markdown text color */
-        .stMarkdown p, .stMarkdown li {
-            color: #20293d !important;
-        }
-
-        /* Headers color */
-        .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
-            color: #20293d !important;
-        }
-
-        /* File uploader styling */
-        .stFileUploader > div {
-            background-color: #ffffff;
-            border: 2px solid #ff7f50;
-            color: #20293d;
-        }
-
-        /* Progress bar color */
-        .stProgress > div > div {
-            background-color: #ff7f50;
-        }
-
-        /* Main content area */
-        .main-content {
-            background-color: #faebd7;
-        }
-
-        /* Toggle background */
-        [data-testid="stToggle"] {
-            background-color: #ffffff;
-        }
-
-        /* Secondary button styling */
-        .stButton > button[data-baseweb="button"][kind="secondary"] {
-            background-color: #20293d;
-            color: #a4a6b5;
-        }
-
-        .stButton > button[data-baseweb="button"][kind="secondary"]:hover {
-            background-color: #2c3a52;
-            color: #ffffff;
-        }
-
-        /* Company name styling */
-        .company-name {
-            font-size: 1.2rem;
-            font-weight: 600;
-            color: #a4a6b5;
-            font-family: 'Helvetica Neue', sans-serif;
-            margin-bottom: 2rem;
-            text-align: center;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
 # Sidebar
 with st.sidebar:
-    st.markdown('<div class="company-name">Herbert Advisory</div>', unsafe_allow_html=True)
+    st.title("Herbert Advisory")
     
     # Display current model settings
-    st.markdown("### Current Model Settings")
+    st.header("Model Settings")
+    
     settings = get_current_settings()
-    st.markdown("#### Document Processing")
-    st.markdown(f"- **Chunk Size:** {settings['chunk_size']}")
-    st.markdown(f"- **Chunk Overlap:** {settings['chunk_overlap']}")
-    st.markdown(f"- **Max Chunks:** {settings['max_chunks']}")
     
-    st.markdown("#### Search Settings")
-    st.markdown(f"- **Search Depth:** {settings['search_depth']}")
-    st.markdown(f"- **Relevance Threshold:** {settings['relevance_threshold']:.2f}")
+    # Document Processing
+    st.subheader("Document Processing")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Chunk Size")
+    with col2:
+        st.write(f"**{settings['chunk_size']}**")
     
-    st.markdown("#### Model Parameters")
-    st.markdown(f"- **Temperature:** {settings['temperature']:.2f}")
-    st.markdown(f"- **Max Tokens:** {settings['max_tokens']}")
-    st.markdown(f"- **Top P:** {settings['top_p']:.2f}")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Chunk Overlap")
+    with col2:
+        st.write(f"**{settings['chunk_overlap']}**")
     
-    st.markdown("#### Performance")
-    st.markdown(f"- **Speed:** {settings['speed']:.2f}")
-    st.markdown(f"- **Accuracy:** {settings['accuracy']:.2f}")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Max Chunks")
+    with col2:
+        st.write(f"**{settings['max_chunks']}**")
     
-    st.markdown("---")
+    # Search Settings
+    st.subheader("Search Settings")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Search Depth")
+    with col2:
+        st.write(f"**{settings['search_depth']}**")
     
-    # File uploader at the top of sidebar for better visibility
-    st.markdown("### Upload Documents")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Relevance Threshold")
+    with col2:
+        st.write(f"**{settings['relevance_threshold']:.2f}**")
+    
+    # Model Parameters
+    st.subheader("Model Parameters")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Temperature")
+    with col2:
+        st.write(f"**{settings['temperature']:.2f}**")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Max Tokens")
+    with col2:
+        st.write(f"**{settings['max_tokens']}**")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Top P")
+    with col2:
+        st.write(f"**{settings['top_p']:.2f}**")
+    
+    # Performance
+    st.subheader("Performance")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Speed")
+    with col2:
+        st.write(f"**{settings['speed']:.2f}**")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Accuracy")
+    with col2:
+        st.write(f"**{settings['accuracy']:.2f}**")
+    
+    st.divider()
+    
+    # File uploader
+    st.header("Upload Documents")
     try:
         uploaded_files = st.file_uploader(
             label="Upload your documents to analyze",
             type=['pdf', 'txt'],
             accept_multiple_files=True,
             help="Upload PDF or text files to analyze",
-            label_visibility="visible",
+            label_visibility="collapsed",
             key="sidebar_file_uploader"
         )
         
