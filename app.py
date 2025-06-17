@@ -263,10 +263,8 @@ if 'main_answer' not in st.session_state:
     st.session_state.main_answer = None
 if 'main_results' not in st.session_state:
     st.session_state.main_results = []
-if 'follow_up_answers' not in st.session_state:
-    st.session_state.follow_up_answers = []
-if 'follow_up_questions' not in st.session_state:
-    st.session_state.follow_up_questions = []
+if 'follow_up_answer' not in st.session_state:
+    st.session_state.follow_up_answer = None
 
 # Create data directory if it doesn't exist
 DATA_DIR = "app_data"
@@ -459,13 +457,6 @@ try:
     if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
         with st.spinner("Initializing RAG system..."):
             try:
-                # Clear any existing CUDA cache
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                
-                # Force garbage collection
-                gc.collect()
-                
                 # Initialize with explicit device and model settings
                 st.session_state.rag_system = RAGSystem(
                     settings={
@@ -474,38 +465,17 @@ try:
                         'model_temperature': 0.3,
                         'chunk_size': 500,
                         'chunk_overlap': 50,
-                        'num_results': 3,
-                        'batch_size': 32,  # Reduced batch size
-                        'sequence_length': 256,  # Reduced sequence length
-                        'doc_percentage': 15
+                        'num_results': 3
                     },
                     is_web=True
                 )
-                
-                # Verify initialization
-                if not st.session_state.rag_system:
-                    raise Exception("RAG system initialization failed")
-                
-                # Test the system with a simple query
-                test_query = "test initialization"
-                try:
-                    _ = st.session_state.rag_system.question_handler.process_question(test_query)
-                except Exception as e:
-                    raise Exception(f"RAG system test failed: {str(e)}")
-                
                 st.success("RAG system initialized successfully!")
             except Exception as e:
                 st.error(f"Error initializing RAG system: {str(e)}")
                 st.info("Please refresh the page and try again.")
-                # Clear the failed initialization
-                if hasattr(st.session_state, 'rag_system'):
-                    del st.session_state.rag_system
 except Exception as e:
     st.error(f"Critical error initializing RAG system: {str(e)}")
     st.info("Please refresh the page and try again.")
-    # Clear the failed initialization
-    if hasattr(st.session_state, 'rag_system'):
-        del st.session_state.rag_system
 
 def get_current_settings():
     """Get the current settings from session state or defaults"""
@@ -907,8 +877,7 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         type_text(answer, answer_container)
         
         if is_follow_up:
-            st.session_state.follow_up_answers.append(answer)
-            st.session_state.follow_up_questions.append(question)
+            st.session_state.follow_up_answer = answer
         else:
             st.session_state.main_answer = answer
             st.session_state.main_results = results
@@ -936,7 +905,7 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
             type_text("\n\n### Internet Search Results\n" + internet_answer, answer_container)
             
             if is_follow_up:
-                st.session_state.follow_up_answers[-1] += "\n\n### Internet Search Results\n" + internet_answer
+                st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
             else:
                 st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
         
@@ -1069,12 +1038,12 @@ def show_main_page():
         # Initialize session state variables if they don't exist
         if 'question' not in st.session_state:
             st.session_state.question = ""
-        if 'follow_up_questions' not in st.session_state:
-            st.session_state.follow_up_questions = []
-        if 'follow_up_answers' not in st.session_state:
-            st.session_state.follow_up_answers = []
+        if 'follow_up_question' not in st.session_state:
+            st.session_state.follow_up_question = ""
         if 'main_answer' not in st.session_state:
             st.session_state.main_answer = None
+        if 'follow_up_answer' not in st.session_state:
+            st.session_state.follow_up_answer = None
         
         # Main content area
         st.markdown("""
@@ -1200,8 +1169,7 @@ def show_main_page():
                     type_text(answer, answer_container)
                     
                     if is_follow_up:
-                        st.session_state.follow_up_answers.append(answer)
-                        st.session_state.follow_up_questions.append(question)
+                        st.session_state.follow_up_answer = answer
                     else:
                         st.session_state.main_answer = answer
                         st.session_state.main_results = results
@@ -1226,7 +1194,7 @@ def show_main_page():
                         type_text("\n\n### Internet Search Results\n" + internet_answer, answer_container)
                         
                         if is_follow_up:
-                            st.session_state.follow_up_answers[-1] += "\n\n### Internet Search Results\n" + internet_answer
+                            st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
                         else:
                             st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
             
@@ -1248,20 +1216,23 @@ def show_main_page():
         # Add follow-up question section if we have a main answer
         if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
             st.markdown("---")
-            st.markdown("### Follow-up Questions")
+            st.markdown("### Follow-up Question")
             
-            # Display conversation history
-            if st.session_state.follow_up_questions:
-                for i, (q, a) in enumerate(zip(st.session_state.follow_up_questions, st.session_state.follow_up_answers)):
-                    st.markdown(f"**Follow-up {i+1}:** {q}")
-                    st.markdown(a)
-                    st.markdown("---")
+            # Initialize follow-up questions list if it doesn't exist
+            if 'follow_up_questions' not in st.session_state:
+                st.session_state.follow_up_questions = []
+            
+            # Display all previous follow-up questions and answers
+            for i, (q, a) in enumerate(st.session_state.follow_up_questions):
+                st.markdown(f"**Follow-up {i+1}:** {q}")
+                st.markdown(a)
+                st.markdown("---")
             
             col1, col2 = st.columns([3, 1])
             with col1:
                 follow_up_question = st.text_input(
                     label="Ask a follow-up question",
-                    value="",
+                    value=st.session_state.get('follow_up_question', ''),
                     label_visibility="collapsed",
                     placeholder="Ask a follow-up question...",
                     key="follow_up_input"
@@ -1270,8 +1241,9 @@ def show_main_page():
                 ask_follow_up = st.button("Ask Follow-up", type="primary", use_container_width=True)
 
             # Process follow-up question if button is clicked or enter is pressed
-            if (ask_follow_up or (follow_up_question and follow_up_question.strip())) and not st.session_state.processing:
+            if (ask_follow_up or (follow_up_question and follow_up_question != st.session_state.get('follow_up_question', ''))) and not st.session_state.processing:
                 try:
+                    st.session_state.follow_up_question = follow_up_question
                     st.session_state.processing = True
                     
                     # Initialize variables
@@ -1330,21 +1302,20 @@ def show_main_page():
                         processed_results.sort(key=lambda x: x['score'], reverse=True)
                         results = processed_results[:5]
                         
-                        # Build context from conversation history
+                        # Build context from all previous questions and answers
                         context = f"Original question: {st.session_state.question}\nOriginal answer: {st.session_state.main_answer}\n"
-                        for i, (q, a) in enumerate(zip(st.session_state.follow_up_questions, st.session_state.follow_up_answers)):
-                            context += f"\nFollow-up {i+1}: {q}\nAnswer: {a}\n"
+                        for prev_q, prev_a in st.session_state.follow_up_questions:
+                            context += f"\nPrevious follow-up: {prev_q}\nPrevious answer: {prev_a}\n"
                         context += f"\nNew follow-up question: {follow_up_question}"
                         
-                        # Generate answer with conversation history context
+                        # Generate answer with previous context
                         follow_up_answer = st.session_state.rag_system.question_handler.process_question(context)
                         
                         # Type out the answer
                         type_text(follow_up_answer, follow_up_container)
                         
-                        # Store the follow-up question and answer
-                        st.session_state.follow_up_questions.append(follow_up_question)
-                        st.session_state.follow_up_answers.append(follow_up_answer)
+                        # Add to follow-up questions list
+                        st.session_state.follow_up_questions.append((follow_up_question, follow_up_answer))
                         
                         # If internet search is enabled, do it in parallel
                         if use_internet:
@@ -1364,7 +1335,7 @@ def show_main_page():
                             
                             # Type out the internet results
                             type_text("\n\n### Internet Search Results\n" + internet_answer, follow_up_container)
-                            st.session_state.follow_up_answers[-1] += "\n\n### Internet Search Results\n" + internet_answer
+                            st.session_state.follow_up_questions[-1] = (follow_up_question, follow_up_answer + "\n\n### Internet Search Results\n" + internet_answer)
                 
                 except Exception as e:
                     st.error(f"Error processing follow-up question: {str(e)}")
@@ -1402,10 +1373,10 @@ def show_main_page():
                         del st.session_state.main_results
                     if 'question' in st.session_state:
                         st.session_state.question = ""
-                    if 'follow_up_questions' in st.session_state:
-                        st.session_state.follow_up_questions = []
-                    if 'follow_up_answers' in st.session_state:
-                        st.session_state.follow_up_answers = []
+                    if 'follow_up_question' in st.session_state:
+                        st.session_state.follow_up_question = ""
+                    if 'follow_up_answer' in st.session_state:
+                        del st.session_state.follow_up_answer
                     st.rerun()
             
             with col3:
