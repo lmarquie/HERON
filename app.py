@@ -1005,30 +1005,6 @@ def show_main_page():
         if 'follow_up_question' not in st.session_state:
             st.session_state.follow_up_question = ""
         
-        # Sidebar
-        with st.sidebar:
-            # File uploader at the top of sidebar for better visibility
-            st.markdown("### Upload Documents")
-            try:
-                uploaded_files = st.file_uploader(
-                    label="Upload your documents to analyze",
-                    type=['pdf', 'txt'],
-                    accept_multiple_files=True,
-                    help="Upload PDF or text files to analyze",
-                    label_visibility="visible",
-                    key="main_file_uploader"
-                )
-                
-                if uploaded_files:
-                    if st.session_state.rag_system.process_web_uploads(uploaded_files):
-                        st.success(f"Successfully processed {len(uploaded_files)} file(s)")
-                        st.session_state.documents_loaded = True
-                    else:
-                        st.error("Failed to process uploaded files")
-            except Exception as e:
-                st.error(f"Error with file uploader: {str(e)}")
-                st.info("If you're running this in a cloud environment, please ensure you have proper permissions.")
-        
         # Main content area
         st.markdown("""
             <style>
