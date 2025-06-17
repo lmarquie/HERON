@@ -700,11 +700,15 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         st.session_state.processing = True
         start_time = time.time()
         
-        # Check if documents are loaded
+        # Check if we can process the question
         if not st.session_state.documents_loaded and not use_internet:
-            st.error("No documents have been uploaded. Please either:")
-            st.markdown("1. Upload documents using the file uploader in the sidebar")
-            st.markdown("2. Enable internet search to get answers without documents")
+            st.error("Cannot process question: No documents loaded and internet search is disabled.")
+            st.session_state.processing = False
+            return
+            
+        # Check if RAG system is properly initialized
+        if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
+            st.error("RAG system not initialized. Please refresh the page.")
             st.session_state.processing = False
             return
         
@@ -724,8 +728,10 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         else:
             prev_context = question
         
-        # Get search results
-        results = st.session_state.rag_system.vector_store.search(question, k=3)  # Get more results initially
+        # Only search documents if they are loaded
+        results = []
+        if st.session_state.documents_loaded:
+            results = st.session_state.rag_system.vector_store.search(question, k=3)
         
         # Process and filter results
         processed_results = []
@@ -787,23 +793,26 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         if use_internet:
             answer = st.session_state.rag_system.question_handler.process_question(question)
         else:
-            # When not using internet, explicitly instruct to only use document information
-            doc_context = f"""CRITICAL INSTRUCTION: You are a document-only assistant. You must ONLY use information that is explicitly present in the provided documents.
+            if not st.session_state.documents_loaded:
+                answer = "I cannot answer this question as there are no documents loaded. Please either upload documents or enable internet search."
+            else:
+                # When not using internet, explicitly instruct to only use document information
+                doc_context = f"""CRITICAL INSTRUCTION: You are a document-only assistant. You must ONLY use information that is explicitly present in the provided documents.
 
-            If the documents do not contain information about the subject of the question, you MUST respond with:
-            "I cannot answer this question as there is no relevant information in the provided documents."
+                If the documents do not contain information about the subject of the question, you MUST respond with:
+                "I cannot answer this question as there is no relevant information in the provided documents."
 
-            DO NOT:
-            - Use any external knowledge
-            - Make assumptions
-            - Use general knowledge
-            - Provide information from outside the documents
-            - Try to be helpful by using your training data
+                DO NOT:
+                - Use any external knowledge
+                - Make assumptions
+                - Use general knowledge
+                - Provide information from outside the documents
+                - Try to be helpful by using your training data
 
-            Question: {question}
+                Question: {question}
 
-            Remember: If the documents don't contain the information, simply state that you cannot answer the question."""
-            answer = st.session_state.rag_system.question_handler.process_question(doc_context)
+                Remember: If the documents don't contain the information, simply state that you cannot answer the question."""
+                answer = st.session_state.rag_system.question_handler.process_question(doc_context)
         
         # Type out the answer
         type_text(answer, answer_container)
@@ -977,6 +986,17 @@ def show_main_page():
         if 'processing' not in st.session_state:
             st.session_state.processing = False
         
+        # Check if RAG system is properly initialized
+        if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
+            st.error("RAG system not initialized. Please refresh the page.")
+            return
+            
+        # Check if documents are loaded
+        if not st.session_state.documents_loaded:
+            st.warning("⚠️ No documents have been uploaded. Please either:")
+            st.markdown("1. Upload documents using the file uploader in the sidebar")
+            st.markdown("2. Enable internet search to get answers without documents")
+        
         # Main content
         st.markdown("""
             <div style='text-align: center; padding: 2rem 0; display: flex; flex-direction: column; align-items: center;'>
@@ -996,6 +1016,11 @@ def show_main_page():
         # Process question if enter is pressed
         if question and question != st.session_state.question and not st.session_state.processing:
             try:
+                # Check if we can process the question
+                if not st.session_state.documents_loaded and not st.session_state.get('use_internet', False):
+                    st.error("Cannot process question: No documents loaded and internet search is disabled.")
+                    return
+                    
                 st.session_state.question = question
                 st.session_state.processing = True
                 
@@ -1010,100 +1035,8 @@ def show_main_page():
                     if use_analysts:
                         generate_multi_analyst_answer(question, use_internet)
                     else:
-                        # Get search results
-                        results = st.session_state.rag_system.vector_store.search(question, k=3)  # Get more results initially
-                        
-                        # Process and filter results
-                        processed_results = []
-                        seen_sources = set()
-                        seen_texts = set()  # Track unique text content
-                        
-                        for result in results:
-                            source = result.get('metadata', {}).get('source', 'Unknown source')
-                            text = result.get('text', '')
-                            
-                            # Skip if we've seen this source or this exact text before
-                            if source in seen_sources or text in seen_texts:
-                                continue
-                                
-                            seen_sources.add(source)
-                            seen_texts.add(text)
-                            
-                            # Calculate relevance score
-                            raw_score = result.get('score', 0)
-                            
-                            # Normalize score to 0-1 range
-                            normalized_score = (raw_score + 1) / 2  # Convert to 0-1 range
-                            
-                            # Boost score for exact matches in source name
-                            question_terms = set(question.lower().split())
-                            source_terms = set(source.lower().split())
-                            
-                            # Check for exact matches in source name
-                            if any(term in source_terms for term in question_terms):
-                                normalized_score = max(normalized_score, 0.9)  # Higher boost for exact matches
-                            
-                            # Additional boost for financial reports and official documents
-                            if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
-                                normalized_score = max(normalized_score, 0.85)
-                            
-                            # Additional boost for recent documents
-                            if 'date' in result.get('metadata', {}):
-                                doc_date = result['metadata']['date']
-                                if doc_date:
-                                    try:
-                                        doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
-                                        days_old = (datetime.now() - doc_date).days
-                                        if days_old < 365:  # Boost for documents less than a year old
-                                            normalized_score = max(normalized_score, 0.8)
-                                    except:
-                                        pass
-                            
-                            processed_results.append({
-                                'metadata': result.get('metadata', {}),
-                                'score': normalized_score,
-                                'text': text
-                            })
-                        
-                        processed_results.sort(key=lambda x: x['score'], reverse=True)
-                        results = processed_results[:5]
-                        
-                        # Generate answer with optimized parameters
-                        answer = st.session_state.rag_system.question_handler.process_question(question)  # Use question directly
-                        
-                        # Type out the answer
-                        type_text(answer, answer_container)
-                        
-                        if is_follow_up:
-                            st.session_state.follow_up_answer = answer
-                        else:
-                            st.session_state.main_answer = answer
-                            st.session_state.main_results = results
-                        
-                        # If internet search is requested, do it in parallel
-                        if use_internet:
-                            internet_context = """You are a document analysis expert with access to the internet.
-                            Provide a concise answer using your knowledge and internet access.
-                            Cite sources for data. If no source exists, mention that.
-                            Focus on accurate, up-to-date information."""
-                            
-                            # Use ThreadPoolExecutor for parallel processing
-                            with ThreadPoolExecutor(max_workers=2) as executor:
-                                internet_future = executor.submit(
-                                    st.session_state.rag_system.question_handler.llm.generate_answer,
-                                    question,
-                                    internet_context
-                                )
-                                internet_answer = internet_future.result()
-                            
-                            # Type out the internet results
-                            type_text("\n\n### Internet Search Results\n" + internet_answer, answer_container)
-                            
-                            if is_follow_up:
-                                st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
-                            else:
-                                st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
-            
+                        generate_answer(question, use_internet, is_follow_up)
+
             except Exception as e:
                 st.error(f"Error processing question: {str(e)}")
                 st.info("Please try again or rephrase your question.")
