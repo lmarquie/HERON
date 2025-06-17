@@ -1152,23 +1152,27 @@ def show_main_page():
                             # Add follow-up question section
                             st.markdown("---")
                             st.markdown("### Follow-up Question")
-                            follow_up_question = st.text_input(
-                                label="Ask a follow-up question",
-                                value=st.session_state.get('follow_up_question', ''),
-                                label_visibility="collapsed",
-                                placeholder="Ask a follow-up question...",
-                                key="follow_up_input"
-                            )
+                            col1, col2 = st.columns([3, 1])
+                            with col1:
+                                follow_up_question = st.text_input(
+                                    label="Ask a follow-up question",
+                                    value=st.session_state.get('follow_up_question', ''),
+                                    label_visibility="collapsed",
+                                    placeholder="Ask a follow-up question...",
+                                    key="follow_up_input"
+                                )
+                            with col2:
+                                ask_follow_up = st.button("Ask Follow-up", type="primary", use_container_width=True)
 
-                            # Process follow-up question if entered
-                            if follow_up_question and follow_up_question != st.session_state.get('follow_up_question', ''):
+                            # Process follow-up question if entered and button clicked
+                            if follow_up_question and ask_follow_up and not st.session_state.processing:
                                 try:
                                     st.session_state.follow_up_question = follow_up_question
                                     st.session_state.processing = True
                                     
                                     # Show processing status
                                     with st.spinner("Processing your follow-up question..."):
-                                        # Get answer
+                                        # Get answer with previous context
                                         follow_up_answer = st.session_state.rag_system.question_handler.process_question(
                                             follow_up_question,
                                             context=f"Previous question: {st.session_state.question}\nPrevious answer: {st.session_state.main_answer}"
