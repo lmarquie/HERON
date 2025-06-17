@@ -1217,19 +1217,14 @@ def show_main_page():
             finally:
                 st.session_state.processing = False
 
-        # Only display if we haven't already shown it in the processing section
-        if not st.session_state.processing:
-            st.markdown("### Answer")
-            st.markdown(st.session_state.main_answer)
-            
-            # Display sources if they exist
-            if hasattr(st.session_state, 'main_results') and st.session_state.main_results:
-                st.markdown("### Sources")
-                for i, result in enumerate(st.session_state.main_results, 1):
-                    source = result.get('metadata', {}).get('source', 'Unknown source')
-                    score = result.get('score', 0)
-                    relevance_percentage = round(score * 100, 2)
-                    st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
+        # Display sources if they exist (but not the answer since it's already shown)
+        if hasattr(st.session_state, 'main_results') and st.session_state.main_results:
+            st.markdown("### Sources")
+            for i, result in enumerate(st.session_state.main_results, 1):
+                source = result.get('metadata', {}).get('source', 'Unknown source')
+                score = result.get('score', 0)
+                relevance_percentage = round(score * 100, 2)
+                st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
 
             # Add follow-up question section only if we have a main answer
             st.markdown("---")
