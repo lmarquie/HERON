@@ -76,8 +76,8 @@ with st.sidebar:
     
     # Display current model settings with new design
     st.markdown("""
-        <div style='background-color: #F8FAFC; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;'>
-            <h2 style='color: #1E3A8A; font-size: 1.2rem; font-weight: 600; margin: 0 0 1rem 0;'>Model Settings</h2>
+        <div style='margin-bottom: 1rem;'>
+            <h2 style='color: #1E3A8A; font-size: 1.2rem; font-weight: 600; margin: 0 0 0.75rem 0;'>Model Settings</h2>
         </div>
     """, unsafe_allow_html=True)
     
@@ -85,7 +85,7 @@ with st.sidebar:
     
     # Document Processing Section
     st.markdown("""
-        <div style='background-color: #F8FAFC; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;'>
+        <div style='margin-bottom: 1rem;'>
             <h3 style='color: #1E3A8A; font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Document Processing</h3>
         </div>
     """, unsafe_allow_html=True)
@@ -96,12 +96,12 @@ with st.sidebar:
         ("Max Chunks", settings['max_chunks'], 20, "d")
     ]:
         st.markdown(f"""
-            <div style='margin-bottom: 0.5rem;'>
+            <div style='margin-bottom: 0.75rem;'>
                 <div style='display: flex; justify-content: space-between; margin-bottom: 0.25rem;'>
                     <span style='color: #4B5563; font-size: 0.9rem;'>{setting}</span>
                     <span style='color: #1E3A8A; font-size: 0.9rem; font-weight: 500;'>{value:{format_str}}/{max_value}</span>
                 </div>
-                <div style='background-color: #E5E7EB; height: 0.5rem; border-radius: 0.25rem; overflow: hidden;'>
+                <div style='background-color: #E2E8F0; height: 0.35rem; border-radius: 0.25rem; overflow: hidden;'>
                     <div style='background-color: #1E3A8A; height: 100%; width: {value/max_value*100}%; border-radius: 0.25rem;'></div>
                 </div>
             </div>
@@ -109,7 +109,7 @@ with st.sidebar:
     
     # Search Settings Section
     st.markdown("""
-        <div style='background-color: #F8FAFC; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;'>
+        <div style='margin-bottom: 1rem;'>
             <h3 style='color: #1E3A8A; font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Search Settings</h3>
         </div>
     """, unsafe_allow_html=True)
@@ -119,12 +119,12 @@ with st.sidebar:
         ("Relevance Threshold", settings['relevance_threshold'], 1.0, ".2f")
     ]:
         st.markdown(f"""
-            <div style='margin-bottom: 0.5rem;'>
+            <div style='margin-bottom: 0.75rem;'>
                 <div style='display: flex; justify-content: space-between; margin-bottom: 0.25rem;'>
                     <span style='color: #4B5563; font-size: 0.9rem;'>{setting}</span>
                     <span style='color: #1E3A8A; font-size: 0.9rem; font-weight: 500;'>{value:{format_str}}/{max_value:.2f}</span>
                 </div>
-                <div style='background-color: #E5E7EB; height: 0.5rem; border-radius: 0.25rem; overflow: hidden;'>
+                <div style='background-color: #E2E8F0; height: 0.35rem; border-radius: 0.25rem; overflow: hidden;'>
                     <div style='background-color: #1E3A8A; height: 100%; width: {value/max_value*100}%; border-radius: 0.25rem;'></div>
                 </div>
             </div>
@@ -132,7 +132,7 @@ with st.sidebar:
     
     # Model Parameters Section
     st.markdown("""
-        <div style='background-color: #F8FAFC; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;'>
+        <div style='margin-bottom: 1rem;'>
             <h3 style='color: #1E3A8A; font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Model Parameters</h3>
         </div>
     """, unsafe_allow_html=True)
@@ -143,12 +143,12 @@ with st.sidebar:
         ("Top P", settings['top_p'], 1.0, ".2f")
     ]:
         st.markdown(f"""
-            <div style='margin-bottom: 0.5rem;'>
+            <div style='margin-bottom: 0.75rem;'>
                 <div style='display: flex; justify-content: space-between; margin-bottom: 0.25rem;'>
                     <span style='color: #4B5563; font-size: 0.9rem;'>{setting}</span>
                     <span style='color: #1E3A8A; font-size: 0.9rem; font-weight: 500;'>{value:{format_str}}/{max_value:.2f}</span>
                 </div>
-                <div style='background-color: #E5E7EB; height: 0.5rem; border-radius: 0.25rem; overflow: hidden;'>
+                <div style='background-color: #E2E8F0; height: 0.35rem; border-radius: 0.25rem; overflow: hidden;'>
                     <div style='background-color: #1E3A8A; height: 100%; width: {value/max_value*100}%; border-radius: 0.25rem;'></div>
                 </div>
             </div>
