@@ -1213,7 +1213,8 @@ def show_main_page():
                 relevance_percentage = round(score * 100, 2)
                 st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
 
-            # Add follow-up question section
+        # Add follow-up question section if we have a main answer
+        if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
             st.markdown("---")
             st.markdown("### Follow-up Question")
             col1, col2 = st.columns([3, 1])
