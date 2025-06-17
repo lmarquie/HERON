@@ -723,11 +723,18 @@ def generate_pdf_summary():
             story.append(Paragraph(f"Relevance: {result['score']:.2f}", styles['Normal']))
             story.append(Spacer(1, 10))
     
-    # Add follow-up if available
-    if hasattr(st.session_state, 'follow_up_question') and st.session_state.follow_up_question:
-        story.append(Paragraph("Follow-up Question:", styles['Heading2']))
-        story.append(Paragraph(st.session_state.follow_up_question, styles['Normal']))
-        story.append(Spacer(1, 20))
+    # Add all follow-up questions and answers if available
+    if hasattr(st.session_state, 'follow_up_questions') and st.session_state.follow_up_questions:
+        story.append(Paragraph("Follow-up Questions and Answers:", styles['Heading2']))
+        story.append(Spacer(1, 10))
+        
+        for i, (question, answer) in enumerate(st.session_state.follow_up_questions, 1):
+            story.append(Paragraph(f"Follow-up {i}:", styles['Heading3']))
+            story.append(Paragraph(question, styles['Normal']))
+            story.append(Spacer(1, 5))
+            story.append(Paragraph("Answer:", styles['Heading4']))
+            story.append(Paragraph(answer, styles['Normal']))
+            story.append(Spacer(1, 15))
     
     # Build the PDF
     doc.build(story)
