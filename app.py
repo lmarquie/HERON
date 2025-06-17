@@ -224,7 +224,8 @@ with st.sidebar:
             type=['pdf', 'txt'],
             accept_multiple_files=True,
             help="Upload PDF or text files to analyze",
-            label_visibility="visible"
+            label_visibility="visible",
+            key="sidebar_file_uploader"
         )
         
         if uploaded_files:
@@ -1014,7 +1015,8 @@ def show_main_page():
                     type=['pdf', 'txt'],
                     accept_multiple_files=True,
                     help="Upload PDF or text files to analyze",
-                    label_visibility="visible"
+                    label_visibility="visible",
+                    key="main_file_uploader"
                 )
                 
                 if uploaded_files:
