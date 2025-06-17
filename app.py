@@ -41,7 +41,13 @@ st.set_page_config(
 
 # Sidebar
 with st.sidebar:
-    st.title("Herbert Advisory")
+    # Company branding
+    st.markdown("""
+        <div style='text-align: center; padding: 1rem 0; border-bottom: 2px solid #1E3A8A; margin-bottom: 2rem;'>
+            <h1 style='color: #1E3A8A; font-size: 1.8rem; font-weight: 700; margin: 0; text-shadow: 0 0 10px rgba(30, 58, 138, 0.3);'>HERON</h1>
+            <p style='color: #1E3A8A; font-size: 1.2rem; margin: 0.5rem 0 0 0; text-shadow: 0 0 8px rgba(30, 58, 138, 0.3);'>Herbert Advisory</p>
+        </div>
+    """, unsafe_allow_html=True)
     
     # File uploader
     st.header("Upload Documents")
