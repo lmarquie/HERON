@@ -702,13 +702,15 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         
         # Check if we can process the question
         if not st.session_state.documents_loaded and not use_internet:
-            st.error("Cannot process question: No documents loaded and internet search is disabled.")
+            answer = "No documents have been uploaded. Please either upload documents using the file uploader in the sidebar or enable internet search to get answers."
+            st.session_state.main_answer = answer
             st.session_state.processing = False
             return
-            
+        
         # Check if RAG system is properly initialized
         if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
-            st.error("RAG system not initialized. Please refresh the page.")
+            answer = "RAG system not initialized. Please refresh the page."
+            st.session_state.main_answer = answer
             st.session_state.processing = False
             return
         
@@ -1010,11 +1012,6 @@ def show_main_page():
         # Process question if enter is pressed
         if question and question != st.session_state.question and not st.session_state.processing:
             try:
-                # Check if we can process the question
-                if not st.session_state.documents_loaded and not st.session_state.get('use_internet', False):
-                    st.error("Cannot process question: No documents loaded and internet search is disabled.")
-                    return
-                    
                 st.session_state.question = question
                 st.session_state.processing = True
                 
