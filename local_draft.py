@@ -156,26 +156,69 @@ class WebFileHandler(LocalFileHandler):
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 500, overlap: int = 30):
+    def __init__(self, chunk_size: int = 800, overlap: int = 100):
         self.chunk_size = chunk_size
         self.overlap = overlap
+        self.sentence_splitter = None  # Will be initialized on first use
+
+    def _initialize_sentence_splitter(self):
+        """Lazy initialization of sentence splitter"""
+        if self.sentence_splitter is None:
+            from nltk.tokenize import sent_tokenize
+            import nltk
+            try:
+                nltk.data.find('tokenizers/punkt')
+            except LookupError:
+                nltk.download('punkt')
+            self.sentence_splitter = sent_tokenize
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         try:
             doc = fitz.open(pdf_path)
-            text = "\n".join([page.get_text() for page in doc])
+            text = ""
+            for page in doc:
+                text += page.get_text("text")  # Using "text" mode for better formatting
+            doc.close()
             return text
         except Exception as e:
             print(f"Error extracting text from {pdf_path}: {e}")
             return ""
 
     def chunk_text(self, text: str) -> List[str]:
-        words = text.split()
+        """Improved text chunking that respects sentence boundaries"""
+        self._initialize_sentence_splitter()
+        
+        # Split into sentences first
+        sentences = self.sentence_splitter(text)
         chunks = []
-        for i in range(0, len(words), self.chunk_size - self.overlap):
-            chunk = " ".join(words[i:i + self.chunk_size])
-            if chunk.strip():
-                chunks.append(chunk)
+        current_chunk = []
+        current_length = 0
+        
+        for sentence in sentences:
+            sentence_length = len(sentence.split())
+            
+            # If adding this sentence would exceed chunk size, save current chunk
+            if current_length + sentence_length > self.chunk_size and current_chunk:
+                chunks.append(" ".join(current_chunk))
+                # Keep overlap sentences for context
+                overlap_sentences = []
+                overlap_length = 0
+                for s in reversed(current_chunk):
+                    if overlap_length + len(s.split()) <= self.overlap:
+                        overlap_sentences.insert(0, s)
+                        overlap_length += len(s.split())
+                    else:
+                        break
+                current_chunk = overlap_sentences
+                current_length = overlap_length
+            
+            current_chunk.append(sentence)
+            current_length += sentence_length
+        
+        # Add the last chunk if it exists
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+        
         return chunks
 
     def prepare_documents(self, pdf_paths: List[str]) -> List[Dict]:
@@ -189,230 +232,128 @@ class TextProcessor:
                     "metadata": {
                         "source": os.path.basename(pdf_path),
                         "chunk_id": i,
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "chunk_size": len(chunk.split())
                     }
                 })
         return documents
 
 ### =================== Vector Store =================== ###
 class VectorStore:
-    def __init__(self, dimension: int = 768):
+    def __init__(self, dimension: int = 1536):  # OpenAI embeddings are 1536-dimensional
         self.dimension = dimension
-        self.index = None
+        self.index = faiss.IndexFlatL2(dimension)  # Using L2 distance for better accuracy
         self.documents = []
+        self.embedding_model = None
+        self.cross_encoder = None
+        self.chunk_size = 800  # Default chunk size
+        self.chunk_overlap = 100  # Default chunk overlap
+        self._initialize_models()
+
+    def _initialize_models(self):
+        """Initialize embedding models with optimized settings"""
+        if self.embedding_model is None:
+            self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            # Optimize model for inference
+            self.embedding_model.eval()
+            if torch.cuda.is_available():
+                self.embedding_model = self.embedding_model.cuda()
         
-        # Use a smaller, faster model with local caching
-        model_name = 'paraphrase-MiniLM-L3-v2'  # Smaller model than all-MiniLM-L6-v2
-        cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'sentence_transformers')
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        try:
-            # Try to load from cache first
-            self.bi_encoder = SentenceTransformer(model_name, cache_folder=cache_dir)
-            # Use a more powerful cross-encoder for better ranking
-            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2', cache_folder=cache_dir)
-        except Exception as e:
-            print(f"Error loading models: {str(e)}")
-            print("Falling back to smaller models...")
-            # Fallback to even smaller models if the main ones fail
-            self.bi_encoder = SentenceTransformer('paraphrase-MiniLM-L3-v2', cache_folder=cache_dir)
-            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-TinyBERT-L-2-v2', cache_folder=cache_dir)
-        
-        # Optimize model settings
-        self.bi_encoder.max_seq_length = 128  # Reduced from 64 for better context
-        self.cross_encoder.max_seq_length = 128
-        
-        if torch.cuda.is_available():
-            self.bi_encoder = self.bi_encoder.to('cuda')
-            self.cross_encoder = self.cross_encoder.to('cuda')
-            self.bi_encoder = self.bi_encoder.half()
-            self.cross_encoder = self.cross_encoder.half()
-        
-        self.embedding_cache = {}
-        self.similarity_cache = {}
-        self.metadata_index = {}
-        self.chunk_size = 500
-        self.chunk_overlap = 50
-        print(f"Initialized VectorStore with optimized models on {self.bi_encoder.device}")
+        if self.cross_encoder is None:
+            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+            # Optimize model for inference
+            self.cross_encoder.eval()
+            if torch.cuda.is_available():
+                self.cross_encoder = self.cross_encoder.cuda()
+
+    def get_embedding(self, text: str) -> np.ndarray:
+        """Get embedding with optimized batch processing"""
+        with torch.no_grad():  # Disable gradient calculation for inference
+            embeddings = self.embedding_model.encode(
+                [text],
+                convert_to_tensor=True,
+                show_progress_bar=False,
+                normalize_embeddings=True  # Normalize for better cosine similarity
+            )
+            if torch.cuda.is_available():
+                embeddings = embeddings.cpu()
+            return embeddings.numpy()
 
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store"""
-        print(f"Adding {len(documents)} documents to vector store...")
-        texts = []
-        metadata_list = []
-        for doc in documents:
-            metadata = {
-                'source': doc['metadata'].get('source', 'Unknown'),
-                'path': doc['metadata'].get('path', ''),
-                'date': doc['metadata'].get('date', datetime.now().isoformat())
-            }
-            texts.append(doc['text'])
-            metadata_list.append(metadata)
+        """Add documents with optimized batch processing"""
+        if not documents:
+            return
 
-        print("Converting text to vector embeddings...")
-        # Increased batch size for faster processing
-        embeddings = self.bi_encoder.encode(texts,
-                                          show_progress_bar=True,
-                                          batch_size=64,  # Increased from 32
-                                          convert_to_numpy=True,
-                                          normalize_embeddings=True)
-
-        if self.index is None:
-            # Use a more efficient index type
+        # Prepare texts for batch processing
+        texts = [doc["text"] for doc in documents]
+        
+        # Get embeddings in batch
+        with torch.no_grad():
+            embeddings = self.embedding_model.encode(
+                texts,
+                convert_to_tensor=True,
+                show_progress_bar=False,
+                normalize_embeddings=True
+            )
             if torch.cuda.is_available():
-                res = faiss.StandardGpuResources()
-                quantizer = faiss.IndexFlatIP(embeddings.shape[1])
-                self.index = faiss.IndexIVFFlat(quantizer, embeddings.shape[1],
-                                              min(100, len(embeddings)),
-                                              faiss.METRIC_INNER_PRODUCT)
-                self.index = faiss.index_cpu_to_gpu(res, 0, self.index)
-                if not self.index.is_trained and len(embeddings) > 0:
-                    self.index.train(embeddings.astype('float32'))
-            else:
-                self.index = faiss.IndexFlatIP(embeddings.shape[1])
-            print(f"Created new FAISS index with dimension: {embeddings.shape[1]}")
-        self.index.add(embeddings.astype('float32'))
+                embeddings = embeddings.cpu()
+            embeddings = embeddings.numpy()
 
-        for i, (text, metadata) in enumerate(zip(texts, metadata_list)):
-            self.documents.append({
-                'text': text,
-                'metadata': metadata
-            })
-            for key, value in metadata.items():
-                if key not in self.metadata_index:
-                    self.metadata_index[key] = {}
-                if value not in self.metadata_index[key]:
-                    self.metadata_index[key][value] = set()
-                self.metadata_index[key][value].add(i)
-
-        print(f"Successfully added {len(documents)} documents. Total documents: {len(self.documents)}")
-
-    def save_local(self, path: str):
-        """Save the vector store to a local directory"""
-        if not os.path.exists(path):
-            os.makedirs(path)
-        
-        # Save the index
-        if self.index is not None:
-            faiss.write_index(self.index, os.path.join(path, 'index.faiss'))
-        
-        # Save the documents and metadata
-        with open(os.path.join(path, 'documents.pkl'), 'wb') as f:
-            pickle.dump({
-                'documents': self.documents,
-                'metadata_index': self.metadata_index,
-                'chunk_size': self.chunk_size,
-                'chunk_overlap': self.chunk_overlap
-            }, f)
-        
-        print(f"Vector store saved to {path}")
-
-    def load_local(self, path: str):
-        """Load the vector store from a local directory"""
-        # Load the index
-        index_path = os.path.join(path, 'index.faiss')
-        if os.path.exists(index_path):
-            self.index = faiss.read_index(index_path)
-        
-        # Load the documents and metadata
-        documents_path = os.path.join(path, 'documents.pkl')
-        if os.path.exists(documents_path):
-            with open(documents_path, 'rb') as f:
-                data = pickle.load(f)
-                self.documents = data['documents']
-                self.metadata_index = data['metadata_index']
-                self.chunk_size = data.get('chunk_size', 500)
-                self.chunk_overlap = data.get('chunk_overlap', 50)
-        
-        # Reinitialize models with proper device placement
-        self.bi_encoder = SentenceTransformer('paraphrase-MiniLM-L3-v2')
-        self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-        self.bi_encoder.max_seq_length = 128
-        self.cross_encoder.max_seq_length = 128
-        
-        if torch.cuda.is_available():
-            self.bi_encoder = self.bi_encoder.to('cuda')
-            self.cross_encoder = self.cross_encoder.to('cuda')
-            self.bi_encoder = self.bi_encoder.half()
-            self.cross_encoder = self.cross_encoder.half()
-        
-        print(f"Vector store loaded from {path}")
-
-    def preprocess_query(self, query: str) -> str:
-        """Preprocess the query to improve search relevance"""
-        # Convert to lowercase
-        query = query.lower()
-        
-        # Add financial context if query seems financial
-        financial_terms = ['revenue', 'profit', 'earnings', 'income', 'financial', 'numbers', 'quarterly', 'annual', 'report']
-        if any(term in query for term in financial_terms):
-            query = f"financial report {query}"
-        
-        return query
+        # Add to FAISS index
+        self.index.add(embeddings)
+        self.documents.extend(documents)
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
-        """Search for relevant documents with improved ranking"""
-        # Check cache first
-        cache_key = f"{query}:{k}"
-        if cache_key in self.similarity_cache:
-            return self.similarity_cache[cache_key]
-
-        # Preprocess query
-        processed_query = self.preprocess_query(query)
-        
+        """Enhanced search with reranking"""
         # Get query embedding
-        query_embedding = self.get_embedding(processed_query)
+        query_embedding = self.get_embedding(query)
         
-        # Search in FAISS index
-        if self.index is not None:
-            # Use a larger initial search to get more candidates
-            initial_k = min(k * 4, len(self.documents))  # Increased from k*2 to k*4
-            scores, indices = self.index.search(query_embedding.reshape(1, -1).astype('float32'), initial_k)
-            
-            # Get documents and their scores
-            candidates = []
-            for score, idx in zip(scores[0], indices[0]):
-                if idx != -1:  # FAISS returns -1 for empty slots
-                    doc = self.documents[idx]
-                    candidates.append({
-                        'text': doc['text'],
-                        'metadata': doc['metadata'],
-                        'score': float(score)
-                    })
-            
-            # Re-rank using cross-encoder
-            if candidates:
-                # Prepare pairs for cross-encoder
-                pairs = [(processed_query, candidate['text']) for candidate in candidates]
-                
-                # Get cross-encoder scores
-                cross_scores = self.cross_encoder.predict(pairs)
-                
-                # Update scores with cross-encoder scores
-                for candidate, cross_score in zip(candidates, cross_scores):
-                    # Combine bi-encoder and cross-encoder scores
-                    candidate['score'] = 0.3 * candidate['score'] + 0.7 * float(cross_score)
-            
-            # Sort by combined score in descending order and take top k
-            candidates.sort(key=lambda x: x['score'], reverse=True)
-            results = candidates[:k]
-            
-            # Cache the results
-            self.similarity_cache[cache_key] = results
-            return results
+        # First stage: FAISS search
+        distances, indices = self.index.search(query_embedding, k * 2)  # Get more candidates for reranking
         
-        return []
+        # Get candidate documents
+        candidates = [self.documents[i] for i in indices[0]]
+        
+        # Second stage: Cross-encoder reranking
+        pairs = [(query, doc["text"]) for doc in candidates]
+        with torch.no_grad():
+            scores = self.cross_encoder.predict(pairs)
+        
+        # Combine scores and sort
+        scored_candidates = list(zip(candidates, scores))
+        scored_candidates.sort(key=lambda x: x[1], reverse=True)
+        
+        # Return top k results
+        return [doc for doc, _ in scored_candidates[:k]]
 
-    def get_embedding(self, text: str):
-        if text in self.embedding_cache:
-            return self.embedding_cache[text]
-        else:
-            embedding = self.bi_encoder.encode([text],
-                                              batch_size=1,
-                                              convert_to_numpy=True,
-                                              normalize_embeddings=True)
-            self.embedding_cache[text] = embedding
-            return embedding
+    def save_local(self, path: str):
+        """Save the vector store to a local file"""
+        try:
+            with open(path, 'wb') as f:
+                pickle.dump({
+                    'documents': self.documents,
+                    'embedding_model': self.embedding_model,
+                    'cross_encoder': self.cross_encoder,
+                    'chunk_size': self.chunk_size,
+                    'chunk_overlap': self.chunk_overlap
+                }, f)
+            print(f"Vector store saved to {path}")
+        except Exception as e:
+            print(f"Error saving vector store: {e}")
+
+    def load_local(self, path: str):
+        """Load the vector store from a local file"""
+        try:
+            with open(path, 'rb') as f:
+                data = pickle.load(f)
+                self.documents = data['documents']
+                self.embedding_model = data['embedding_model']
+                self.cross_encoder = data['cross_encoder']
+                self.chunk_size = data.get('chunk_size', 800)
+                self.chunk_overlap = data.get('chunk_overlap', 100)
+            print(f"Vector store loaded from {path}")
+        except Exception as e:
+            print(f"Error loading vector store: {e}")
 
 ### =================== Claude Handler =================== ###
 class ClaudeHandler:
@@ -495,34 +436,62 @@ class ClaudeHandler:
 class QuestionHandler:
     def __init__(self, vector_store: VectorStore):
         self.vector_store = vector_store
-        self.llm = ClaudeHandler()
+        self.llm = None
+        self._initialize_llm()
+
+    def _initialize_llm(self):
+        """Initialize the language model with optimized settings"""
+        if self.llm is None:
+            self.llm = AutoModelForCausalLM.from_pretrained(
+                "gpt2",  # Using a smaller model for faster inference
+                torch_dtype=torch.float16,  # Use half precision for faster inference
+                low_cpu_mem_usage=True
+            )
+            if torch.cuda.is_available():
+                self.llm = self.llm.cuda()
+            self.llm.eval()  # Set to evaluation mode
 
     def process_question(self, question: str, query_type: str = "document", k: int = 5) -> str:
-        results = self.vector_store.search(question, k=k)
-
-        # Combine results into a single context with size limits
-        context_parts = []
-        total_length = 0
-        max_context_length = 40000  # Approximately 10k tokens
-        
-        for chunk in results:
-            chunk_text = chunk['text']
-            # If adding this chunk would exceed the limit, truncate it
-            if total_length + len(chunk_text) > max_context_length:
-                remaining_length = max_context_length - total_length
-                if remaining_length > 100:  # Only add if we have at least 100 chars left
-                    chunk_text = chunk_text[:remaining_length] + "..."
-                else:
-                    break
-            context_parts.append(chunk_text)
-            total_length += len(chunk_text)
+        """Process a single question"""
+        try:
+            # Get relevant documents
+            results = self.vector_store.search(question, k=k)
             
-            if total_length >= max_context_length:
-                break
-        
-        context = "\n".join(context_parts)
-        answer = self.llm.generate_answer(question, context)
-        return answer
+            # Prepare context
+            context = "\n".join([r["text"] for r in results])
+            
+            # Generate answer
+            with torch.no_grad():
+                answer = self.llm.generate_answer(question, context)
+            
+            return answer
+        except Exception as e:
+            print(f"Error processing question: {e}")
+            return "Error processing question"
+
+    def process_questions_batch(self, questions: List[str], query_type: str = "document", k: int = 5) -> List[str]:
+        """Process multiple questions in parallel"""
+        try:
+            # Get relevant documents for all questions at once
+            all_results = []
+            for question in questions:
+                results = self.vector_store.search(question, k=k)
+                all_results.append(results)
+            
+            # Prepare contexts
+            contexts = ["\n".join([r["text"] for r in results]) for results in all_results]
+            
+            # Generate answers in parallel
+            with torch.no_grad():
+                answers = []
+                for question, context in zip(questions, contexts):
+                    answer = self.llm.generate_answer(question, context)
+                    answers.append(answer)
+            
+            return answers
+        except Exception as e:
+            print(f"Error processing questions batch: {e}")
+            return ["Error processing question"] * len(questions)
 
 ### =================== Main RAG System =================== ###
 class RAGSystem:
