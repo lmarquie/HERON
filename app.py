@@ -1281,19 +1281,19 @@ def show_main_page():
         st.session_state.use_analysts = st.toggle("Multi-Analyst")
         
         # Add reset and PDF buttons in the middle
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            button_col1, button_col2 = st.columns(2)
-            with button_col1:
-                if st.button("Reset Conversation", key="reset_button"):
-                    # Clear all conversation-related session state
-                    for key in list(st.session_state.keys()):
-                        if key not in ['rag_system', 'documents_loaded', 'use_internet', 'use_analysts']:
-                            del st.session_state[key]
-                    st.rerun()
-            
-            with button_col2:
-                if st.session_state.main_answer:
+        if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                button_col1, button_col2 = st.columns(2)
+                with button_col1:
+                    if st.button("Reset Conversation", key="reset_button"):
+                        # Clear all conversation-related session state
+                        for key in list(st.session_state.keys()):
+                            if key not in ['rag_system', 'documents_loaded', 'use_internet', 'use_analysts']:
+                                del st.session_state[key]
+                        st.rerun()
+                
+                with button_col2:
                     if st.download_button(
                         label="Download PDF Summary",
                         data=generate_pdf_summary(),
