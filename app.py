@@ -879,11 +879,12 @@ def generate_multi_analyst_answer(question, use_internet=False):
         # Generate the debate
         status_text.text("💭 Analysts are debating...")
         
-        debate = st.session_state.rag_system.question_handler.process_question(debate_prompt)
-        
-        # Store the debate in session state
-        st.session_state.main_answer = debate
+        # Store the question first
         st.session_state.question = question
+        
+        # Generate and store the debate
+        debate = st.session_state.rag_system.question_handler.process_question(debate_prompt)
+        st.session_state.main_answer = debate
         
         # Display the debate
         st.markdown("### Formal Analyst Debate")
@@ -920,6 +921,9 @@ def generate_multi_analyst_answer(question, use_internet=False):
         # Clear the status after a short delay
         time.sleep(1)
         status_text.empty()
+        
+        # Force a rerun to ensure the buttons appear
+        st.rerun()
 
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
