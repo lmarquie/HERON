@@ -42,9 +42,10 @@ st.set_page_config(
 # Sidebar
 with st.sidebar:
     st.markdown("""
-        <div style='padding: 1rem 0; margin-bottom: 1rem;'>
+        <div style='text-align: center; padding: 1rem 0; margin-bottom: 1rem;'>
+            <h2 style='color: #1E3A8A; font-size: 1.2rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Herbert Advisory</h2>
             <p style='color: #4B5563; font-size: 0.9rem; line-height: 1.4;'>
-                HERON (Herbert Embedded Retrieval and Oracle Network) is an AI-powered document analysis system that helps you extract insights from your documents through natural conversation.
+                HERON (Herbert Embedded Retrieval and Oracle Network) is an advanced document analysis platform that leverages artificial intelligence to facilitate comprehensive document interrogation through natural language processing capabilities.
             </p>
         </div>
     """, unsafe_allow_html=True)
@@ -954,7 +955,6 @@ def show_main_page():
         st.markdown("""
             <div style='text-align: center; padding: 2rem 0; display: flex; flex-direction: column; align-items: center;'>
                 <h1 style='color: #1E3A8A; font-size: 3.5rem; font-weight: 700; margin: 0; text-shadow: 0 0 10px rgba(30, 58, 138, 0.3);'>HERON</h1>
-                <p style='color: #1E3A8A; font-size: 1.5rem; margin: 0.5rem 0 0 0; text-shadow: 0 0 8px rgba(30, 58, 138, 0.3);'>Herbert Advisory</p>
             </div>
         """, unsafe_allow_html=True)
         
