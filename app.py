@@ -263,6 +263,8 @@ if 'main_answer' not in st.session_state:
     st.session_state.main_answer = None
 if 'main_results' not in st.session_state:
     st.session_state.main_results = []
+if 'follow_up_answer' not in st.session_state:
+    st.session_state.follow_up_answer = None
 
 # Create data directory if it doesn't exist
 DATA_DIR = "app_data"
@@ -1004,6 +1006,10 @@ def show_main_page():
             st.session_state.question = ""
         if 'follow_up_question' not in st.session_state:
             st.session_state.follow_up_question = ""
+        if 'main_answer' not in st.session_state:
+            st.session_state.main_answer = None
+        if 'follow_up_answer' not in st.session_state:
+            st.session_state.follow_up_answer = None
         
         # Main content area
         st.markdown("""
@@ -1148,60 +1154,6 @@ def show_main_page():
                                     # Convert score to percentage and round to 2 decimal places
                                     relevance_percentage = round(score * 100, 2)
                                     st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
-
-                            # Add follow-up question section
-                            st.markdown("---")
-                            st.markdown("### Follow-up Question")
-                            col1, col2 = st.columns([3, 1])
-                            with col1:
-                                follow_up_question = st.text_input(
-                                    label="Ask a follow-up question",
-                                    value=st.session_state.get('follow_up_question', ''),
-                                    label_visibility="collapsed",
-                                    placeholder="Ask a follow-up question...",
-                                    key="follow_up_input"
-                                )
-                            with col2:
-                                ask_follow_up = st.button("Ask Follow-up", type="primary", use_container_width=True)
-
-                            # Process follow-up question if entered and button clicked
-                            if follow_up_question and ask_follow_up and not st.session_state.processing:
-                                try:
-                                    st.session_state.follow_up_question = follow_up_question
-                                    st.session_state.processing = True
-                                    
-                                    # Show processing status
-                                    with st.spinner("Processing your follow-up question..."):
-                                        # Get answer with previous context
-                                        follow_up_answer = st.session_state.rag_system.question_handler.process_question(
-                                            follow_up_question,
-                                            context=f"Previous question: {st.session_state.question}\nPrevious answer: {st.session_state.main_answer}"
-                                        )
-                                        
-                                        if follow_up_answer:
-                                            st.session_state.follow_up_answer = follow_up_answer
-                                            st.markdown("### Follow-up Answer")
-                                            st.markdown(follow_up_answer)
-                                            
-                                            # If internet search is enabled, add internet results for follow-up
-                                            if use_internet:
-                                                with st.spinner("Searching the internet for follow-up..."):
-                                                    internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(
-                                                        follow_up_question,
-                                                        internet_context
-                                                    )
-                                                    
-                                                    st.markdown("### Internet Search Results")
-                                                    st.markdown(internet_answer)
-                                                    st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
-                                        else:
-                                            st.error("Failed to generate a follow-up answer. Please try again.")
-                                    
-                                except Exception as e:
-                                    st.error(f"Error processing follow-up question: {str(e)}")
-                                    st.info("Please try again or rephrase your follow-up question.")
-                                finally:
-                                    st.session_state.processing = False
                         else:
                             st.error("Failed to generate an answer. Please try again.")
                 
@@ -1210,6 +1162,79 @@ def show_main_page():
                 st.info("Please try again or rephrase your question.")
             finally:
                 st.session_state.processing = False
+
+        # Display main answer if it exists
+        if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
+            st.markdown("### Answer")
+            st.markdown(st.session_state.main_answer)
+            
+            # Display sources if they exist
+            if hasattr(st.session_state, 'main_results') and st.session_state.main_results:
+                st.markdown("### Sources")
+                for i, result in enumerate(st.session_state.main_results, 1):
+                    source = result.get('metadata', {}).get('source', 'Unknown source')
+                    score = result.get('score', 0)
+                    relevance_percentage = round(score * 100, 2)
+                    st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
+
+        # Add follow-up question section
+        st.markdown("---")
+        st.markdown("### Follow-up Question")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            follow_up_question = st.text_input(
+                label="Ask a follow-up question",
+                value=st.session_state.get('follow_up_question', ''),
+                label_visibility="collapsed",
+                placeholder="Ask a follow-up question...",
+                key="follow_up_input"
+            )
+        with col2:
+            ask_follow_up = st.button("Ask Follow-up", type="primary", use_container_width=True)
+
+        # Process follow-up question if entered and button clicked
+        if follow_up_question and ask_follow_up and not st.session_state.processing:
+            try:
+                st.session_state.follow_up_question = follow_up_question
+                st.session_state.processing = True
+                
+                # Show processing status
+                with st.spinner("Processing your follow-up question..."):
+                    # Get answer with previous context
+                    follow_up_answer = st.session_state.rag_system.question_handler.process_question(
+                        follow_up_question,
+                        context=f"Previous question: {st.session_state.question}\nPrevious answer: {st.session_state.main_answer}"
+                    )
+                    
+                    if follow_up_answer:
+                        st.session_state.follow_up_answer = follow_up_answer
+                        st.markdown("### Follow-up Answer")
+                        st.markdown(follow_up_answer)
+                        
+                        # If internet search is enabled, add internet results for follow-up
+                        if use_internet:
+                            with st.spinner("Searching the internet for follow-up..."):
+                                internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(
+                                    follow_up_question,
+                                    internet_context
+                                )
+                                
+                                st.markdown("### Internet Search Results")
+                                st.markdown(internet_answer)
+                                st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
+                    else:
+                        st.error("Failed to generate a follow-up answer. Please try again.")
+                
+            except Exception as e:
+                st.error(f"Error processing follow-up question: {str(e)}")
+                st.info("Please try again or rephrase your follow-up question.")
+            finally:
+                st.session_state.processing = False
+
+        # Display follow-up answer if it exists
+        if hasattr(st.session_state, 'follow_up_answer') and st.session_state.follow_up_answer:
+            st.markdown("### Follow-up Answer")
+            st.markdown(st.session_state.follow_up_answer)
         
         # Options
         st.session_state.use_internet = st.toggle("Internet")
