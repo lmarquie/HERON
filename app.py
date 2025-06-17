@@ -5,6 +5,10 @@ import time
 from datetime import datetime
 from local_draft import RAGSystem, WebFileHandler
 from config import OPENAI_API_KEY
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # Create app data directory if it doesn't exist
 DATA_DIR = 'app_data'
@@ -38,6 +42,30 @@ st.set_page_config(
 # Sidebar
 with st.sidebar:
     st.title("Herbert Advisory")
+    
+    # File uploader
+    st.header("Upload Documents")
+    try:
+        uploaded_files = st.file_uploader(
+            label="Upload your documents to analyze",
+            type=['pdf', 'txt'],
+            accept_multiple_files=True,
+            help="Upload PDF or text files to analyze",
+            label_visibility="collapsed",
+            key="sidebar_file_uploader"
+        )
+        
+        if uploaded_files:
+            if st.session_state.rag_system.process_web_uploads(uploaded_files):
+                st.success(f"Successfully processed {len(uploaded_files)} file(s)")
+                st.session_state.documents_loaded = True
+            else:
+                st.error("Failed to process uploaded files")
+    except Exception as e:
+        st.error(f"Error with file uploader: {str(e)}")
+        st.info("If you're running this in a cloud environment, please ensure you have proper permissions.")
+    
+    st.divider()
     
     # Display current model settings
     st.header("Model Settings")
@@ -111,30 +139,6 @@ with st.sidebar:
         st.write("Accuracy")
     with col2:
         st.write(f"**{settings['accuracy']:.2f}**")
-    
-    st.divider()
-    
-    # File uploader
-    st.header("Upload Documents")
-    try:
-        uploaded_files = st.file_uploader(
-            label="Upload your documents to analyze",
-            type=['pdf', 'txt'],
-            accept_multiple_files=True,
-            help="Upload PDF or text files to analyze",
-            label_visibility="collapsed",
-            key="sidebar_file_uploader"
-        )
-        
-        if uploaded_files:
-            if st.session_state.rag_system.process_web_uploads(uploaded_files):
-                st.success(f"Successfully processed {len(uploaded_files)} file(s)")
-                st.session_state.documents_loaded = True
-            else:
-                st.error("Failed to process uploaded files")
-    except Exception as e:
-        st.error(f"Error with file uploader: {str(e)}")
-        st.info("If you're running this in a cloud environment, please ensure you have proper permissions.")
 
 # Initialize session state
 if 'current_page' not in st.session_state:
@@ -561,67 +565,114 @@ def show_settings_page():
         pass
 
 def generate_pdf_summary():
-    """Generate a PDF summary of the current conversation."""
-    if not hasattr(st.session_state, 'main_answer') or not st.session_state.main_answer:
-        return None
-    
-    # Create a temporary file for the PDF
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pdf_path = f"conversation_summary_{timestamp}.pdf"
-    
-    # Create the PDF document
-    doc = SimpleDocTemplate(pdf_path, pagesize=letter)
-    styles = getSampleStyleSheet()
-    story = []
-    
-    # Add title
-    title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=24,
-        spaceAfter=30
-    )
-    story.append(Paragraph("Conversation Summary", title_style))
-    story.append(Spacer(1, 20))
-    
-    # Add timestamp
-    story.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
-    story.append(Spacer(1, 20))
-    
-    # Add main question and answer
-    story.append(Paragraph("Main Question:", styles['Heading2']))
-    story.append(Paragraph(st.session_state.question, styles['Normal']))
-    story.append(Spacer(1, 10))
-    
-    story.append(Paragraph("Answer:", styles['Heading2']))
-    story.append(Paragraph(st.session_state.main_answer, styles['Normal']))
-    story.append(Spacer(1, 20))
-    
-    # Add sources if available
-    if hasattr(st.session_state, 'main_results') and st.session_state.main_results:
-        story.append(Paragraph("Sources:", styles['Heading2']))
-        for i, result in enumerate(st.session_state.main_results, 1):
-            story.append(Paragraph(f"Source {i}: {result['metadata']['source']}", styles['Normal']))
-            story.append(Paragraph(f"Relevance: {result['score']:.2f}", styles['Normal']))
-            story.append(Spacer(1, 10))
-    
-    # Add all follow-up questions and answers if available
-    if hasattr(st.session_state, 'follow_up_questions') and st.session_state.follow_up_questions:
-        story.append(Paragraph("Follow-up Questions and Answers:", styles['Heading2']))
+    """Generate a PDF summary of the current conversation"""
+    try:
+        # Create a temporary PDF file with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_path = os.path.join(DATA_DIR, f'conversation_summary_{timestamp}.pdf')
+        
+        # Create the PDF document
+        doc = SimpleDocTemplate(
+            pdf_path,
+            pagesize=letter,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
+        )
+        
+        # Create custom styles
+        styles = getSampleStyleSheet()
+        styles.add(ParagraphStyle(
+            name='BrandTitle',
+            parent=styles['Title'],
+            fontSize=24,
+            spaceAfter=30,
+            textColor=colors.HexColor('#1E3A8A')  # Dark blue
+        ))
+        styles.add(ParagraphStyle(
+            name='SubTitle',
+            parent=styles['Title'],
+            fontSize=16,
+            spaceAfter=20,
+            textColor=colors.HexColor('#4B5563')  # Gray
+        ))
+        styles.add(ParagraphStyle(
+            name='SectionHeader',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=12,
+            textColor=colors.HexColor('#1E3A8A')  # Dark blue
+        ))
+        styles.add(ParagraphStyle(
+            name='Question',
+            parent=styles['Normal'],
+            fontSize=12,
+            spaceAfter=6,
+            textColor=colors.HexColor('#1E3A8A')  # Dark blue
+        ))
+        styles.add(ParagraphStyle(
+            name='Answer',
+            parent=styles['Normal'],
+            fontSize=11,
+            spaceAfter=12,
+            leftIndent=20
+        ))
+        styles.add(ParagraphStyle(
+            name='Source',
+            parent=styles['Normal'],
+            fontSize=10,
+            spaceAfter=6,
+            textColor=colors.HexColor('#6B7280')  # Light gray
+        ))
+        
+        # Build the PDF content
+        story = []
+        
+        # Add header with logo and branding
+        story.append(Paragraph("HERON", styles['BrandTitle']))
+        story.append(Paragraph("Herbert Advisory", styles['SubTitle']))
+        story.append(Paragraph(f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        story.append(Spacer(1, 20))
+        
+        # Add main question and answer
+        story.append(Paragraph("Main Question", styles['SectionHeader']))
+        story.append(Paragraph(st.session_state.question, styles['Question']))
         story.append(Spacer(1, 10))
         
-        for i, (question, answer) in enumerate(st.session_state.follow_up_questions, 1):
-            story.append(Paragraph(f"Follow-up {i}:", styles['Heading3']))
-            story.append(Paragraph(question, styles['Normal']))
-            story.append(Spacer(1, 5))
-            story.append(Paragraph("Answer:", styles['Heading4']))
-            story.append(Paragraph(answer, styles['Normal']))
-            story.append(Spacer(1, 15))
-    
-    # Build the PDF
-    doc.build(story)
-    
-    return pdf_path
+        story.append(Paragraph("Answer", styles['SectionHeader']))
+        story.append(Paragraph(st.session_state.main_answer, styles['Answer']))
+        story.append(Spacer(1, 20))
+        
+        # Add sources if available
+        if st.session_state.main_results:
+            story.append(Paragraph("Sources", styles['SectionHeader']))
+            for result in st.session_state.main_results:
+                source = result.get('metadata', {}).get('source', 'Unknown source')
+                story.append(Paragraph(f"• {source}", styles['Source']))
+            story.append(Spacer(1, 20))
+        
+        # Add follow-up questions and answers
+        if hasattr(st.session_state, 'follow_up_questions') and st.session_state.follow_up_questions:
+            story.append(Paragraph("Follow-up Questions", styles['SectionHeader']))
+            for i, (question, answer) in enumerate(st.session_state.follow_up_questions, 1):
+                story.append(Paragraph(f"Follow-up {i}", styles['Question']))
+                story.append(Paragraph(question, styles['Question']))
+                story.append(Paragraph(answer, styles['Answer']))
+                story.append(Spacer(1, 10))
+        
+        # Add footer
+        story.append(Spacer(1, 30))
+        story.append(Paragraph("© 2024 Herbert Advisory. All rights reserved.", styles['Source']))
+        story.append(Paragraph("This document was generated by HERON (Herbert Embedded Retrieval and Oracle Network)", styles['Source']))
+        
+        # Build the PDF
+        doc.build(story)
+        
+        return pdf_path
+    except Exception as e:
+        st.error(f"Error generating PDF: {str(e)}")
+        return None
 
 def get_memory_usage():
     """Get current memory usage in MB."""
