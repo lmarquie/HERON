@@ -41,6 +41,14 @@ st.set_page_config(
 
 # Sidebar
 with st.sidebar:
+    st.markdown("""
+        <div style='padding: 1rem 0; margin-bottom: 1rem;'>
+            <p style='color: #4B5563; font-size: 0.9rem; line-height: 1.4;'>
+                HERON (Herbert Embedded Retrieval and Oracle Network) is an AI-powered document analysis system that helps you extract insights from your documents through natural conversation.
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+    
     # File uploader
     st.header("Upload Documents")
     try:
@@ -942,9 +950,9 @@ def show_main_page():
         if 'processing' not in st.session_state:
             st.session_state.processing = False
         
-        # Main content area
+        # Main content
         st.markdown("""
-            <div style='text-align: center; padding: 2rem 0;'>
+            <div style='text-align: center; padding: 2rem 0; display: flex; flex-direction: column; align-items: center;'>
                 <h1 style='color: #1E3A8A; font-size: 3.5rem; font-weight: 700; margin: 0; text-shadow: 0 0 10px rgba(30, 58, 138, 0.3);'>HERON</h1>
                 <p style='color: #1E3A8A; font-size: 1.5rem; margin: 0.5rem 0 0 0; text-shadow: 0 0 8px rgba(30, 58, 138, 0.3);'>Herbert Advisory</p>
             </div>
