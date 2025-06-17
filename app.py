@@ -776,7 +776,17 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         results = processed_results[:5]  # Increased to 5 sources
         
         # Generate answer with optimized parameters
-        answer = st.session_state.rag_system.question_handler.process_question(question)  # Use question directly instead of prev_context
+        if use_internet:
+            answer = st.session_state.rag_system.question_handler.process_question(question)
+        else:
+            # When not using internet, explicitly instruct to only use document information
+            doc_context = f"""IMPORTANT: You must ONLY use information from the provided documents to answer this question. 
+            Do not use any external knowledge or general information.
+            If the documents don't contain relevant information, acknowledge this limitation.
+            Do not make assumptions or use knowledge from outside the provided documents.
+            
+            Question: {question}"""
+            answer = st.session_state.rag_system.question_handler.process_question(doc_context)
         
         # Type out the answer
         type_text(answer, answer_container)
@@ -838,6 +848,10 @@ def generate_multi_analyst_answer(question, use_internet=False):
         
         # Define the debate prompt
         debate_prompt = f"""You are moderating a formal debate between four expert analysts. The question is: "{question}"
+
+        IMPORTANT: You must ONLY use information from the provided documents to inform your debate. Do not use any external knowledge or general information.
+        If the documents don't contain relevant information, acknowledge this limitation in your debate.
+        Do not make assumptions or use knowledge from outside the provided documents.
 
         The debate will follow this structure:
 
@@ -1275,7 +1289,7 @@ def show_main_page():
                                             file_name=os.path.basename(pdf_path),
                                             mime="application/pdf",
                                             use_container_width=True
-                                        ) 
+                                        )
                                     # Clean up the temporary file
                                     os.remove(pdf_path)
                             except Exception as e:
