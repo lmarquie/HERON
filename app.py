@@ -54,22 +54,54 @@ if not ensure_directories():
 
 def clear_caches():
     """Clear all caches and temporary files."""
-    # Clear Streamlit's cache
-    st.cache_data.clear()
-    st.cache_resource.clear()
-    
-    # Clear PyTorch's cache
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    
-    # Clear temporary files
-    temp_dir = "temp"
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir)
-        os.makedirs(temp_dir)
+    try:
+        # Clear Streamlit's cache
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        
+        # Clear PyTorch's cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # Clear temporary files
+        temp_dir = "temp"
+        if os.path.exists(temp_dir):
+            try:
+                # First try to remove all files in the directory
+                for file in os.listdir(temp_dir):
+                    file_path = os.path.join(temp_dir, file)
+                    try:
+                        if os.path.isfile(file_path):
+                            os.unlink(file_path)
+                        elif os.path.isdir(file_path):
+                            shutil.rmtree(file_path)
+                    except Exception as e:
+                        print(f"Error removing {file_path}: {e}")
+                
+                # Then try to remove the directory itself
+                try:
+                    os.rmdir(temp_dir)
+                except OSError:
+                    pass  # Ignore if directory is not empty
+                
+                # Create fresh temp directory
+                os.makedirs(temp_dir, exist_ok=True)
+            except Exception as e:
+                print(f"Error clearing temp directory: {e}")
+                # Create temp directory if it doesn't exist
+                os.makedirs(temp_dir, exist_ok=True)
+    except Exception as e:
+        print(f"Error in clear_caches: {e}")
+        # Ensure temp directory exists
+        os.makedirs("temp", exist_ok=True)
 
 # Clear caches on startup
-clear_caches()
+try:
+    clear_caches()
+except Exception as e:
+    print(f"Error during startup cache clearing: {e}")
+    # Ensure temp directory exists
+    os.makedirs("temp", exist_ok=True)
 
 # Theme configuration
 st.markdown("""
@@ -1047,27 +1079,48 @@ def show_main_page():
                         st.error(f"Error during search: {str(e)}")
                         results = []
                     
-                    answer = st.session_state.rag_system.question_handler.process_question(question)
-                    
-                    if answer:
-                        st.session_state.main_answer = answer
-                        st.session_state.main_results = results
-                        
-                        # Display answer
-                        st.markdown("### Answer")
-                        st.markdown(answer)
-                        
-                        # Display sources with improved formatting
-                        if results:
-                            st.markdown("### Sources")
-                            for i, result in enumerate(results, 1):
-                                source = result.get('metadata', {}).get('source', 'Unknown source')
-                                score = result.get('score', 0)
-                                # Convert score to percentage and round to 2 decimal places
-                                relevance_percentage = round(score * 100, 2)
-                                st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
+                    # Generate answer based on selected options
+                    if use_analysts:
+                        generate_multi_analyst_answer(question, use_internet)
                     else:
-                        st.error("Failed to generate an answer. Please try again.")
+                        answer = st.session_state.rag_system.question_handler.process_question(question)
+                        
+                        if answer:
+                            st.session_state.main_answer = answer
+                            st.session_state.main_results = results
+                            
+                            # Display answer
+                            st.markdown("### Answer")
+                            st.markdown(answer)
+                            
+                            # If internet search is enabled, add internet results
+                            if use_internet:
+                                with st.spinner("Searching the internet..."):
+                                    internet_context = """You are a document analysis expert with access to the internet.
+                                    Provide a concise answer using your knowledge and internet access.
+                                    Cite sources for data. If no source exists, mention that.
+                                    Focus on accurate, up-to-date information."""
+                                    
+                                    internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(
+                                        question,
+                                        internet_context
+                                    )
+                                    
+                                    st.markdown("### Internet Search Results")
+                                    st.markdown(internet_answer)
+                                    st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
+                            
+                            # Display sources with improved formatting
+                            if results:
+                                st.markdown("### Sources")
+                                for i, result in enumerate(results, 1):
+                                    source = result.get('metadata', {}).get('source', 'Unknown source')
+                                    score = result.get('score', 0)
+                                    # Convert score to percentage and round to 2 decimal places
+                                    relevance_percentage = round(score * 100, 2)
+                                    st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
+                        else:
+                            st.error("Failed to generate an answer. Please try again.")
                 
             except Exception as e:
                 st.error(f"Error processing question: {str(e)}")
