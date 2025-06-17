@@ -1217,35 +1217,65 @@ def show_main_page():
                     
                     # Show processing status
                     with st.spinner("Processing your follow-up question..."):
-                        # Get answer with previous context
-                        follow_up_answer = st.session_state.rag_system.question_handler.process_question(
-                            f"Previous question: {st.session_state.question}\nPrevious answer: {st.session_state.main_answer}\n\nFollow-up question: {follow_up_question}"
-                        )
-                        
-                        if follow_up_answer:
-                            st.session_state.follow_up_answer = follow_up_answer
-                            st.markdown("### Follow-up Answer")
-                            st.markdown(follow_up_answer)
+                        try:
+                            # Get answer with previous context
+                            follow_up_answer = st.session_state.rag_system.question_handler.process_question(
+                                f"Previous question: {st.session_state.question}\nPrevious answer: {st.session_state.main_answer}\n\nFollow-up question: {follow_up_question}"
+                            )
                             
-                            # If internet search is enabled, add internet results for follow-up
-                            if use_internet:
-                                with st.spinner("Searching the internet for follow-up..."):
-                                    internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(
-                                        follow_up_question,
-                                        internet_context
-                                    )
-                                    
-                                    st.markdown("### Internet Search Results")
-                                    st.markdown(internet_answer)
-                                    st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
-                        else:
-                            st.error("Failed to generate a follow-up answer. Please try again.")
+                            if follow_up_answer:
+                                st.session_state.follow_up_answer = follow_up_answer
+                                st.markdown("### Follow-up Answer")
+                                st.markdown(follow_up_answer)
+                                
+                                # If internet search is enabled, add internet results for follow-up
+                                if use_internet:
+                                    try:
+                                        with st.spinner("Searching the internet for follow-up..."):
+                                            internet_context = """You are a document analysis expert with access to the internet.
+                                            Provide a concise answer using your knowledge and internet access.
+                                            Cite sources for data. If no source exists, mention that.
+                                            Focus on accurate, up-to-date information."""
+                                            
+                                            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(
+                                                follow_up_question,
+                                                internet_context
+                                            )
+                                            
+                                            if internet_answer:
+                                                st.markdown("### Internet Search Results")
+                                                st.markdown(internet_answer)
+                                                st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
+                                            else:
+                                                st.warning("No internet results found for the follow-up question.")
+                                    except Exception as internet_error:
+                                        st.error(f"Error during internet search: {str(internet_error)}")
+                                        st.info("Continuing with document-based answer only.")
+                            else:
+                                st.error("Failed to generate a follow-up answer. Please try again.")
+                        
+                        except Exception as process_error:
+                            st.error(f"Error processing follow-up question: {str(process_error)}")
+                            st.info("Please try again or rephrase your follow-up question.")
                     
                 except Exception as e:
-                    st.error(f"Error processing follow-up question: {str(e)}")
+                    st.error(f"Error in follow-up processing: {str(e)}")
                     st.info("Please try again or rephrase your follow-up question.")
                 finally:
                     st.session_state.processing = False
+                    # Clean up any temporary files
+                    try:
+                        temp_dir = "temp"
+                        if os.path.exists(temp_dir):
+                            for file in os.listdir(temp_dir):
+                                try:
+                                    file_path = os.path.join(temp_dir, file)
+                                    if os.path.isfile(file_path):
+                                        os.unlink(file_path)
+                                except Exception as e:
+                                    print(f"Error deleting temp file {file}: {e}")
+                    except Exception as cleanup_error:
+                        print(f"Error during cleanup: {cleanup_error}")
 
             # Display follow-up answer if it exists
             if hasattr(st.session_state, 'follow_up_answer') and st.session_state.follow_up_answer:
