@@ -808,27 +808,7 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
                 answer = "I cannot answer this question as there are no documents loaded. Please either upload documents or enable internet search."
             else:
                 # When not using internet, explicitly instruct to only use document information
-                doc_context = f"""CRITICAL INSTRUCTION: You are a document-only assistant. You must ONLY use information that is explicitly present in the provided documents.
-
-                IMPORTANT: You are NOT allowed to use ANY external knowledge, including:
-                - Your training data
-                - General knowledge
-                - Common knowledge
-                - Facts you know
-                - Information from outside the documents
-
-                Use your own reasoning to answer the question, but if the documents do not contain any information at all about the subject of the question, you MUST respond with:
-                "I cannot answer this question as there is no relevant information in the provided documents."
-
-                Examples of questions you CANNOT answer without documents containing the information:
-                - "Who is [famous person]?"
-                - "What is [well-known concept]?"
-                - "Tell me about [historical event]"
-                - Any question about general knowledge or facts not in the documents
-
-                Question: {question}
-
-                Remember: If you need to use ANY knowledge that isn't explicitly in the documents, you must say you cannot answer the question."""
+                doc_context = f"""you are an investment banking analyst. you are only allowed to use the information in the loaded documents to answer the questions."""
                 answer = st.session_state.rag_system.question_handler.process_question(doc_context)
         
         # Store the answer
