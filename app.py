@@ -353,8 +353,29 @@ settings = load_settings()
 documents_restored = load_document_state()
 
 # Initialize RAG system with settings if it doesn't exist
-if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
-    st.session_state.rag_system = RAGSystem(settings=None, is_web=True)
+try:
+    if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
+        with st.spinner("Initializing RAG system..."):
+            try:
+                # Initialize with explicit device and model settings
+                st.session_state.rag_system = RAGSystem(
+                    settings={
+                        'device': 'cpu',  # Force CPU for web version
+                        'use_half_precision': False,  # Disable half precision for stability
+                        'model_temperature': 0.3,
+                        'chunk_size': 500,
+                        'chunk_overlap': 50,
+                        'num_results': 3
+                    },
+                    is_web=True
+                )
+                st.success("RAG system initialized successfully!")
+            except Exception as e:
+                st.error(f"Error initializing RAG system: {str(e)}")
+                st.info("Please refresh the page and try again.")
+except Exception as e:
+    st.error(f"Critical error initializing RAG system: {str(e)}")
+    st.info("Please refresh the page and try again.")
 
 def get_current_settings():
     """Get the current settings from session state or defaults"""
@@ -939,9 +960,14 @@ def show_main_page():
             placeholder="Ask a question...",
             key="question_input"
         )
-        
-        # Process question if entered
-        if question and question != st.session_state.question:
+
+        # Add Ask Question button
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            ask_button = st.button("Ask Question", type="primary", use_container_width=True)
+
+        # Process question if button is clicked or enter is pressed
+        if (ask_button or (question and question != st.session_state.question)) and not st.session_state.processing:
             try:
                 st.session_state.question = question
                 st.session_state.processing = True
