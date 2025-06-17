@@ -74,57 +74,28 @@ with st.sidebar:
     
     # Document Processing
     st.subheader("Document Processing")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.write("Chunk Size")
-    with col2:
-        st.write(f"**{settings['chunk_size']}**")
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.write("Chunk Overlap")
-    with col2:
-        st.write(f"**{settings['chunk_overlap']}**")
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.write("Max Chunks")
-    with col2:
-        st.write(f"**{settings['max_chunks']}**")
+    st.write("Chunk Size")
+    st.progress(settings['chunk_size'] / 1000)  # Normalize to 0-1 range
+    st.write("Chunk Overlap")
+    st.progress(settings['chunk_overlap'] / 100)  # Normalize to 0-1 range
+    st.write("Max Chunks")
+    st.progress(settings['max_chunks'] / 20)  # Normalize to 0-1 range
     
     # Search Settings
     st.subheader("Search Settings")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.write("Search Depth")
-    with col2:
-        st.write(f"**{settings['search_depth']}**")
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.write("Relevance Threshold")
-    with col2:
-        st.write(f"**{settings['relevance_threshold']:.2f}**")
+    st.write("Search Depth")
+    st.progress(settings['search_depth'] / 5)  # Normalize to 0-1 range
+    st.write("Relevance Threshold")
+    st.progress(settings['relevance_threshold'])  # Already 0-1 range
     
     # Model Parameters
     st.subheader("Model Parameters")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.write("Temperature")
-    with col2:
-        st.write(f"**{settings['temperature']:.2f}**")
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.write("Max Tokens")
-    with col2:
-        st.write(f"**{settings['max_tokens']}**")
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.write("Top P")
-    with col2:
-        st.write(f"**{settings['top_p']:.2f}**")
+    st.write("Temperature")
+    st.progress(settings['temperature'])  # Already 0-1 range
+    st.write("Max Tokens")
+    st.progress(settings['max_tokens'] / 2000)  # Normalize to 0-1 range
+    st.write("Top P")
+    st.progress(settings['top_p'])  # Already 0-1 range
 
 # Initialize session state
 if 'current_page' not in st.session_state:
