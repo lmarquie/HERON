@@ -1339,11 +1339,6 @@ def show_main_page():
                     except Exception as cleanup_error:
                         print(f"Error during cleanup: {cleanup_error}")
 
-            # Display follow-up answer if it exists
-            if hasattr(st.session_state, 'follow_up_answer') and st.session_state.follow_up_answer:
-                st.markdown("### Follow-up Answer")
-                st.markdown(st.session_state.follow_up_answer)
-
         # Options
         st.session_state.use_internet = st.toggle("Internet")
         st.session_state.use_analysts = st.toggle("Multi-Analyst")
