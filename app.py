@@ -870,39 +870,49 @@ def generate_multi_analyst_answer(question, use_internet=False):
         # Create status container
         status_text = st.empty()
         
-        # Define the debate prompt - optimized for speed and accuracy
-        debate_prompt = f"""You are moderating a focused debate between four expert analysts. Question: "{question}"
+        # Define the debate prompt
+        debate_prompt = f"""You are moderating a formal debate between four expert analysts. The question is: "{question}"
 
-        CRITICAL INSTRUCTIONS:
-        1. Use ONLY information from the provided documents
-        2. If documents lack relevant information, state this clearly
-        3. Keep responses concise but comprehensive
-        4. Focus on factual, data-driven analysis
-        5. Avoid repetition and unnecessary elaboration
+        IMPORTANT: You must ONLY use information from the provided documents to inform your debate. Do not use any external knowledge or general information.
+        If the documents don't contain relevant information, acknowledge this limitation in your debate.
+        Do not make assumptions or use knowledge from outside the provided documents.
 
-        DEBATE STRUCTURE (Keep each response under 100 words):
+        The debate will follow this structure:
 
-        ROUND 1: Key Analysis (1 minute each)
-        - Technical Analyst: Core metrics, data points, and quantitative analysis
-        - Creative Analyst: Innovative perspectives and unique insights
-        - Critical Analyst: Key risks and potential issues
-        - Strategic Analyst: Strategic implications and recommendations
+        ROUND 1: Opening Statements (2 minutes each)
+        - Technical Analyst: Data-driven, focuses on facts, metrics, and logical reasoning
+        - Creative Analyst: Innovative thinker, focuses on out-of-the-box solutions
+        - Critical Analyst: Identifies potential issues, risks, and challenges
+        - Strategic Analyst: Focuses on long-term implications and big-picture thinking
 
-        ROUND 2: Critical Discussion (30 seconds each)
+        ROUND 2: Rebuttals (1 minute each)
         Each analyst must:
-        - Address one key point from another analyst
-        - Present one critical insight
-        - Provide one actionable recommendation
+        - Address the strongest points from other analysts
+        - Challenge assumptions or data presented
+        - Strengthen their own position
+
+        ROUND 3: Cross-Examination (1 minute each)
+        Each analyst must:
+        - Ask one critical question to another analyst
+        - Respond to questions directed at them
+        - Use this to further their position
+
+        ROUND 4: Closing Arguments (1 minute each)
+        Each analyst must:
+        - Summarize their strongest points
+        - Address key challenges raised
+        - Present their final position
 
         FINAL VERDICT:
-        As moderator, provide:
-        1. A clear, decisive conclusion
-        2. Top 3 most compelling arguments
-        3. 2-3 specific, actionable recommendations
-        4. Key risks or limitations to consider
+        As the moderator, you must:
+        1. Evaluate the strength of each position
+        2. Identify the most compelling arguments
+        3. Reach a decisive conclusion that isn't just a compromise
+        4. Provide specific, actionable recommendations
 
-        Format: Use clear headers and bullet points for key insights.
-        Keep the debate focused, professional, and data-driven.
+        Format the debate as a formal transcript, clearly marking each round and speaker.
+        Make it passionate and engaging, but maintain professional discourse.
+        Each analyst should maintain their unique perspective while engaging meaningfully with others' arguments.
         """
         
         # Generate the debate
@@ -911,41 +921,24 @@ def generate_multi_analyst_answer(question, use_internet=False):
         # Store the question first
         st.session_state.question = question
         
-        # Generate and store the debate with optimized parameters
-        debate = st.session_state.rag_system.question_handler.process_question(
-            debate_prompt,
-            max_tokens=1500,  # Limit response length
-            temperature=0.3,  # Lower temperature for more focused responses
-            top_p=0.9,       # Higher top_p for more focused sampling
-            frequency_penalty=0.5,  # Reduce repetition
-            presence_penalty=0.5    # Encourage diverse points
-        )
+        # Generate and store the debate
+        debate = st.session_state.rag_system.question_handler.process_question(debate_prompt)
         st.session_state.main_answer = debate
         
         # Display the debate
         st.markdown("### Formal Analyst Debate")
         st.markdown(debate)
         
-        # If internet search is requested, optimize the search
+        # If internet search is requested
         if use_internet:
             internet_context = """You are a debate moderator with access to the internet.
-            Provide ONLY factual, verifiable information that directly supports or challenges the debate's conclusions.
-            Requirements:
-            1. Cite specific sources for ALL claims
-            2. Focus on recent, reliable sources
-            3. Include only information directly relevant to the debate
-            4. Keep the response under 200 words
-            5. Use bullet points for key facts"""
+            Please provide additional factual context to support or challenge the debate's conclusions.
+            Make sure to cite your sources for all data, and if you can't find a source, mention that it does not exist.
+            Focus on providing accurate, up-to-date information from reliable sources that could strengthen the debate's final verdict."""
             
             internet_start = time.time()
             status_text.text("🌐 Searching the internet for additional information...")
-            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(
-                question,
-                internet_context,
-                max_tokens=500,  # Limit response length
-                temperature=0.2,  # Lower temperature for more factual responses
-                top_p=0.9
-            )
+            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
             internet_time = time.time() - internet_start
             
             # Add internet results
@@ -964,12 +957,13 @@ def generate_multi_analyst_answer(question, use_internet=False):
             if use_internet:
                 st.write(f"Internet Search Time: {internet_time:.2f} seconds")
         
-        # Clear the status immediately
+        # Clear the status after a short delay
+        time.sleep(1)
         status_text.empty()
-        st.session_state.processing = False
 
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
+    finally:
         st.session_state.processing = False
 
 def show_main_page():
