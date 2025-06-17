@@ -1056,16 +1056,21 @@ def show_main_page():
                             seen_sources.add(source)
                             
                             # Calculate relevance score
-                            score = result.get('score', 0)
+                            raw_score = result.get('score', 0)
+                            
+                            # Normalize score to 0-1 range
+                            # Assuming scores are typically between -1 and 1
+                            normalized_score = (raw_score + 1) / 2  # Convert to 0-1 range
+                            
                             # Boost score if source name contains key terms from question
                             question_terms = set(question.lower().split())
                             source_terms = set(source.lower().split())
                             if any(term in source_terms for term in question_terms):
-                                score = max(score, 0.8)  # Boost score for direct matches
+                                normalized_score = max(normalized_score, 0.8)  # Boost score for direct matches
                             
                             processed_results.append({
                                 'metadata': result.get('metadata', {}),
-                                'score': score,
+                                'score': normalized_score,
                                 'text': result.get('text', '')
                             })
                         
