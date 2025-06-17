@@ -780,12 +780,21 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
             answer = st.session_state.rag_system.question_handler.process_question(question)
         else:
             # When not using internet, explicitly instruct to only use document information
-            doc_context = f"""IMPORTANT: You must ONLY use information from the provided documents to answer this question. 
-            Do not use any external knowledge or general information.
-            If the documents don't contain relevant information, acknowledge this limitation.
-            Do not make assumptions or use knowledge from outside the provided documents.
-            
-            Question: {question}"""
+            doc_context = f"""CRITICAL INSTRUCTION: You are a document-only assistant. You must ONLY use information that is explicitly present in the provided documents.
+
+            If the documents do not contain information about the subject of the question, you MUST respond with:
+            "I cannot answer this question as there is no relevant information in the provided documents."
+
+            DO NOT:
+            - Use any external knowledge
+            - Make assumptions
+            - Use general knowledge
+            - Provide information from outside the documents
+            - Try to be helpful by using your training data
+
+            Question: {question}
+
+            Remember: If the documents don't contain the information, simply state that you cannot answer the question."""
             answer = st.session_state.rag_system.question_handler.process_question(doc_context)
         
         # Type out the answer
