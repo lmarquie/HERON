@@ -125,20 +125,6 @@ with st.sidebar:
         st.write("Top P")
     with col2:
         st.write(f"**{settings['top_p']:.2f}**")
-    
-    # Performance
-    st.subheader("Performance")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.write("Speed")
-    with col2:
-        st.write(f"**{settings['speed']:.2f}**")
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.write("Accuracy")
-    with col2:
-        st.write(f"**{settings['accuracy']:.2f}**")
 
 # Initialize session state
 if 'current_page' not in st.session_state:
