@@ -76,8 +76,8 @@ with st.sidebar:
     
     # Display current model settings with new design
     st.markdown("""
-        <div style='border: 1px solid #E2E8F0; border-radius: 0.5rem; padding: 1rem; margin-bottom: 1rem;'>
-            <h2 style='color: #1E3A8A; font-size: 1.2rem; font-weight: 600; margin: 0 0 0.75rem 0;'>Model Settings</h2>
+        <div style='border: 1px solid #E2E8F0; border-radius: 0.5rem; padding: 1.5rem; margin: 1.5rem 0;'>
+            <h2 style='color: #1E3A8A; font-size: 1.2rem; font-weight: 600; margin: 0 0 1rem 0; text-align: center;'>Model Settings</h2>
         </div>
     """, unsafe_allow_html=True)
     
@@ -1281,30 +1281,30 @@ def show_main_page():
         st.session_state.use_analysts = st.toggle("Multi-Analyst")
         
         # Add reset and PDF buttons in the middle
-        col1, col2, col3 = st.columns([1, 1, 1])
+        col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            if st.button("Reset Conversation", key="reset_button"):
-                st.session_state.conversation_history = []
-                st.session_state.follow_up_questions = []
-                st.session_state.follow_up_answers = []
-                st.session_state.follow_up_input = ""
-                st.session_state.main_answer = ""
-                st.session_state.follow_up_answer = ""
-                st.session_state.processing = False
-                st.rerun()
-
-        # Add PDF download button
-        if st.session_state.main_answer:
-            col1, col2, col3 = st.columns([1, 1, 1])
-            with col2:
-                if st.download_button(
-                    label="Download PDF Summary",
-                    data=generate_pdf_summary(),
-                    file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                    mime="application/pdf",
-                    key="pdf_download_button"
-                ):
-                    st.success("PDF downloaded successfully!")
+            button_col1, button_col2 = st.columns(2)
+            with button_col1:
+                if st.button("Reset Conversation", key="reset_button"):
+                    st.session_state.conversation_history = []
+                    st.session_state.follow_up_questions = []
+                    st.session_state.follow_up_answers = []
+                    st.session_state.follow_up_input = ""
+                    st.session_state.main_answer = ""
+                    st.session_state.follow_up_answer = ""
+                    st.session_state.processing = False
+                    st.rerun()
+            
+            with button_col2:
+                if st.session_state.main_answer:
+                    if st.download_button(
+                        label="Download PDF Summary",
+                        data=generate_pdf_summary(),
+                        file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                        mime="application/pdf",
+                        key="pdf_download_button"
+                    ):
+                        st.success("PDF downloaded successfully!")
         
         st.markdown("</div>", unsafe_allow_html=True)
         
