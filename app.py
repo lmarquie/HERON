@@ -86,12 +86,12 @@ st.markdown("""
         
         /* Button styling */
         .stButton > button {
-            background-color: #1f77b4;
-            color: #a4a6b5;
+            background-color: #ff7f50;
+            color: #ffffff;
         }
         
         .stButton > button:hover {
-            background-color: #2c8fd1;
+            background-color: #ff6b3d;
             color: #ffffff;
         }
         
@@ -113,14 +113,16 @@ st.markdown("""
         /* Text input styling */
         .stTextInput > div > div > input {
             background-color: #ffffff;
-            border: 2px solid #1f77b4;
+            border: none !important;
+            box-shadow: none !important;
             color: #20293d !important;
         }
 
         /* Remove focus outline */
         .stTextInput > div > div > input:focus {
-            outline: none;
-            border: 2px solid #1f77b4;
+            outline: none !important;
+            border: none !important;
+            box-shadow: none !important;
         }
 
         /* Markdown text color */
@@ -136,13 +138,13 @@ st.markdown("""
         /* File uploader styling */
         .stFileUploader > div {
             background-color: #ffffff;
-            border: 2px solid #1f77b4;
+            border: 2px solid #ff7f50;
             color: #20293d;
         }
 
         /* Progress bar color */
         .stProgress > div > div {
-            background-color: #1f77b4;
+            background-color: #ff7f50;
         }
 
         /* Main content area */
@@ -153,6 +155,17 @@ st.markdown("""
         /* Toggle background */
         [data-testid="stToggle"] {
             background-color: #ffffff;
+        }
+
+        /* Secondary button styling */
+        .stButton > button[data-baseweb="button"][kind="secondary"] {
+            background-color: #20293d;
+            color: #a4a6b5;
+        }
+
+        .stButton > button[data-baseweb="button"][kind="secondary"]:hover {
+            background-color: #2c3a52;
+            color: #ffffff;
         }
     </style>
 """, unsafe_allow_html=True)
