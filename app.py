@@ -974,8 +974,49 @@ def show_main_page():
                 
                 # Show processing status
                 with st.spinner("Processing your question..."):
-                    # Get answer and sources
-                    results = st.session_state.rag_system.vector_store.search(question, k=3)
+                    # Get answer and sources with improved search
+                    try:
+                        # First try exact match search
+                        results = st.session_state.rag_system.vector_store.search(
+                            question,
+                            k=5,  # Get more results initially
+                            search_type="mmr",  # Use MMR for better diversity
+                            fetch_k=10  # Fetch more candidates for better selection
+                        )
+                        
+                        # Process and filter results
+                        processed_results = []
+                        seen_sources = set()
+                        
+                        for result in results:
+                            source = result.get('metadata', {}).get('source', 'Unknown source')
+                            # Skip duplicates
+                            if source in seen_sources:
+                                continue
+                            seen_sources.add(source)
+                            
+                            # Calculate relevance score
+                            score = result.get('score', 0)
+                            # Boost score if source name contains key terms from question
+                            question_terms = set(question.lower().split())
+                            source_terms = set(source.lower().split())
+                            if any(term in source_terms for term in question_terms):
+                                score = max(score, 0.8)  # Boost score for direct matches
+                            
+                            processed_results.append({
+                                'metadata': result.get('metadata', {}),
+                                'score': score,
+                                'text': result.get('text', '')
+                            })
+                        
+                        # Sort by score and take top 3
+                        processed_results.sort(key=lambda x: x['score'], reverse=True)
+                        results = processed_results[:3]
+                        
+                    except Exception as e:
+                        st.error(f"Error during search: {str(e)}")
+                        results = []
+                    
                     answer = st.session_state.rag_system.question_handler.process_question(question)
                     
                     if answer:
@@ -986,13 +1027,15 @@ def show_main_page():
                         st.markdown("### Answer")
                         st.markdown(answer)
                         
-                        # Display sources
+                        # Display sources with improved formatting
                         if results:
                             st.markdown("### Sources")
                             for i, result in enumerate(results, 1):
                                 source = result.get('metadata', {}).get('source', 'Unknown source')
                                 score = result.get('score', 0)
-                                st.markdown(f"{i}. **{source}** (Relevance: {score:.2f})")
+                                # Convert score to percentage and round to 2 decimal places
+                                relevance_percentage = round(score * 100, 2)
+                                st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
                     else:
                         st.error("Failed to generate an answer. Please try again.")
                 
