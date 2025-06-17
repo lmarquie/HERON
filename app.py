@@ -216,6 +216,29 @@ st.markdown("""
 with st.sidebar:
     st.markdown('<div class="company-name">Herbert Advisory</div>', unsafe_allow_html=True)
     
+    # Display current model settings
+    st.markdown("### Current Model Settings")
+    settings = get_current_settings()
+    st.markdown("#### Document Processing")
+    st.markdown(f"- **Chunk Size:** {settings['chunk_size']}")
+    st.markdown(f"- **Chunk Overlap:** {settings['chunk_overlap']}")
+    st.markdown(f"- **Max Chunks:** {settings['max_chunks']}")
+    
+    st.markdown("#### Search Settings")
+    st.markdown(f"- **Search Depth:** {settings['search_depth']}")
+    st.markdown(f"- **Relevance Threshold:** {settings['relevance_threshold']:.2f}")
+    
+    st.markdown("#### Model Parameters")
+    st.markdown(f"- **Temperature:** {settings['temperature']:.2f}")
+    st.markdown(f"- **Max Tokens:** {settings['max_tokens']}")
+    st.markdown(f"- **Top P:** {settings['top_p']:.2f}")
+    
+    st.markdown("#### Performance")
+    st.markdown(f"- **Speed:** {settings['speed']:.2f}")
+    st.markdown(f"- **Accuracy:** {settings['accuracy']:.2f}")
+    
+    st.markdown("---")
+    
     # File uploader at the top of sidebar for better visibility
     st.markdown("### Upload Documents")
     try:
