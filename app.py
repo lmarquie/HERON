@@ -76,7 +76,7 @@ with st.sidebar:
     
     # Display current model settings with new design
     st.markdown("""
-        <div style='margin-bottom: 1rem;'>
+        <div style='border: 1px solid #E2E8F0; border-radius: 0.5rem; padding: 1rem; margin-bottom: 1rem;'>
             <h2 style='color: #1E3A8A; font-size: 1.2rem; font-weight: 600; margin: 0 0 0.75rem 0;'>Model Settings</h2>
         </div>
     """, unsafe_allow_html=True)
@@ -153,6 +153,8 @@ with st.sidebar:
                 </div>
             </div>
         """, unsafe_allow_html=True)
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # Initialize session state
 if 'current_page' not in st.session_state:
@@ -1278,43 +1280,31 @@ def show_main_page():
         st.session_state.use_internet = st.toggle("Internet")
         st.session_state.use_analysts = st.toggle("Multi-Analyst")
         
-        # Only show reset and export buttons if there's an answer
-        if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
-            st.markdown("---")
-            col1, col2, col3 = st.columns([2, 1, 1])
+        # Add reset and PDF buttons in the middle
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("Reset Conversation", key="reset_button"):
+                st.session_state.conversation_history = []
+                st.session_state.follow_up_questions = []
+                st.session_state.follow_up_answers = []
+                st.session_state.follow_up_input = ""
+                st.session_state.main_answer = ""
+                st.session_state.follow_up_answer = ""
+                st.session_state.processing = False
+                st.rerun()
+
+        # Add PDF download button
+        if st.session_state.main_answer:
+            col1, col2, col3 = st.columns([1, 1, 1])
             with col2:
-                if st.button("Reset Conversation", type="secondary"):
-                    # Clear all conversation-related session state
-                    if 'main_answer' in st.session_state:
-                        del st.session_state.main_answer
-                    if 'main_results' in st.session_state:
-                        del st.session_state.main_results
-                    if 'question' in st.session_state:
-                        st.session_state.question = ""
-                    if 'follow_up_question' in st.session_state:
-                        st.session_state.follow_up_question = ""
-                    if 'follow_up_answer' in st.session_state:
-                        del st.session_state.follow_up_answer
-                    if 'follow_up_questions' in st.session_state:
-                        del st.session_state.follow_up_questions
-                    st.rerun()
-            
-            with col3:
-                if st.button("Export PDF", type="secondary"):
-                    try:
-                        pdf_path = generate_pdf_summary()
-                        if pdf_path:
-                            with open(pdf_path, "rb") as file:
-                                st.download_button(
-                                    label="Download PDF",
-                                    data=file,
-                                    file_name=os.path.basename(pdf_path),
-                                    mime="application/pdf"
-                                )
-                            # Clean up the temporary file
-                            os.remove(pdf_path)
-                    except Exception as e:
-                        st.error(f"Error generating PDF: {str(e)}")
+                if st.download_button(
+                    label="Download PDF Summary",
+                    data=generate_pdf_summary(),
+                    file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf",
+                    key="pdf_download_button"
+                ):
+                    st.success("PDF downloaded successfully!")
         
         st.markdown("</div>", unsafe_allow_html=True)
         
