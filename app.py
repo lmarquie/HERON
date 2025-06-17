@@ -1225,18 +1225,18 @@ def show_main_page():
                 st.markdown(a)
                 st.markdown("---")
             
+            # Add a new follow-up question input
             follow_up_question = st.text_input(
                 label="Ask a follow-up question",
-                value=st.session_state.get('follow_up_question', ''),
+                value="",
                 label_visibility="collapsed",
                 placeholder="Ask a follow-up question...",
-                key="follow_up_input"
+                key=f"follow_up_input_{len(st.session_state.follow_up_questions)}"
             )
 
             # Process follow-up question if enter is pressed
             if follow_up_question and not st.session_state.processing:
                 try:
-                    st.session_state.follow_up_question = follow_up_question
                     st.session_state.processing = True
                     
                     # Initialize variables
@@ -1335,8 +1335,7 @@ def show_main_page():
                     st.info("Please try again or rephrase your follow-up question.")
                 finally:
                     st.session_state.processing = False
-                    # Clear the follow-up question input
-                    st.session_state.follow_up_question = ""
+                    st.rerun()  # Rerun to show the new follow-up input
 
         # Options
         st.session_state.use_internet = st.toggle("Internet")
