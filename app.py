@@ -3,6 +3,7 @@ import os
 import json
 import time
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from local_draft import RAGSystem, WebFileHandler
 from config import OPENAI_API_KEY
 from reportlab.lib.pagesizes import letter
