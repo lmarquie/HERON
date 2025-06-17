@@ -74,68 +74,75 @@ clear_caches()
 # Theme configuration
 st.markdown("""
     <style>
-        .stTextInput > div > div > input {
-            border: none !important;
-            box-shadow: none !important;
-        }
-        
-        /* Change response text color to dark blue */
-        .stMarkdown p, .stMarkdown li {
-            color: #222831 !important;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
-# Set theme colors using Streamlit's native theming
-st.markdown("""
-    <style>
         /* Main background */
         .stApp {
-            background-color: #DFD0B8;  /* Light beige */
+            background-color: #151b2b;
         }
         
         /* Sidebar background */
         [data-testid="stSidebar"] {
-            background-color: #222831;  /* Dark blue-gray */
+            background-color: #20293d;
         }
         
         /* Button styling */
         .stButton > button {
-            background-color: #948979;  /* Muted brown */
-            color: #DFD0B8;  /* Light beige */
+            background-color: #1f77b4;
+            color: #a4a6b5;
         }
         
         .stButton > button:hover {
-            background-color: #393E46;  /* Medium gray */
-            color: #DFD0B8;  /* Light beige */
+            background-color: #2c8fd1;
+            color: #ffffff;
         }
         
         /* Text color in sidebar */
         [data-testid="stSidebar"] * {
-            color: #DFD0B8;  /* Light beige */
+            color: #a4a6b5;
         }
 
         /* Toggle switch label color */
         [data-testid="stToggle"] > label {
-            color: #222831 !important;  /* Dark blue-gray */
+            color: #a4a6b5 !important;
         }
 
         /* App title */
         .app-title {
-            color: #222831 !important;  /* Dark blue-gray */
+            color: #a4a6b5 !important;
         }
 
         /* Text input styling */
         .stTextInput > div > div > input {
-            background-color: #FFFFFF;  /* White background */
-            border: 2px solid #222831;  /* Dark blue-gray outline */
-            color: #222831 !important;  /* Dark blue-gray text */
+            background-color: #20293d;
+            border: 2px solid #1f77b4;
+            color: #a4a6b5 !important;
         }
 
         /* Remove focus outline */
         .stTextInput > div > div > input:focus {
             outline: none;
-            border: 2px solid #222831;  /* Keep the blue outline on focus */
+            border: 2px solid #1f77b4;
+        }
+
+        /* Markdown text color */
+        .stMarkdown p, .stMarkdown li {
+            color: #a4a6b5 !important;
+        }
+
+        /* Headers color */
+        .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
+            color: #a4a6b5 !important;
+        }
+
+        /* File uploader styling */
+        .stFileUploader > div {
+            background-color: #20293d;
+            border: 2px solid #1f77b4;
+            color: #a4a6b5;
+        }
+
+        /* Progress bar color */
+        .stProgress > div > div {
+            background-color: #1f77b4;
         }
     </style>
 """, unsafe_allow_html=True)
