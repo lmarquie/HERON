@@ -700,6 +700,14 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         st.session_state.processing = True
         start_time = time.time()
         
+        # Check if documents are loaded
+        if not st.session_state.documents_loaded and not use_internet:
+            st.error("No documents have been uploaded. Please either:")
+            st.markdown("1. Upload documents using the file uploader in the sidebar")
+            st.markdown("2. Enable internet search to get answers without documents")
+            st.session_state.processing = False
+            return
+        
         progress_bar = st.progress(0)
         status_text = st.empty()
         answer_container = st.empty()  # Container for the typing effect
