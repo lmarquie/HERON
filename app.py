@@ -1126,6 +1126,56 @@ def show_main_page():
                                     # Convert score to percentage and round to 2 decimal places
                                     relevance_percentage = round(score * 100, 2)
                                     st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
+
+                            # Add follow-up question section
+                            st.markdown("---")
+                            st.markdown("### Follow-up Question")
+                            follow_up_question = st.text_input(
+                                label="Ask a follow-up question",
+                                value=st.session_state.get('follow_up_question', ''),
+                                label_visibility="collapsed",
+                                placeholder="Ask a follow-up question...",
+                                key="follow_up_input"
+                            )
+
+                            # Process follow-up question if entered
+                            if follow_up_question and follow_up_question != st.session_state.get('follow_up_question', ''):
+                                try:
+                                    st.session_state.follow_up_question = follow_up_question
+                                    st.session_state.processing = True
+                                    
+                                    # Show processing status
+                                    with st.spinner("Processing your follow-up question..."):
+                                        # Get answer
+                                        follow_up_answer = st.session_state.rag_system.question_handler.process_question(
+                                            follow_up_question,
+                                            context=f"Previous question: {st.session_state.question}\nPrevious answer: {st.session_state.main_answer}"
+                                        )
+                                        
+                                        if follow_up_answer:
+                                            st.session_state.follow_up_answer = follow_up_answer
+                                            st.markdown("### Follow-up Answer")
+                                            st.markdown(follow_up_answer)
+                                            
+                                            # If internet search is enabled, add internet results for follow-up
+                                            if use_internet:
+                                                with st.spinner("Searching the internet for follow-up..."):
+                                                    internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(
+                                                        follow_up_question,
+                                                        internet_context
+                                                    )
+                                                    
+                                                    st.markdown("### Internet Search Results")
+                                                    st.markdown(internet_answer)
+                                                    st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
+                                        else:
+                                            st.error("Failed to generate a follow-up answer. Please try again.")
+                                    
+                                except Exception as e:
+                                    st.error(f"Error processing follow-up question: {str(e)}")
+                                    st.info("Please try again or rephrase your follow-up question.")
+                                finally:
+                                    st.session_state.processing = False
                         else:
                             st.error("Failed to generate an answer. Please try again.")
                 
