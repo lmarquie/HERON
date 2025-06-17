@@ -1009,8 +1009,8 @@ def generate_multi_analyst_answer(question, use_internet=False):
             internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
             internet_time = time.time() - internet_start
             
-            st.markdown("### Internet Search Results")
-            st.markdown(internet_answer)
+            # Add internet results to the consensus
+            consensus += "\n\n### Internet Search Results\n" + internet_answer
         
         progress_bar.progress(100)
         status_text.text("✅ Done!")
@@ -1097,103 +1097,106 @@ def show_main_page():
                 answer_container = st.empty()  # Container for the typing effect
                 is_follow_up = False  # Flag for follow-up questions
                 use_internet = st.session_state.get('use_internet', False)  # Get internet toggle state
+                use_analysts = st.session_state.get('use_analysts', False)  # Get multi-analyst toggle state
                 
                 # Show processing status
                 with st.spinner("Processing your question..."):
-                    # Get search results
-                    results = st.session_state.rag_system.vector_store.search(question, k=3)  # Get more results initially
-                    
-                    # Process and filter results
-                    processed_results = []
-                    seen_sources = set()
-                    seen_texts = set()  # Track unique text content
-                    
-                    for result in results:
-                        source = result.get('metadata', {}).get('source', 'Unknown source')
-                        text = result.get('text', '')
-                        
-                        # Skip if we've seen this source or this exact text before
-                        if source in seen_sources or text in seen_texts:
-                            continue
-                            
-                        seen_sources.add(source)
-                        seen_texts.add(text)
-                        
-                        # Calculate relevance score
-                        raw_score = result.get('score', 0)
-                        
-                        # Normalize score to 0-1 range
-                        normalized_score = (raw_score + 1) / 2  # Convert to 0-1 range
-                        
-                        # Boost score for exact matches in source name
-                        question_terms = set(question.lower().split())
-                        source_terms = set(source.lower().split())
-                        
-                        # Check for exact matches in source name
-                        if any(term in source_terms for term in question_terms):
-                            normalized_score = max(normalized_score, 0.9)  # Higher boost for exact matches
-                        
-                        # Additional boost for financial reports and official documents
-                        if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
-                            normalized_score = max(normalized_score, 0.85)
-                        
-                        # Additional boost for recent documents
-                        if 'date' in result.get('metadata', {}):
-                            doc_date = result['metadata']['date']
-                            if doc_date:
-                                try:
-                                    doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
-                                    days_old = (datetime.now() - doc_date).days
-                                    if days_old < 365:  # Boost for documents less than a year old
-                                        normalized_score = max(normalized_score, 0.8)
-                                except:
-                                    pass
-                        
-                        processed_results.append({
-                            'metadata': result.get('metadata', {}),
-                            'score': normalized_score,
-                            'text': text
-                        })
-                    
-                    # Sort by score and take top 5
-                    processed_results.sort(key=lambda x: x['score'], reverse=True)
-                    results = processed_results[:5]  # Increased to 5 sources
-                    
-                    # Generate answer with optimized parameters
-                    answer = st.session_state.rag_system.question_handler.process_question(question)  # Use question directly
-                    
-                    # Type out the answer
-                    type_text(answer, answer_container)
-                    
-                    if is_follow_up:
-                        st.session_state.follow_up_answer = answer
+                    if use_analysts:
+                        generate_multi_analyst_answer(question, use_internet)
                     else:
-                        st.session_state.main_answer = answer
-                        st.session_state.main_results = results
-                    
-                    # If internet search is requested, do it in parallel
-                    if use_internet:
-                        internet_context = """You are a document analysis expert with access to the internet.
-                        Provide a concise answer using your knowledge and internet access.
-                        Cite sources for data. If no source exists, mention that.
-                        Focus on accurate, up-to-date information."""
+                        # Get search results
+                        results = st.session_state.rag_system.vector_store.search(question, k=3)  # Get more results initially
                         
-                        # Use ThreadPoolExecutor for parallel processing
-                        with ThreadPoolExecutor(max_workers=2) as executor:
-                            internet_future = executor.submit(
-                                st.session_state.rag_system.question_handler.llm.generate_answer,
-                                question,
-                                internet_context
-                            )
-                            internet_answer = internet_future.result()
+                        # Process and filter results
+                        processed_results = []
+                        seen_sources = set()
+                        seen_texts = set()  # Track unique text content
                         
-                        # Type out the internet results
-                        type_text("\n\n### Internet Search Results\n" + internet_answer, answer_container)
+                        for result in results:
+                            source = result.get('metadata', {}).get('source', 'Unknown source')
+                            text = result.get('text', '')
+                            
+                            # Skip if we've seen this source or this exact text before
+                            if source in seen_sources or text in seen_texts:
+                                continue
+                                
+                            seen_sources.add(source)
+                            seen_texts.add(text)
+                            
+                            # Calculate relevance score
+                            raw_score = result.get('score', 0)
+                            
+                            # Normalize score to 0-1 range
+                            normalized_score = (raw_score + 1) / 2  # Convert to 0-1 range
+                            
+                            # Boost score for exact matches in source name
+                            question_terms = set(question.lower().split())
+                            source_terms = set(source.lower().split())
+                            
+                            # Check for exact matches in source name
+                            if any(term in source_terms for term in question_terms):
+                                normalized_score = max(normalized_score, 0.9)  # Higher boost for exact matches
+                            
+                            # Additional boost for financial reports and official documents
+                            if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
+                                normalized_score = max(normalized_score, 0.85)
+                            
+                            # Additional boost for recent documents
+                            if 'date' in result.get('metadata', {}):
+                                doc_date = result['metadata']['date']
+                                if doc_date:
+                                    try:
+                                        doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
+                                        days_old = (datetime.now() - doc_date).days
+                                        if days_old < 365:  # Boost for documents less than a year old
+                                            normalized_score = max(normalized_score, 0.8)
+                                    except:
+                                        pass
+                            
+                            processed_results.append({
+                                'metadata': result.get('metadata', {}),
+                                'score': normalized_score,
+                                'text': text
+                            })
+                        
+                        processed_results.sort(key=lambda x: x['score'], reverse=True)
+                        results = processed_results[:5]
+                        
+                        # Generate answer with optimized parameters
+                        answer = st.session_state.rag_system.question_handler.process_question(question)  # Use question directly
+                        
+                        # Type out the answer
+                        type_text(answer, answer_container)
                         
                         if is_follow_up:
-                            st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
+                            st.session_state.follow_up_answer = answer
                         else:
-                            st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
+                            st.session_state.main_answer = answer
+                            st.session_state.main_results = results
+                        
+                        # If internet search is requested, do it in parallel
+                        if use_internet:
+                            internet_context = """You are a document analysis expert with access to the internet.
+                            Provide a concise answer using your knowledge and internet access.
+                            Cite sources for data. If no source exists, mention that.
+                            Focus on accurate, up-to-date information."""
+                            
+                            # Use ThreadPoolExecutor for parallel processing
+                            with ThreadPoolExecutor(max_workers=2) as executor:
+                                internet_future = executor.submit(
+                                    st.session_state.rag_system.question_handler.llm.generate_answer,
+                                    question,
+                                    internet_context
+                                )
+                                internet_answer = internet_future.result()
+                            
+                            # Type out the internet results
+                            type_text("\n\n### Internet Search Results\n" + internet_answer, answer_container)
+                            
+                            if is_follow_up:
+                                st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
+                            else:
+                                st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
             
             except Exception as e:
                 st.error(f"Error processing question: {str(e)}")
@@ -1242,93 +1245,97 @@ def show_main_page():
                     # Initialize variables
                     follow_up_container = st.empty()  # Container for the typing effect
                     use_internet = st.session_state.get('use_internet', False)
+                    use_analysts = st.session_state.get('use_analysts', False)
                     
                     # Show processing status
                     with st.spinner("Processing your follow-up question..."):
-                        # Get search results
-                        results = st.session_state.rag_system.vector_store.search(follow_up_question, k=3)
-                        
-                        # Process and filter results
-                        processed_results = []
-                        seen_sources = set()
-                        seen_texts = set()
-                        
-                        for result in results:
-                            source = result.get('metadata', {}).get('source', 'Unknown source')
-                            text = result.get('text', '')
+                        if use_analysts:
+                            generate_multi_analyst_answer(follow_up_question, use_internet)
+                        else:
+                            # Get search results
+                            results = st.session_state.rag_system.vector_store.search(follow_up_question, k=3)
                             
-                            if source in seen_sources or text in seen_texts:
-                                continue
+                            # Process and filter results
+                            processed_results = []
+                            seen_sources = set()
+                            seen_texts = set()
+                            
+                            for result in results:
+                                source = result.get('metadata', {}).get('source', 'Unknown source')
+                                text = result.get('text', '')
                                 
-                            seen_sources.add(source)
-                            seen_texts.add(text)
+                                if source in seen_sources or text in seen_texts:
+                                    continue
+                                    
+                                seen_sources.add(source)
+                                seen_texts.add(text)
+                                
+                                raw_score = result.get('score', 0)
+                                normalized_score = (raw_score + 1) / 2
+                                
+                                question_terms = set(follow_up_question.lower().split())
+                                source_terms = set(source.lower().split())
+                                
+                                if any(term in source_terms for term in question_terms):
+                                    normalized_score = max(normalized_score, 0.9)
+                                
+                                if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
+                                    normalized_score = max(normalized_score, 0.85)
+                                
+                                if 'date' in result.get('metadata', {}):
+                                    doc_date = result['metadata']['date']
+                                    if doc_date:
+                                        try:
+                                            doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
+                                            days_old = (datetime.now() - doc_date).days
+                                            if days_old < 365:
+                                                normalized_score = max(normalized_score, 0.8)
+                                        except:
+                                            pass
+                                
+                                processed_results.append({
+                                    'metadata': result.get('metadata', {}),
+                                    'score': normalized_score,
+                                    'text': text
+                                })
                             
-                            raw_score = result.get('score', 0)
-                            normalized_score = (raw_score + 1) / 2
+                            processed_results.sort(key=lambda x: x['score'], reverse=True)
+                            results = processed_results[:5]
                             
-                            question_terms = set(follow_up_question.lower().split())
-                            source_terms = set(source.lower().split())
+                            # Build context from all previous questions and answers
+                            context = f"Original question: {st.session_state.question}\nOriginal answer: {st.session_state.main_answer}\n"
+                            for prev_q, prev_a in st.session_state.follow_up_questions:
+                                context += f"\nPrevious follow-up: {prev_q}\nPrevious answer: {prev_a}\n"
+                            context += f"\nNew follow-up question: {follow_up_question}"
                             
-                            if any(term in source_terms for term in question_terms):
-                                normalized_score = max(normalized_score, 0.9)
+                            # Generate answer with previous context
+                            follow_up_answer = st.session_state.rag_system.question_handler.process_question(context)
                             
-                            if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
-                                normalized_score = max(normalized_score, 0.85)
+                            # Type out the answer
+                            type_text(follow_up_answer, follow_up_container)
                             
-                            if 'date' in result.get('metadata', {}):
-                                doc_date = result['metadata']['date']
-                                if doc_date:
-                                    try:
-                                        doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
-                                        days_old = (datetime.now() - doc_date).days
-                                        if days_old < 365:
-                                            normalized_score = max(normalized_score, 0.8)
-                                    except:
-                                        pass
+                            # Add to follow-up questions list
+                            st.session_state.follow_up_questions.append((follow_up_question, follow_up_answer))
                             
-                            processed_results.append({
-                                'metadata': result.get('metadata', {}),
-                                'score': normalized_score,
-                                'text': text
-                            })
-                        
-                        processed_results.sort(key=lambda x: x['score'], reverse=True)
-                        results = processed_results[:5]
-                        
-                        # Build context from all previous questions and answers
-                        context = f"Original question: {st.session_state.question}\nOriginal answer: {st.session_state.main_answer}\n"
-                        for prev_q, prev_a in st.session_state.follow_up_questions:
-                            context += f"\nPrevious follow-up: {prev_q}\nPrevious answer: {prev_a}\n"
-                        context += f"\nNew follow-up question: {follow_up_question}"
-                        
-                        # Generate answer with previous context
-                        follow_up_answer = st.session_state.rag_system.question_handler.process_question(context)
-                        
-                        # Type out the answer
-                        type_text(follow_up_answer, follow_up_container)
-                        
-                        # Add to follow-up questions list
-                        st.session_state.follow_up_questions.append((follow_up_question, follow_up_answer))
-                        
-                        # If internet search is enabled, do it in parallel
-                        if use_internet:
-                            internet_context = """You are a document analysis expert with access to the internet.
-                            Provide a concise answer using your knowledge and internet access.
-                            Cite sources for data. If no source exists, mention that.
-                            Focus on accurate, up-to-date information."""
-                            
-                            # Use ThreadPoolExecutor for parallel processing
-                            with ThreadPoolExecutor(max_workers=2) as executor:
-                                internet_future = executor.submit(
-                                    st.session_state.rag_system.question_handler.llm.generate_answer,
-                                    follow_up_question,
-                                    internet_context
-                                )
-                                internet_answer = internet_future.result()
-                            
-                            # Type out the internet results
-                            type_text("\n\n### Internet Search Results\n" + internet_answer, follow_up_container)
-                            st.session_state.follow_up_questions[-1] = (follow_up_question, follow_up_answer + "\n\n### Internet Search Results\n" + internet_answer)
+                            # If internet search is enabled, do it in parallel
+                            if use_internet:
+                                internet_context = """You are a document analysis expert with access to the internet.
+                                Provide a concise answer using your knowledge and internet access.
+                                Cite sources for data. If no source exists, mention that.
+                                Focus on accurate, up-to-date information."""
+                                
+                                # Use ThreadPoolExecutor for parallel processing
+                                with ThreadPoolExecutor(max_workers=2) as executor:
+                                    internet_future = executor.submit(
+                                        st.session_state.rag_system.question_handler.llm.generate_answer,
+                                        follow_up_question,
+                                        internet_context
+                                    )
+                                    internet_answer = internet_future.result()
+                                
+                                # Type out the internet results
+                                type_text("\n\n### Internet Search Results\n" + internet_answer, follow_up_container)
+                                st.session_state.follow_up_questions[-1] = (follow_up_question, follow_up_answer + "\n\n### Internet Search Results\n" + internet_answer)
                 
                 except Exception as e:
                     st.error(f"Error processing follow-up question: {str(e)}")
