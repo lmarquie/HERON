@@ -793,7 +793,16 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         
         # Generate answer with optimized parameters
         if use_internet:
-            answer = st.session_state.rag_system.question_handler.process_question(question)
+            internet_context = """You are an AI assistant with access to the internet.
+            Provide a comprehensive answer using your knowledge and internet access.
+            Make sure to:
+            1. Cite sources for all factual information
+            2. Mention if you can't find a source for specific claims
+            3. Focus on accurate, up-to-date information
+            4. Be clear about what information comes from your training vs internet sources
+            
+            Question: {question}"""
+            answer = st.session_state.rag_system.question_handler.process_question(internet_context)
         else:
             if not st.session_state.documents_loaded:
                 answer = "I cannot answer this question as there are no documents loaded. Please either upload documents or enable internet search."
