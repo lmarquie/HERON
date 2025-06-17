@@ -1,15 +1,38 @@
 import streamlit as st
+import os
+import json
+import time
+from datetime import datetime
+from local_draft import RAGSystem, WebFileHandler
+from config import OPENAI_API_KEY
 
-# Set page config must be the first Streamlit command
+# Create app data directory if it doesn't exist
+DATA_DIR = 'app_data'
+os.makedirs(DATA_DIR, exist_ok=True)
+
+def get_current_settings():
+    """Get the current settings from session state or defaults"""
+    if not hasattr(st.session_state, 'settings'):
+        st.session_state.settings = {
+            'chunk_size': 500,
+            'chunk_overlap': 50,
+            'max_chunks': 10,
+            'search_depth': 3,
+            'relevance_threshold': 0.7,
+            'temperature': 0.3,
+            'max_tokens': 1000,
+            'top_p': 0.9,
+            'speed': 0.5,
+            'accuracy': 0.5
+        }
+    return st.session_state.settings
+
+# Set page config
 st.set_page_config(
-    page_title="Herbert Insight AI",
+    page_title="HERON - Herbert Advisory",
+    page_icon="🦅",
     layout="wide",
-    initial_sidebar_state="expanded",
-    menu_items={
-        'Get Help': None,
-        'Report a bug': None,
-        'About': None
-    }
+    initial_sidebar_state="expanded"
 )
 
 import os
@@ -499,23 +522,6 @@ try:
 except Exception as e:
     st.error(f"Critical error initializing RAG system: {str(e)}")
     st.info("Please refresh the page and try again.")
-
-def get_current_settings():
-    """Get the current settings from session state or defaults"""
-    if not hasattr(st.session_state, 'settings'):
-        st.session_state.settings = {
-            'chunk_size': 500,
-            'chunk_overlap': 50,
-            'max_chunks': 10,
-            'search_depth': 3,
-            'relevance_threshold': 0.7,
-            'temperature': 0.3,
-            'max_tokens': 1000,
-            'top_p': 0.9,
-            'speed': 0.5,
-            'accuracy': 0.5
-        }
-    return st.session_state.settings
 
 def update_settings_from_main_slider():
     """Update all settings based on the main speed/accuracy slider"""
