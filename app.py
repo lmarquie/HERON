@@ -9,6 +9,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from io import BytesIO
 
 # Create app data directory if it doesn't exist
 DATA_DIR = 'app_data'
@@ -583,13 +584,12 @@ def show_settings_page():
 def generate_pdf_summary():
     """Generate a PDF summary of the current conversation"""
     try:
-        # Create a temporary PDF file with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        pdf_path = os.path.join(DATA_DIR, f'conversation_summary_{timestamp}.pdf')
+        # Create a BytesIO buffer for the PDF
+        buffer = BytesIO()
         
         # Create the PDF document
         doc = SimpleDocTemplate(
-            pdf_path,
+            buffer,
             pagesize=letter,
             rightMargin=72,
             leftMargin=72,
@@ -685,7 +685,11 @@ def generate_pdf_summary():
         # Build the PDF
         doc.build(story)
         
-        return pdf_path
+        # Get the PDF data from the buffer
+        pdf_data = buffer.getvalue()
+        buffer.close()
+        
+        return pdf_data
     except Exception as e:
         st.error(f"Error generating PDF: {str(e)}")
         return None
@@ -1294,14 +1298,19 @@ def show_main_page():
                         st.rerun()
                 
                 with button_col2:
-                    if st.download_button(
-                        label="Download PDF Summary",
-                        data=generate_pdf_summary(),
-                        file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                        mime="application/pdf",
-                        key="pdf_download_button"
-                    ):
-                        st.success("PDF downloaded successfully!")
+                    try:
+                        pdf_data = generate_pdf_summary()
+                        if pdf_data:
+                            if st.download_button(
+                                label="Download PDF Summary",
+                                data=pdf_data,
+                                file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                mime="application/pdf",
+                                key="pdf_download_button"
+                            ):
+                                st.success("PDF downloaded successfully!")
+                    except Exception as e:
+                        st.error(f"Error generating PDF: {str(e)}")
         
         st.markdown("</div>", unsafe_allow_html=True)
         
