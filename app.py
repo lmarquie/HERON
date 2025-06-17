@@ -960,9 +960,6 @@ def generate_multi_analyst_answer(question, use_internet=False):
         # Clear the status after a short delay
         time.sleep(1)
         status_text.empty()
-        
-        # Force a rerun to ensure the buttons appear
-        st.rerun()
 
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
@@ -1236,7 +1233,7 @@ def show_main_page():
                             except Exception as e:
                                 st.error(f"Error generating PDF: {str(e)}")
         
-        st.markdown("</div>", unsafe_allow_html=True) 
+        st.markdown("</div>", unsafe_allow_html=True)
         
     except Exception as e:
         st.error(f"An unexpected error occurred: {str(e)}")
