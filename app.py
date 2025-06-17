@@ -1252,7 +1252,7 @@ def show_main_page():
                                         use_container_width=True
                                     )
                                 # Clean up the temporary file
-                                os.remove(pdf_path)
+                                os.remove(pdf_path) 
                         except Exception as e:
                             st.error(f"Error generating PDF: {str(e)}")
         
