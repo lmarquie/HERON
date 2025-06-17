@@ -871,7 +871,7 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         results = processed_results[:5]  # Increased to 5 sources
         
         # Generate answer with optimized parameters
-        answer = st.session_state.rag_system.question_handler.process_question(prev_context)
+        answer = st.session_state.rag_system.question_handler.process_question(question)  # Use question directly instead of prev_context
         
         # Type out the answer
         type_text(answer, answer_container)
@@ -1096,6 +1096,13 @@ def show_main_page():
                 st.session_state.question = question
                 st.session_state.processing = True
                 
+                # Initialize variables
+                answer_container = st.empty()  # Container for the typing effect
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                is_follow_up = False  # Flag for follow-up questions
+                use_internet = st.session_state.get('use_internet', False)  # Get internet toggle state
+                
                 # Show processing status
                 with st.spinner("Processing your question..."):
                     # Get search results
@@ -1158,7 +1165,7 @@ def show_main_page():
                     results = processed_results[:5]  # Increased to 5 sources
                     
                     # Generate answer with optimized parameters
-                    answer = st.session_state.rag_system.question_handler.process_question(prev_context)
+                    answer = st.session_state.rag_system.question_handler.process_question(question)  # Use question directly
                     
                     # Type out the answer
                     type_text(answer, answer_container)
