@@ -1215,6 +1215,10 @@ def show_main_page():
                     st.session_state.follow_up_question = follow_up_question
                     st.session_state.processing = True
                     
+                    # Get the toggle states
+                    use_internet = st.session_state.get('use_internet', False)
+                    use_analysts = st.session_state.get('use_analysts', False)
+                    
                     # Show processing status
                     with st.spinner("Processing your follow-up question..."):
                         try:
