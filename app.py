@@ -817,7 +817,7 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
                 - Facts you know
                 - Information from outside the documents
 
-                If the documents do not contain information about the subject of the question, you MUST respond with:
+                Use your own reasoning to answer the question, but if the documents do not contain any information at all about the subject of the question, you MUST respond with:
                 "I cannot answer this question as there is no relevant information in the provided documents."
 
                 Examples of questions you CANNOT answer without documents containing the information:
@@ -831,14 +831,15 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
                 Remember: If you need to use ANY knowledge that isn't explicitly in the documents, you must say you cannot answer the question."""
                 answer = st.session_state.rag_system.question_handler.process_question(doc_context)
         
-        # Type out the answer
-        type_text(answer, answer_container)
-        
+        # Store the answer
         if is_follow_up:
             st.session_state.follow_up_answer = answer
         else:
             st.session_state.main_answer = answer
             st.session_state.main_results = results
+        
+        # Display the answer
+        st.markdown(answer)
         
         # If internet search is requested, do it in parallel
         if use_internet:
@@ -859,8 +860,8 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
                 )
                 internet_answer = internet_future.result()
             
-            # Type out the internet results
-            type_text("\n\n### Internet Search Results\n" + internet_answer, answer_container)
+            # Display internet results
+            st.markdown("\n\n### Internet Search Results\n" + internet_answer)
             
             if is_follow_up:
                 st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
@@ -1042,6 +1043,10 @@ def show_main_page():
                         generate_multi_analyst_answer(question, use_internet)
                     else:
                         generate_answer(question, use_internet, is_follow_up)
+                        
+                # Display the answer
+                if st.session_state.main_answer:
+                    st.markdown(st.session_state.main_answer)
 
             except Exception as e:
                 st.error(f"Error processing question: {str(e)}")
