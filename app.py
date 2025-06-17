@@ -1248,8 +1248,6 @@ def show_main_page():
                             
                             if follow_up_answer:
                                 st.session_state.follow_up_answer = follow_up_answer
-                                st.markdown("### Follow-up Answer")
-                                st.markdown(follow_up_answer)
                                 
                                 # If internet search is enabled, add internet results for follow-up
                                 if use_internet:
@@ -1266,11 +1264,7 @@ def show_main_page():
                                             )
                                             
                                             if internet_answer:
-                                                st.markdown("### Internet Search Results")
-                                                st.markdown(internet_answer)
                                                 st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
-                                            else:
-                                                st.warning("No internet results found for the follow-up question.")
                                     except Exception as internet_error:
                                         st.error(f"Error during internet search: {str(internet_error)}")
                                         st.info("Continuing with document-based answer only.")
