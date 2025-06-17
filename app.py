@@ -814,30 +814,64 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         # Get search results
         results = st.session_state.rag_system.vector_store.search(question, k=3)  # Get more results initially
         
-        # Combine results into a single context with token limit
-        context_parts = []
-        total_length = 0
-        max_context_length = 40000  # Approximately 10k tokens
+        # Process and filter results
+        processed_results = []
+        seen_sources = set()
+        seen_texts = set()  # Track unique text content
         
-        for chunk in results:
-            chunk_text = chunk['text']
-            # If adding this chunk would exceed the limit, truncate it
-            if total_length + len(chunk_text) > max_context_length:
-                remaining_length = max_context_length - total_length
-                if remaining_length > 100:  # Only add if we have at least 100 chars left
-                    chunk_text = chunk_text[:remaining_length] + "..."
-                else:
-                    break
-            context_parts.append(chunk_text)
-            total_length += len(chunk_text)
+        for result in results:
+            source = result.get('metadata', {}).get('source', 'Unknown source')
+            text = result.get('text', '')
             
-            if total_length >= max_context_length:
-                break
+            # Skip if we've seen this source or this exact text before
+            if source in seen_sources or text in seen_texts:
+                continue
         
-        context = "\n".join(context_parts)
+            seen_sources.add(source)
+            seen_texts.add(text)
+            
+            # Calculate relevance score
+            raw_score = result.get('score', 0)
+            
+            # Normalize score to 0-1 range
+            normalized_score = (raw_score + 1) / 2  # Convert to 0-1 range
+            
+            # Boost score for exact matches in source name
+            question_terms = set(question.lower().split())
+            source_terms = set(source.lower().split())
+            
+            # Check for exact matches in source name
+            if any(term in source_terms for term in question_terms):
+                normalized_score = max(normalized_score, 0.9)  # Higher boost for exact matches
+            
+            # Additional boost for financial reports and official documents
+            if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
+                normalized_score = max(normalized_score, 0.85)
+            
+            # Additional boost for recent documents
+            if 'date' in result.get('metadata', {}):
+                doc_date = result['metadata']['date']
+                if doc_date:
+                    try:
+                        doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
+                        days_old = (datetime.now() - doc_date).days
+                        if days_old < 365:  # Boost for documents less than a year old
+                            normalized_score = max(normalized_score, 0.8)
+                    except:
+                        pass
+            
+            processed_results.append({
+                'metadata': result.get('metadata', {}),
+                'score': normalized_score,
+                'text': text
+            })
+        
+        # Sort by score and take top 5
+        processed_results.sort(key=lambda x: x['score'], reverse=True)
+        results = processed_results[:5]  # Increased to 5 sources
         
         # Generate answer with optimized parameters
-        answer = st.session_state.rag_system.question_handler.process_question(context)
+        answer = st.session_state.rag_system.question_handler.process_question(prev_context)
         
         # Type out the answer
         type_text(answer, answer_container)
@@ -1075,13 +1109,18 @@ def show_main_page():
                         # Process and filter results
                         processed_results = []
                         seen_sources = set()
+                        seen_texts = set()  # Track unique text content
                         
                         for result in results:
                             source = result.get('metadata', {}).get('source', 'Unknown source')
-                            # Skip duplicates
-                            if source in seen_sources:
+                            text = result.get('text', '')
+                            
+                            # Skip if we've seen this source or this exact text before
+                            if source in seen_sources or text in seen_texts:
                                 continue
+                        
                             seen_sources.add(source)
+                            seen_texts.add(text)
                             
                             # Calculate relevance score
                             raw_score = result.get('score', 0)
@@ -1116,7 +1155,7 @@ def show_main_page():
                             processed_results.append({
                                 'metadata': result.get('metadata', {}),
                                 'score': normalized_score,
-                                'text': result.get('text', '')
+                                'text': text
                             })
                         
                         # Sort by score and take top 5
