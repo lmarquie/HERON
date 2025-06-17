@@ -1218,40 +1218,43 @@ def show_main_page():
         # Only show reset and export buttons if there's an answer
         if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
             st.markdown("---")
-            col1, col2, col3 = st.columns([2, 1, 1])
+            col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
-                if st.button("Reset Conversation", type="secondary"):
-                    # Clear all conversation-related session state
-                    if 'main_answer' in st.session_state:
-                        del st.session_state.main_answer
-                    if 'main_results' in st.session_state:
-                        del st.session_state.main_results
-                    if 'question' in st.session_state:
-                        st.session_state.question = ""
-                    if 'follow_up_question' in st.session_state:
-                        st.session_state.follow_up_question = ""
-                    if 'follow_up_answer' in st.session_state:
-                        del st.session_state.follow_up_answer
-                    if 'follow_up_questions' in st.session_state:
-                        del st.session_state.follow_up_questions
-                    st.rerun()
-            
-            with col3:
-                if st.button("Export PDF", type="secondary"):
-                    try:
-                        pdf_path = generate_pdf_summary()
-                        if pdf_path:
-                            with open(pdf_path, "rb") as file:
-                                st.download_button(
-                                    label="Download PDF",
-                                    data=file,
-                                    file_name=os.path.basename(pdf_path),
-                                    mime="application/pdf"
-                                )
-                            # Clean up the temporary file
-                            os.remove(pdf_path)
-                    except Exception as e:
-                        st.error(f"Error generating PDF: {str(e)}")
+                button_col1, button_col2 = st.columns(2)
+                with button_col1:
+                    if st.button("Reset Conversation", type="secondary", use_container_width=True):
+                        # Clear all conversation-related session state
+                        if 'main_answer' in st.session_state:
+                            del st.session_state.main_answer
+                        if 'main_results' in st.session_state:
+                            del st.session_state.main_results
+                        if 'question' in st.session_state:
+                            st.session_state.question = ""
+                        if 'follow_up_question' in st.session_state:
+                            st.session_state.follow_up_question = ""
+                        if 'follow_up_answer' in st.session_state:
+                            del st.session_state.follow_up_answer
+                        if 'follow_up_questions' in st.session_state:
+                            del st.session_state.follow_up_questions
+                        st.rerun()
+                
+                with button_col2:
+                    if st.button("Export PDF", type="secondary", use_container_width=True):
+                        try:
+                            pdf_path = generate_pdf_summary()
+                            if pdf_path:
+                                with open(pdf_path, "rb") as file:
+                                    st.download_button(
+                                        label="Download PDF",
+                                        data=file,
+                                        file_name=os.path.basename(pdf_path),
+                                        mime="application/pdf",
+                                        use_container_width=True
+                                    )
+                                # Clean up the temporary file
+                                os.remove(pdf_path)
+                        except Exception as e:
+                            st.error(f"Error generating PDF: {str(e)}")
         
         st.markdown("</div>", unsafe_allow_html=True)
         
