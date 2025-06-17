@@ -1087,13 +1087,8 @@ def show_main_page():
             key="question_input"
         )
 
-        # Add Ask Question button
-        col1, col2 = st.columns([3, 1])
-        with col2:
-            ask_button = st.button("Ask Question", type="primary", use_container_width=True)
-
-        # Process question if button is clicked or enter is pressed
-        if (ask_button or (question and question != st.session_state.question)) and not st.session_state.processing:
+        # Process question if enter is pressed
+        if question and question != st.session_state.question and not st.session_state.processing:
             try:
                 st.session_state.question = question
                 st.session_state.processing = True
@@ -1379,6 +1374,8 @@ def show_main_page():
                         st.session_state.follow_up_question = ""
                     if 'follow_up_answer' in st.session_state:
                         del st.session_state.follow_up_answer
+                    if 'follow_up_questions' in st.session_state:
+                        del st.session_state.follow_up_questions
                     st.rerun()
             
             with col3:
