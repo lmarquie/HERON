@@ -832,8 +832,7 @@ def generate_multi_analyst_answer(question, use_internet=False):
         st.session_state.processing = True
         start_time = time.time()
         
-        # Create progress bar and status container
-        progress_bar = st.progress(0)
+        # Create status container
         status_text = st.empty()
         
         # Define the debate prompt
@@ -878,10 +877,13 @@ def generate_multi_analyst_answer(question, use_internet=False):
         """
         
         # Generate the debate
-        progress_bar.progress(50)
         status_text.text("💭 Analysts are debating...")
         
         debate = st.session_state.rag_system.question_handler.process_question(debate_prompt)
+        
+        # Store the debate in session state
+        st.session_state.main_answer = debate
+        st.session_state.question = question
         
         # Display the debate
         st.markdown("### Formal Analyst Debate")
@@ -902,8 +904,10 @@ def generate_multi_analyst_answer(question, use_internet=False):
             # Add internet results
             st.markdown("### Additional Factual Context")
             st.markdown(internet_answer)
+            
+            # Update the stored answer with internet results
+            st.session_state.main_answer += "\n\n### Additional Factual Context\n" + internet_answer
         
-        progress_bar.progress(100)
         status_text.text("✅ Debate concluded!")
         total_time = time.time() - start_time
         
@@ -916,7 +920,6 @@ def generate_multi_analyst_answer(question, use_internet=False):
         # Clear the status after a short delay
         time.sleep(1)
         status_text.empty()
-        progress_bar.empty()
 
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
@@ -1218,43 +1221,60 @@ def show_main_page():
         # Only show reset and export buttons if there's an answer
         if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
             st.markdown("---")
+            # Center the buttons with equal width
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
-                button_col1, button_col2 = st.columns(2)
-                with button_col1:
-                    if st.button("Reset Conversation", type="secondary", use_container_width=True):
-                        # Clear all conversation-related session state
-                        if 'main_answer' in st.session_state:
-                            del st.session_state.main_answer
-                        if 'main_results' in st.session_state:
-                            del st.session_state.main_results
-                        if 'question' in st.session_state:
-                            st.session_state.question = ""
-                        if 'follow_up_question' in st.session_state:
-                            st.session_state.follow_up_question = ""
-                        if 'follow_up_answer' in st.session_state:
-                            del st.session_state.follow_up_answer
-                        if 'follow_up_questions' in st.session_state:
-                            del st.session_state.follow_up_questions
-                        st.rerun()
-                
-                with button_col2:
-                    if st.button("Export PDF", type="secondary", use_container_width=True):
-                        try:
-                            pdf_path = generate_pdf_summary()
-                            if pdf_path:
-                                with open(pdf_path, "rb") as file:
-                                    st.download_button(
-                                        label="Download PDF",
-                                        data=file,
-                                        file_name=os.path.basename(pdf_path),
-                                        mime="application/pdf",
-                                        use_container_width=True
-                                    )
-                                # Clean up the temporary file
-                                os.remove(pdf_path) 
-                        except Exception as e:
-                            st.error(f"Error generating PDF: {str(e)}")
+                # Create a container for the buttons
+                button_container = st.container()
+                with button_container:
+                    # Create two equal columns for the buttons
+                    button_col1, button_col2 = st.columns(2)
+                    
+                    # Define a common button style
+                    button_style = """
+                    <style>
+                    div[data-testid="stButton"] button {
+                        width: 100%;
+                        min-width: 200px;
+                    }
+                    </style>
+                    """
+                    st.markdown(button_style, unsafe_allow_html=True)
+                    
+                    with button_col1:
+                        if st.button("Reset Conversation", type="secondary", use_container_width=True):
+                            # Clear all conversation-related session state
+                            if 'main_answer' in st.session_state:
+                                del st.session_state.main_answer
+                            if 'main_results' in st.session_state:
+                                del st.session_state.main_results
+                            if 'question' in st.session_state:
+                                st.session_state.question = ""
+                            if 'follow_up_question' in st.session_state:
+                                st.session_state.follow_up_question = ""
+                            if 'follow_up_answer' in st.session_state:
+                                del st.session_state.follow_up_answer
+                            if 'follow_up_questions' in st.session_state:
+                                del st.session_state.follow_up_questions
+                            st.rerun()
+                    
+                    with button_col2:
+                        if st.button("Export PDF", type="secondary", use_container_width=True):
+                            try:
+                                pdf_path = generate_pdf_summary()
+                                if pdf_path:
+                                    with open(pdf_path, "rb") as file:
+                                        st.download_button(
+                                            label="Download PDF",
+                                            data=file,
+                                            file_name=os.path.basename(pdf_path),
+                                            mime="application/pdf",
+                                            use_container_width=True
+                                        )
+                                    # Clean up the temporary file
+                                    os.remove(pdf_path)
+                            except Exception as e:
+                                st.error(f"Error generating PDF: {str(e)}")
         
         st.markdown("</div>", unsafe_allow_html=True)
         
