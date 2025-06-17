@@ -1003,15 +1003,24 @@ def show_main_page():
             .app-title {
                 font-size: 3.5rem;
                 font-weight: 700;
-                color: #1f77b4;
+                color: #20293d;
+                text-align: center;
+                margin-bottom: 0.5rem;
+                font-family: 'Helvetica Neue', sans-serif;
+                letter-spacing: 2px;
+            }
+            .app-subtitle {
+                font-size: 1rem;
+                color: #20293d;
                 text-align: center;
                 margin-bottom: 2rem;
                 font-family: 'Helvetica Neue', sans-serif;
-                letter-spacing: 2px;
+                font-style: italic;
             }
             </style>
             <div class="main-content">
             <div class="app-title">HERON</div>
+            <div class="app-subtitle">(Herbert Embedded Retrieval and Oracle Network)</div>
         """, unsafe_allow_html=True)
         
         # Question input
