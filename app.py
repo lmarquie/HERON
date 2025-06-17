@@ -459,6 +459,13 @@ try:
     if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
         with st.spinner("Initializing RAG system..."):
             try:
+                # Clear any existing CUDA cache
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+                # Force garbage collection
+                gc.collect()
+                
                 # Initialize with explicit device and model settings
                 st.session_state.rag_system = RAGSystem(
                     settings={
@@ -467,17 +474,38 @@ try:
                         'model_temperature': 0.3,
                         'chunk_size': 500,
                         'chunk_overlap': 50,
-                        'num_results': 3
+                        'num_results': 3,
+                        'batch_size': 32,  # Reduced batch size
+                        'sequence_length': 256,  # Reduced sequence length
+                        'doc_percentage': 15
                     },
                     is_web=True
                 )
+                
+                # Verify initialization
+                if not st.session_state.rag_system:
+                    raise Exception("RAG system initialization failed")
+                
+                # Test the system with a simple query
+                test_query = "test initialization"
+                try:
+                    _ = st.session_state.rag_system.question_handler.process_question(test_query)
+                except Exception as e:
+                    raise Exception(f"RAG system test failed: {str(e)}")
+                
                 st.success("RAG system initialized successfully!")
             except Exception as e:
                 st.error(f"Error initializing RAG system: {str(e)}")
                 st.info("Please refresh the page and try again.")
+                # Clear the failed initialization
+                if hasattr(st.session_state, 'rag_system'):
+                    del st.session_state.rag_system
 except Exception as e:
     st.error(f"Critical error initializing RAG system: {str(e)}")
     st.info("Please refresh the page and try again.")
+    # Clear the failed initialization
+    if hasattr(st.session_state, 'rag_system'):
+        del st.session_state.rag_system
 
 def get_current_settings():
     """Get the current settings from session state or defaults"""
