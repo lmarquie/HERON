@@ -607,7 +607,7 @@ class RAGSystem:
             else:
                 print("\nInvalid choice. Please try again.")
 
-    def process_web_uploads(self, uploaded_files):
+    def process_web_uploads(self, uploaded_files): 
         """Process files uploaded through the web interface"""
         if not self.is_web:
             return False
