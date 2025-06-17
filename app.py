@@ -827,7 +827,7 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         st.session_state.processing = False
 
 def generate_multi_analyst_answer(question, use_internet=False):
-    """Generate an answer using multiple analysts with different perspectives."""
+    """Generate an answer using multiple analysts in a formal debate format."""
     try:
         st.session_state.processing = True
         start_time = time.time()
@@ -836,88 +836,75 @@ def generate_multi_analyst_answer(question, use_internet=False):
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Define different analyst perspectives
-        analysts = {
-            "Technical": {
-                "role": "Technical Analyst",
-                "focus": "Data-driven analysis, focusing on facts, metrics, and logical reasoning",
-                "perspective": "You are a technical analyst focused on data, facts, and logical reasoning. Analyze the question from a technical, data-driven perspective."
-            },
-            "Creative": {
-                "role": "Creative Analyst",
-                "focus": "Innovative thinking and out-of-the-box solutions",
-                "perspective": "You are a creative analyst focused on innovative solutions and thinking outside the box. Consider unique angles and creative approaches."
-            },
-            "Critical": {
-                "role": "Critical Analyst",
-                "focus": "Identifying potential issues, risks, and challenges",
-                "perspective": "You are a critical analyst focused on identifying potential issues and challenges. Analyze potential problems and limitations."
-            },
-            "Strategic": {
-                "role": "Strategic Analyst",
-                "focus": "Long-term implications and big-picture thinking",
-                "perspective": "You are a strategic analyst focused on long-term implications and big-picture thinking. Consider future impact and strategic value."
-            }
-        }
+        # Define the debate prompt
+        debate_prompt = f"""You are moderating a formal debate between four expert analysts. The question is: "{question}"
+
+        The debate will follow this structure:
+
+        ROUND 1: Opening Statements (2 minutes each)
+        - Technical Analyst: Data-driven, focuses on facts, metrics, and logical reasoning
+        - Creative Analyst: Innovative thinker, focuses on out-of-the-box solutions
+        - Critical Analyst: Identifies potential issues, risks, and challenges
+        - Strategic Analyst: Focuses on long-term implications and big-picture thinking
+
+        ROUND 2: Rebuttals (1 minute each)
+        Each analyst must:
+        - Address the strongest points from other analysts
+        - Challenge assumptions or data presented
+        - Strengthen their own position
+
+        ROUND 3: Cross-Examination (1 minute each)
+        Each analyst must:
+        - Ask one critical question to another analyst
+        - Respond to questions directed at them
+        - Use this to further their position
+
+        ROUND 4: Closing Arguments (1 minute each)
+        Each analyst must:
+        - Summarize their strongest points
+        - Address key challenges raised
+        - Present their final position
+
+        FINAL VERDICT:
+        As the moderator, you must:
+        1. Evaluate the strength of each position
+        2. Identify the most compelling arguments
+        3. Reach a decisive conclusion that isn't just a compromise
+        4. Provide specific, actionable recommendations
+
+        Format the debate as a formal transcript, clearly marking each round and speaker.
+        Make it passionate and engaging, but maintain professional discourse.
+        Each analyst should maintain their unique perspective while engaging meaningfully with others' arguments.
+        """
         
-        # Get initial perspectives
-        progress_bar.progress(25)
-        status_text.text("🤔 Gathering different perspectives...")
-        
-        perspectives = {}
-        for name, info in analysts.items():
-            perspectives[name] = st.session_state.rag_system.question_handler.process_question(info["perspective"])
-        
-        # Display the debate
+        # Generate the debate
         progress_bar.progress(50)
         status_text.text("💭 Analysts are debating...")
         
-        st.markdown("### Analyst Perspectives")
-        for name, info in analysts.items():
-            st.markdown(f"#### {info['role']}")
-            st.markdown(f"*{info['focus']}*")
-            st.markdown(perspectives[name])
-            st.markdown("---")
+        debate = st.session_state.rag_system.question_handler.process_question(debate_prompt)
         
-        # Generate consensus
-        progress_bar.progress(75)
-        status_text.text("🤝 Reaching consensus...")
-        
-        consensus_context = f"""Based on the following perspectives, provide a clear and concise consensus that:
-        1. Summarizes the key points from each analyst
-        2. Identifies areas of agreement and disagreement
-        3. Provides a clear, actionable conclusion
-        4. Suggests next steps or recommendations
-        
-        Question: {question}
-        
-        Analyst Perspectives:
-        {json.dumps(perspectives, indent=2)}
-        """
-        
-        consensus = st.session_state.rag_system.question_handler.process_question(consensus_context)
-        
-        # Display the consensus
-        st.markdown("### Consensus")
-        st.markdown(consensus)
+        # Display the debate
+        st.markdown("### Formal Analyst Debate")
+        st.markdown(debate)
         
         # If internet search is requested
         if use_internet:
-            internet_context = """You are a document analysis expert with access to the internet.
-            Please provide additional context to the consensus, using your knowledge and internet access.
+            internet_context = """You are a debate moderator with access to the internet.
+            Please provide additional factual context to support or challenge the debate's conclusions.
             Make sure to cite your sources for all data, and if you can't find a source, mention that it does not exist.
-            Focus on providing accurate, up-to-date information from reliable sources."""
+            Focus on providing accurate, up-to-date information from reliable sources that could strengthen the debate's final verdict."""
             
             internet_start = time.time()
             status_text.text("🌐 Searching the internet for additional information...")
             internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
             internet_time = time.time() - internet_start
             
-            # Add internet results to the consensus
-            consensus += "\n\n### Internet Search Results\n" + internet_answer
+            # Add internet results
+            st.markdown("### Additional Factual Context")
+            st.markdown(internet_answer)
         
         progress_bar.progress(100)
-        status_text.text("✅ Done!")
+        status_text.text("✅ Debate concluded!")
         total_time = time.time() - start_time
         
         # Display performance metrics
