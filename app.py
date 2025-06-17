@@ -1225,20 +1225,16 @@ def show_main_page():
                 st.markdown(a)
                 st.markdown("---")
             
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                follow_up_question = st.text_input(
-                    label="Ask a follow-up question",
-                    value=st.session_state.get('follow_up_question', ''),
-                    label_visibility="collapsed",
-                    placeholder="Ask a follow-up question...",
-                    key="follow_up_input"
-                )
-            with col2:
-                ask_follow_up = st.button("Ask Follow-up", type="primary", use_container_width=True)
+            follow_up_question = st.text_input(
+                label="Ask a follow-up question",
+                value=st.session_state.get('follow_up_question', ''),
+                label_visibility="collapsed",
+                placeholder="Ask a follow-up question...",
+                key="follow_up_input"
+            )
 
-            # Process follow-up question if button is clicked or enter is pressed
-            if (ask_follow_up or (follow_up_question and follow_up_question != st.session_state.get('follow_up_question', ''))) and not st.session_state.processing:
+            # Process follow-up question if enter is pressed
+            if follow_up_question and not st.session_state.processing:
                 try:
                     st.session_state.follow_up_question = follow_up_question
                     st.session_state.processing = True
@@ -1339,19 +1335,8 @@ def show_main_page():
                     st.info("Please try again or rephrase your follow-up question.")
                 finally:
                     st.session_state.processing = False
-                    # Clean up any temporary files
-                    try:
-                        temp_dir = "temp"
-                        if os.path.exists(temp_dir):
-                            for file in os.listdir(temp_dir):
-                                try:
-                                    file_path = os.path.join(temp_dir, file)
-                                    if os.path.isfile(file_path):
-                                        os.unlink(file_path)
-                                except Exception as e:
-                                    print(f"Error deleting temp file {file}: {e}")
-                    except Exception as cleanup_error:
-                        print(f"Error during cleanup: {cleanup_error}")
+                    # Clear the follow-up question input
+                    st.session_state.follow_up_question = ""
 
         # Options
         st.session_state.use_internet = st.toggle("Internet")
