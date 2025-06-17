@@ -184,6 +184,10 @@ if 'main_results' not in st.session_state:
     st.session_state.main_results = []
 if 'follow_up_answer' not in st.session_state:
     st.session_state.follow_up_answer = None
+if 'use_analysts' not in st.session_state:
+    st.session_state.use_analysts = False
+if 'use_internet' not in st.session_state:
+    st.session_state.use_internet = False
 
 # Create data directory if it doesn't exist
 DATA_DIR = "app_data"
@@ -1010,22 +1014,6 @@ Debate: {debate_text}"""
 def show_main_page():
     """Show the main page with file upload and question input."""
     try:
-        # Initialize session state variables if they don't exist
-        if 'question' not in st.session_state:
-            st.session_state.question = ""
-        if 'follow_up_question' not in st.session_state:
-            st.session_state.follow_up_question = ""
-        if 'main_answer' not in st.session_state:
-            st.session_state.main_answer = None
-        if 'follow_up_answer' not in st.session_state:
-            st.session_state.follow_up_answer = None
-        if 'processing' not in st.session_state:
-            st.session_state.processing = False
-        if 'use_analysts' not in st.session_state:
-            st.session_state.use_analysts = False
-        if 'use_internet' not in st.session_state:
-            st.session_state.use_internet = False
-        
         # Main content
         st.markdown("""
             <div style='text-align: center; padding: 2rem 0; display: flex; flex-direction: column; align-items: center;'>
