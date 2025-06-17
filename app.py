@@ -990,12 +990,6 @@ def show_main_page():
         if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
             st.error("RAG system not initialized. Please refresh the page.")
             return
-            
-        # Check if documents are loaded
-        if not st.session_state.documents_loaded:
-            st.warning("⚠️ No documents have been uploaded. Please either:")
-            st.markdown("1. Upload documents using the file uploader in the sidebar")
-            st.markdown("2. Enable internet search to get answers without documents")
         
         # Main content
         st.markdown("""
