@@ -811,120 +811,103 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         else:
             prev_context = question
         
-        # Get answer and sources with improved search
-        try:
-            # First try exact match search with more results
-            results = st.session_state.rag_system.vector_store.search(
-                question,
-                k=10  # Get more results initially for better selection
-            )
-            
-            # Process and filter results
-            processed_results = []
-            seen_sources = set()
-            seen_texts = set()  # Track unique text content
-            
-            for result in results:
-                source = result.get('metadata', {}).get('source', 'Unknown source')
-                text = result.get('text', '')
-                
-                # Skip if we've seen this source or this exact text before
-                if source in seen_sources or text in seen_texts:
-                    continue
-            
-                seen_sources.add(source)
-                seen_texts.add(text)
-                
-                # Calculate relevance score
-                raw_score = result.get('score', 0)
-                
-                # Normalize score to 0-1 range
-                normalized_score = (raw_score + 1) / 2  # Convert to 0-1 range
-                
-                # Boost score for exact matches in source name
-                question_terms = set(question.lower().split())
-                source_terms = set(source.lower().split())
-                
-                # Check for exact matches in source name
-                if any(term in source_terms for term in question_terms):
-                    normalized_score = max(normalized_score, 0.9)  # Higher boost for exact matches
-                
-                # Additional boost for financial reports and official documents
-                if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
-                    normalized_score = max(normalized_score, 0.85)
-                
-                # Additional boost for recent documents
-                if 'date' in result.get('metadata', {}):
-                    doc_date = result['metadata']['date']
-                    if doc_date:
-                        try:
-                            doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
-                            days_old = (datetime.now() - doc_date).days
-                            if days_old < 365:  # Boost for documents less than a year old
-                                normalized_score = max(normalized_score, 0.8)
-                        except:
-                            pass
-                
-                processed_results.append({
-                    'metadata': result.get('metadata', {}),
-                    'score': normalized_score,
-                    'text': text
-                })
-            
-            # Sort by score and take top 5
-            processed_results.sort(key=lambda x: x['score'], reverse=True)
-            results = processed_results[:5]  # Increased to 5 sources
-            
-        except Exception as e:
-            st.error(f"Error during search: {str(e)}")
-            results = []
+        # Get search results
+        results = st.session_state.rag_system.vector_store.search(question, k=3)  # Get more results initially
         
-        # Get the toggle states
-        use_internet = st.session_state.get('use_internet', False)
-        use_analysts = st.session_state.get('use_analysts', False)
+        # Process and filter results
+        processed_results = []
+        seen_sources = set()
+        seen_texts = set()  # Track unique text content
         
-        # Generate answer based on selected options
-        if use_analysts:
-            generate_multi_analyst_answer(question, use_internet)
+        for result in results:
+            source = result.get('metadata', {}).get('source', 'Unknown source')
+            text = result.get('text', '')
+            
+            # Skip if we've seen this source or this exact text before
+            if source in seen_sources or text in seen_texts:
+                continue
+        
+            seen_sources.add(source)
+            seen_texts.add(text)
+            
+            # Calculate relevance score
+            raw_score = result.get('score', 0)
+            
+            # Normalize score to 0-1 range
+            normalized_score = (raw_score + 1) / 2  # Convert to 0-1 range
+            
+            # Boost score for exact matches in source name
+            question_terms = set(question.lower().split())
+            source_terms = set(source.lower().split())
+            
+            # Check for exact matches in source name
+            if any(term in source_terms for term in question_terms):
+                normalized_score = max(normalized_score, 0.9)  # Higher boost for exact matches
+            
+            # Additional boost for financial reports and official documents
+            if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
+                normalized_score = max(normalized_score, 0.85)
+            
+            # Additional boost for recent documents
+            if 'date' in result.get('metadata', {}):
+                doc_date = result['metadata']['date']
+                if doc_date:
+                    try:
+                        doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
+                        days_old = (datetime.now() - doc_date).days
+                        if days_old < 365:  # Boost for documents less than a year old
+                            normalized_score = max(normalized_score, 0.8)
+                    except:
+                        pass
+            
+            processed_results.append({
+                'metadata': result.get('metadata', {}),
+                'score': normalized_score,
+                'text': text
+            })
+        
+        # Sort by score and take top 5
+        processed_results.sort(key=lambda x: x['score'], reverse=True)
+        results = processed_results[:5]  # Increased to 5 sources
+        
+        # Generate answer with optimized parameters
+        answer = st.session_state.rag_system.question_handler.process_question(prev_context)
+        
+        # Type out the answer
+        type_text(answer, answer_container)
+        
+        if is_follow_up:
+            st.session_state.follow_up_answer = answer
         else:
-            answer = st.session_state.rag_system.question_handler.process_question(prev_context)
+            st.session_state.main_answer = answer
+            st.session_state.main_results = results
+        
+        # If internet search is requested, do it in parallel
+        if use_internet:
+            internet_context = """You are a document analysis expert with access to the internet.
+            Provide a concise answer using your knowledge and internet access.
+            Cite sources for data. If no source exists, mention that.
+            Focus on accurate, up-to-date information."""
             
-            if answer:
-                st.session_state.main_answer = answer
-                st.session_state.main_results = results
-                
-                # Display answer
-                st.markdown("### Answer")
-                st.markdown(answer)
-                
-                # If internet search is enabled, add internet results
-                if use_internet:
-                    with st.spinner("Searching the internet..."):
-                        internet_context = """You are a document analysis expert with access to the internet.
-                        Provide a concise answer using your knowledge and internet access.
-                        Cite sources for data. If no source exists, mention that.
-                        Focus on accurate, up-to-date information."""
-                        
-                        internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(
-                            question,
-                            internet_context
-                        )
-                        
-                        st.markdown("### Internet Search Results")
-                        st.markdown(internet_answer)
-                        st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
-                
-                # Display sources with improved formatting
-                if results:
-                    st.markdown("### Sources")
-                    for i, result in enumerate(results, 1):
-                        source = result.get('metadata', {}).get('source', 'Unknown source')
-                        score = result.get('score', 0)
-                        # Convert score to percentage and round to 2 decimal places
-                        relevance_percentage = round(score * 100, 2)
-                        st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
+            internet_start = time.time()
+            status_text.text("🌐 Searching the internet...")
+            
+            # Use ThreadPoolExecutor for parallel processing
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                internet_future = executor.submit(
+                    st.session_state.rag_system.question_handler.llm.generate_answer,
+                    question,
+                    internet_context
+                )
+                internet_answer = internet_future.result()
+            
+            # Type out the internet results
+            type_text("\n\n### Internet Search Results\n" + internet_answer, answer_container)
+            
+            if is_follow_up:
+                st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
             else:
-                st.error("Failed to generate an answer. Please try again.")
+                st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
         
         progress_bar.progress(100)
         status_text.text("✅ Done!")
