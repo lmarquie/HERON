@@ -202,18 +202,40 @@ st.markdown("""
 
         /* Company name styling */
         .company-name {
-            position: fixed;
-            top: 1rem;
-            right: 1rem;
             font-size: 1.2rem;
             font-weight: 600;
-            color: #20293d;
+            color: #a4a6b5;
             font-family: 'Helvetica Neue', sans-serif;
-            z-index: 1000;
+            margin-bottom: 2rem;
+            text-align: center;
         }
     </style>
-    <div class="company-name">Herbert Advisory</div>
 """, unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.markdown('<div class="company-name">Herbert Advisory</div>', unsafe_allow_html=True)
+    
+    # File uploader at the top of sidebar for better visibility
+    st.markdown("### Upload Documents")
+    try:
+        uploaded_files = st.file_uploader(
+            label="Upload your documents to analyze",
+            type=['pdf', 'txt'],
+            accept_multiple_files=True,
+            help="Upload PDF or text files to analyze",
+            label_visibility="visible"
+        )
+        
+        if uploaded_files:
+            if st.session_state.rag_system.process_web_uploads(uploaded_files):
+                st.success(f"Successfully processed {len(uploaded_files)} file(s)")
+                st.session_state.documents_loaded = True
+            else:
+                st.error("Failed to process uploaded files")
+    except Exception as e:
+        st.error(f"Error with file uploader: {str(e)}")
+        st.info("If you're running this in a cloud environment, please ensure you have proper permissions.")
 
 # Initialize session state
 if 'current_page' not in st.session_state:
