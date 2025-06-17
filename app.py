@@ -1098,8 +1098,6 @@ def show_main_page():
                 
                 # Initialize variables
                 answer_container = st.empty()  # Container for the typing effect
-                progress_bar = st.progress(0)
-                status_text = st.empty()
                 is_follow_up = False  # Flag for follow-up questions
                 use_internet = st.session_state.get('use_internet', False)  # Get internet toggle state
                 
@@ -1183,9 +1181,6 @@ def show_main_page():
                         Cite sources for data. If no source exists, mention that.
                         Focus on accurate, up-to-date information."""
                         
-                        internet_start = time.time()
-                        status_text.text("🌐 Searching the internet...")
-                        
                         # Use ThreadPoolExecutor for parallel processing
                         with ThreadPoolExecutor(max_workers=2) as executor:
                             internet_future = executor.submit(
@@ -1202,15 +1197,7 @@ def show_main_page():
                             st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
                         else:
                             st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
-                    
-                    progress_bar.progress(100)
-                    status_text.text("✅ Done!")
-                    
-                    # Clear status after a shorter delay
-                    time.sleep(0.5)
-                    status_text.empty()
-                    progress_bar.empty()
-                    
+            
             except Exception as e:
                 st.error(f"Error processing question: {str(e)}")
                 st.info("Please try again or rephrase your question.")
