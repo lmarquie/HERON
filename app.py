@@ -1021,6 +1021,10 @@ def show_main_page():
             st.session_state.follow_up_answer = None
         if 'processing' not in st.session_state:
             st.session_state.processing = False
+        if 'use_analysts' not in st.session_state:
+            st.session_state.use_analysts = False
+        if 'use_internet' not in st.session_state:
+            st.session_state.use_internet = False
         
         # Main content
         st.markdown("""
@@ -1028,6 +1032,13 @@ def show_main_page():
                 <h1 style='color: #1E3A8A; font-size: 3.5rem; font-weight: 700; margin: 0; text-shadow: 0 0 10px rgba(30, 58, 138, 0.3);'>HERON</h1>
             </div>
         """, unsafe_allow_html=True)
+        
+        # Add mode selection
+        col1, col2 = st.columns(2)
+        with col1:
+            st.session_state.use_analysts = st.checkbox("Use Multi-Analyst Mode", value=st.session_state.use_analysts)
+        with col2:
+            st.session_state.use_internet = st.checkbox("Include Internet Search", value=st.session_state.use_internet)
         
         # Question input
         question = st.text_input(
@@ -1047,13 +1058,11 @@ def show_main_page():
                 # Initialize variables
                 answer_container = st.empty()  # Container for the typing effect
                 is_follow_up = False  # Flag for follow-up questions
-                use_internet = st.session_state.get('use_internet', False)  # Get internet toggle state
-                use_analysts = st.session_state.get('use_analysts', False)  # Get multi-analyst toggle state
                 
                 # Show processing status
                 with st.spinner("Processing your question..."):
-                    if use_analysts:
-                        generate_multi_analyst_answer(question, use_internet)
+                    if st.session_state.use_analysts:
+                        generate_multi_analyst_answer(question, st.session_state.use_internet)
                     else:
                         # Get search results
                         results = st.session_state.rag_system.vector_store.search(question, k=3)  # Get more results initially
@@ -1126,7 +1135,7 @@ def show_main_page():
                             st.session_state.main_results = results
                         
                         # If internet search is requested, do it in parallel
-                        if use_internet:
+                        if st.session_state.use_internet:
                             internet_context = """You are a document analysis expert with access to the internet.
                             Provide a concise answer using your knowledge and internet access.
                             Cite sources for data. If no source exists, mention that.
@@ -1195,8 +1204,8 @@ def show_main_page():
                     
                     # Initialize variables
                     follow_up_container = st.empty()  # Container for the typing effect
-                    use_internet = st.session_state.get('use_internet', False)
-                    use_analysts = st.session_state.get('use_analysts', False)
+                    use_internet = st.session_state.use_internet
+                    use_analysts = st.session_state.use_analysts
                     
                     # Show processing status
                     with st.spinner("Processing your follow-up question..."):
