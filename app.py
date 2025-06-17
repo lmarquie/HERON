@@ -1,236 +1,514 @@
-import streamlit as st
+# Import necessary libraries
 import os
-import json
+import faiss
+import fitz  # PyMuPDF
+import pickle
+import torch
 import time
+from typing import List, Dict, Optional, Tuple
 from datetime import datetime
-from local_draft import RAGSystem, WebFileHandler
+from sentence_transformers import SentenceTransformer, CrossEncoder
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import requests
+import io
+import numpy as np
 from config import OPENAI_API_KEY
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
-from io import BytesIO
 
-# Create app data directory if it doesn't exist
-DATA_DIR = 'app_data'
-os.makedirs(DATA_DIR, exist_ok=True)
+### =================== Input Interface =================== ###
+class InputInterface:
+    def __init__(self):
+        self.download_dir = "local_documents"
+        os.makedirs(self.download_dir, exist_ok=True)
 
-def get_current_settings():
-    """Get the current settings from session state or defaults"""
-    if not hasattr(st.session_state, 'settings'):
-        st.session_state.settings = {
-            'chunk_size': 500,
-            'chunk_overlap': 50,
-            'max_chunks': 10,
-            'search_depth': 3,
-            'relevance_threshold': 0.7,
-            'temperature': 0.3,
-            'max_tokens': 1000,
-            'top_p': 0.9,
-            'speed': 0.5,
-            'accuracy': 0.5
-        }
-    return st.session_state.settings
+    def get_user_question(self) -> str:
+        return input("\nEnter your question: ").strip()
 
-# Set page config
-st.set_page_config(
-    page_title="HERON - Herbert Advisory",
-    page_icon="🦅",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+    def display_answer(self, answer: str):
+        print("\nAnswer:", answer)
 
-# Sidebar
-with st.sidebar:
-    st.markdown("""
-        <div style='text-align: center; padding: 1rem 0; margin-bottom: 1rem;'>
-            <h2 style='color: #1E3A8A; font-size: 1.2rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Herbert Advisory</h2>
-            <p style='color: #4B5563; font-size: 0.9rem; line-height: 1.4;'>
-                HERON (Herbert Embedded Retrieval and Oracle Network) is an advanced document analysis platform that leverages artificial intelligence to facilitate comprehensive document interrogation through natural language processing capabilities.
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    # File uploader
-    st.header("Upload Documents")
-    try:
-        uploaded_files = st.file_uploader(
-            label="Upload your documents to analyze",
-            type=['pdf', 'txt'],
-            accept_multiple_files=True,
-            help="Upload PDF or text files to analyze",
-            label_visibility="collapsed",
-            key="sidebar_file_uploader"
-        )
-        
-        if uploaded_files:
-            if st.session_state.rag_system.process_web_uploads(uploaded_files):
-                st.success(f"Successfully processed {len(uploaded_files)} file(s)")
-                st.session_state.documents_loaded = True
+### =================== Document Loading =================== ###
+class LocalFileHandler:
+    def __init__(self):
+        self.base_path = os.getcwd()
+
+    def select_folder_interactive(self):
+        """Let user select a folder from local system"""
+        print("\nPlease enter the path to your folder containing documents.")
+        print("Example: /path/to/your/documents")
+        print("Or just the folder name if it's in the current directory")
+
+        while True:
+            folder_path = input("\nEnter folder path: ").strip()
+
+            if not os.path.isabs(folder_path):
+                folder_path = os.path.join(self.base_path, folder_path)
+
+            if os.path.exists(folder_path) and os.path.isdir(folder_path):
+                print(f"✓ Selected folder: {folder_path}")
+                return {
+                    'name': os.path.basename(folder_path),
+                    'path': folder_path
+                }
             else:
-                st.error("Failed to process uploaded files")
-    except Exception as e:
-        st.error(f"Error with file uploader: {str(e)}")
-        st.info("If you're running this in a cloud environment, please ensure you have proper permissions.")
-    
-    st.divider()
-    
-    # Display current model settings with new design
-    st.markdown("""
-        <div style='border: 1px solid #E2E8F0; border-radius: 0.5rem; padding: 1.5rem; margin: 1.5rem 0;'>
-            <h2 style='color: #1E3A8A; font-size: 1.2rem; font-weight: 600; margin: 0 0 1rem 0; text-align: center;'>Model Settings</h2>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    settings = get_current_settings()
-    
-    # Document Processing Section
-    st.markdown("""
-        <div style='margin-bottom: 1rem;'>
-            <h3 style='color: #1E3A8A; font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Document Processing</h3>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    for setting, value, max_value, format_str in [
-        ("Chunk Size", settings['chunk_size'], 1000, "d"),
-        ("Chunk Overlap", settings['chunk_overlap'], 100, "d"),
-        ("Max Chunks", settings['max_chunks'], 20, "d")
-    ]:
-        st.markdown(f"""
-            <div style='margin-bottom: 0.75rem;'>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 0.25rem;'>
-                    <span style='color: #4B5563; font-size: 0.9rem;'>{setting}</span>
-                    <span style='color: #1E3A8A; font-size: 0.9rem; font-weight: 500;'>{value:{format_str}}/{max_value}</span>
-                </div>
-                <div style='background-color: #E2E8F0; height: 0.35rem; border-radius: 0.25rem; overflow: hidden;'>
-                    <div style='background-color: #1E3A8A; height: 100%; width: {value/max_value*100}%; border-radius: 0.25rem;'></div>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    # Search Settings Section
-    st.markdown("""
-        <div style='margin-bottom: 1rem;'>
-            <h3 style='color: #1E3A8A; font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Search Settings</h3>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    for setting, value, max_value, format_str in [
-        ("Search Depth", settings['search_depth'], 5, "d"),
-        ("Relevance Threshold", settings['relevance_threshold'], 1.0, ".2f")
-    ]:
-        st.markdown(f"""
-            <div style='margin-bottom: 0.75rem;'>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 0.25rem;'>
-                    <span style='color: #4B5563; font-size: 0.9rem;'>{setting}</span>
-                    <span style='color: #1E3A8A; font-size: 0.9rem; font-weight: 500;'>{value:{format_str}}/{max_value:.2f}</span>
-                </div>
-                <div style='background-color: #E2E8F0; height: 0.35rem; border-radius: 0.25rem; overflow: hidden;'>
-                    <div style='background-color: #1E3A8A; height: 100%; width: {value/max_value*100}%; border-radius: 0.25rem;'></div>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    # Model Parameters Section
-    st.markdown("""
-        <div style='margin-bottom: 1rem;'>
-            <h3 style='color: #1E3A8A; font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Model Parameters</h3>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    for setting, value, max_value, format_str in [
-        ("Temperature", settings['temperature'], 1.0, ".2f"),
-        ("Max Tokens", settings['max_tokens'], 2000, "d"),
-        ("Top P", settings['top_p'], 1.0, ".2f")
-    ]:
-        st.markdown(f"""
-            <div style='margin-bottom: 0.75rem;'>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 0.25rem;'>
-                    <span style='color: #4B5563; font-size: 0.9rem;'>{setting}</span>
-                    <span style='color: #1E3A8A; font-size: 0.9rem; font-weight: 500;'>{value:{format_str}}/{max_value:.2f}</span>
-                </div>
-                <div style='background-color: #E2E8F0; height: 0.35rem; border-radius: 0.25rem; overflow: hidden;'>
-                    <div style='background-color: #1E3A8A; height: 100%; width: {value/max_value*100}%; border-radius: 0.25rem;'></div>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("</div>", unsafe_allow_html=True)
+                print(f" Folder not found: {folder_path}")
+                print("Please try again or enter 'q' to quit")
+                if folder_path.lower() == 'q':
+                    return None
 
-# Initialize session state
-if 'current_page' not in st.session_state:
-    st.session_state.current_page = "main"
-if 'question' not in st.session_state:
-    st.session_state.question = ""
-if 'answer' not in st.session_state:
-    st.session_state.answer = None
-if 'sources' not in st.session_state:
-    st.session_state.sources = []
-if 'conversation_history' not in st.session_state:
-    st.session_state.conversation_history = []
-if 'documents_loaded' not in st.session_state:
-    st.session_state.documents_loaded = False
-if 'vector_store' not in st.session_state:
-    st.session_state.vector_store = None
-if 'rag_system' not in st.session_state:
-    st.session_state.rag_system = None
-if 'processing' not in st.session_state:
-    st.session_state.processing = False
-if 'current_theme' not in st.session_state:
-    st.session_state.current_theme = "System Default"
-if 'main_answer' not in st.session_state:
-    st.session_state.main_answer = None
-if 'main_results' not in st.session_state:
-    st.session_state.main_results = []
-if 'follow_up_answer' not in st.session_state:
-    st.session_state.follow_up_answer = None
-
-# Create data directory if it doesn't exist
-DATA_DIR = "app_data"
-os.makedirs(DATA_DIR, exist_ok=True)
-
-def save_conversation_history():
-    """Save conversation history to a file"""
-    if 'main_answer' in st.session_state:
-        data = {
-            'main_answer': st.session_state.main_answer,
-            'main_results': st.session_state.main_results if 'main_results' in st.session_state else [],
-            'question': st.session_state.question if 'question' in st.session_state else "",
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        # Save to file
-        with open(os.path.join(DATA_DIR, 'conversation_history.json'), 'w') as f:
-            json.dump(data, f)
-
-def load_conversation_history():
-    """Load conversation history from file"""
-    history_file = os.path.join(DATA_DIR, 'conversation_history.json')
-    if os.path.exists(history_file):
+    def process_selected_folder(self, folder_path):
+        """Process all files in the selected folder"""
         try:
-            with open(history_file, 'r') as f:
-                data = json.load(f)
-                
-            if data['main_answer']:
-                st.session_state.main_answer = data['main_answer']
-            if 'main_results' in data:
-                st.session_state.main_results = data['main_results']
-            if 'question' in data:
-                st.session_state.question = data['question']
-        except Exception as e:
-            st.error(f"Error loading conversation history: {str(e)}")
+            print(f"\nScanning folder: {folder_path}")
+            files = []
+            for item in os.listdir(folder_path):
+                full_path = os.path.join(folder_path, item)
+                if os.path.isfile(full_path):
+                    files.append({
+                        'name': item,
+                        'path': full_path
+                    })
 
-def save_settings(settings):
-    """Save settings to a file"""
-    try:
-        # Ensure app_data directory exists with proper permissions
-        app_data_dir = os.path.abspath('app_data')
-        if not os.path.exists(app_data_dir):
-            os.makedirs(app_data_dir, mode=0o755)
+            if not files:
+                print("No files found in the selected folder.")
+                return []
+
+            print(f"\nFound {len(files)} files. Processing...")
+            documents = []
+            for file in files:
+                if file['name'].endswith(('.txt', '.pdf')):
+                    try:
+                        if file['name'].endswith('.pdf'):
+                            doc = fitz.open(file['path'])
+                            content = ""
+                            for page in doc:
+                                content += page.get_text()
+                            doc.close()
+                        else:
+                            with open(file['path'], 'r', encoding='utf-8') as f:
+                                content = f.read()
+
+                        documents.append({
+                            'text': content,
+                            'metadata': {
+                                'source': file['name'],
+                                'path': file['path'],
+                                'date': datetime.now().isoformat()
+                            }
+                        })
+                        print(f"✓ Processed: {file['name']}")
+                    except Exception as e:
+                        print(f" Error processing {file['name']}: {str(e)}")
+
+            return documents
+        except Exception as e:
+            print(f" Error processing folder: {str(e)}")
+            return []
+
+class WebFileHandler(LocalFileHandler):
+    def __init__(self):
+        super().__init__()
+        self.temp_dir = "temp"
+        os.makedirs(self.temp_dir, exist_ok=True)
+
+    def process_uploaded_files(self, uploaded_files):
+        """Process files uploaded through Streamlit's file uploader"""
+        if not uploaded_files:
+            return []
+
+        documents = []
+        for uploaded_file in uploaded_files:
+            try:
+                # Save the uploaded file to a temporary location
+                temp_path = os.path.join(self.temp_dir, uploaded_file.name)
+                with open(temp_path, 'wb') as f:
+                    f.write(uploaded_file.getbuffer())
+
+                # Process the file based on its type
+                if uploaded_file.name.endswith('.pdf'):
+                    doc = fitz.open(temp_path)
+                    content = ""
+                    for page in doc:
+                        content += page.get_text()
+                    doc.close()
+                elif uploaded_file.name.endswith('.txt'):
+                    with open(temp_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                else:
+                    continue
+
+                documents.append({
+                    'text': content,
+                    'metadata': {
+                        'source': uploaded_file.name,
+                        'path': temp_path,
+                        'date': datetime.now().isoformat()
+                    }
+                })
+
+                # Clean up the temporary file
+                os.remove(temp_path)
+
+            except Exception as e:
+                print(f"Error processing {uploaded_file.name}: {str(e)}")
+                continue
+
+        return documents
+
+### =================== Text Processing =================== ###
+class TextProcessor:
+    def __init__(self, chunk_size: int = 800, overlap: int = 100):
+        self.chunk_size = chunk_size
+        self.overlap = overlap
+        self.sentence_splitter = None  # Will be initialized on first use
+
+    def _initialize_sentence_splitter(self):
+        """Lazy initialization of sentence splitter"""
+        if self.sentence_splitter is None:
+            from nltk.tokenize import sent_tokenize
+            import nltk
+            try:
+                nltk.data.find('tokenizers/punkt')
+            except LookupError:
+                nltk.download('punkt')
+            self.sentence_splitter = sent_tokenize
+
+    def extract_text_from_pdf(self, pdf_path: str) -> str:
+        try:
+            doc = fitz.open(pdf_path)
+            text = ""
+            for page in doc:
+                text += page.get_text("text")  # Using "text" mode for better formatting
+            doc.close()
+            return text
+        except Exception as e:
+            print(f"Error extracting text from {pdf_path}: {e}")
+            return ""
+
+    def chunk_text(self, text: str) -> List[str]:
+        """Improved text chunking that respects sentence boundaries"""
+        self._initialize_sentence_splitter()
         
-        # Ensure all required settings are present
+        # Split into sentences first
+        sentences = self.sentence_splitter(text)
+        chunks = []
+        current_chunk = []
+        current_length = 0
+        
+        for sentence in sentences:
+            sentence_length = len(sentence.split())
+            
+            # If adding this sentence would exceed chunk size, save current chunk
+            if current_length + sentence_length > self.chunk_size and current_chunk:
+                chunks.append(" ".join(current_chunk))
+                # Keep overlap sentences for context
+                overlap_sentences = []
+                overlap_length = 0
+                for s in reversed(current_chunk):
+                    if overlap_length + len(s.split()) <= self.overlap:
+                        overlap_sentences.insert(0, s)
+                        overlap_length += len(s.split())
+                    else:
+                        break
+                current_chunk = overlap_sentences
+                current_length = overlap_length
+            
+            current_chunk.append(sentence)
+            current_length += sentence_length
+        
+        # Add the last chunk if it exists
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+        
+        return chunks
+
+    def prepare_documents(self, pdf_paths: List[str]) -> List[Dict]:
+        documents = []
+        for pdf_path in pdf_paths:
+            text = self.extract_text_from_pdf(pdf_path)
+            chunks = self.chunk_text(text)
+            for i, chunk in enumerate(chunks):
+                documents.append({
+                    "text": chunk,
+                    "metadata": {
+                        "source": os.path.basename(pdf_path),
+                        "chunk_id": i,
+                        "timestamp": datetime.now().isoformat(),
+                        "chunk_size": len(chunk.split())
+                    }
+                })
+        return documents
+
+### =================== Vector Store =================== ###
+class VectorStore:
+    def __init__(self, dimension: int = 1536):  # OpenAI embeddings are 1536-dimensional
+        self.dimension = dimension
+        self.index = faiss.IndexFlatL2(dimension)  # Using L2 distance for better accuracy
+        self.documents = []
+        self.embedding_model = None
+        self.cross_encoder = None
+        self._initialize_models()
+
+    def _initialize_models(self):
+        """Initialize embedding models with optimized settings"""
+        if self.embedding_model is None:
+            self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            # Optimize model for inference
+            self.embedding_model.eval()
+            if torch.cuda.is_available():
+                self.embedding_model = self.embedding_model.cuda()
+        
+        if self.cross_encoder is None:
+            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+            # Optimize model for inference
+            self.cross_encoder.eval()
+            if torch.cuda.is_available():
+                self.cross_encoder = self.cross_encoder.cuda()
+
+    def get_embedding(self, text: str) -> np.ndarray:
+        """Get embedding with optimized batch processing"""
+        with torch.no_grad():  # Disable gradient calculation for inference
+            embeddings = self.embedding_model.encode(
+                [text],
+                convert_to_tensor=True,
+                show_progress_bar=False,
+                normalize_embeddings=True  # Normalize for better cosine similarity
+            )
+            if torch.cuda.is_available():
+                embeddings = embeddings.cpu()
+            return embeddings.numpy()
+
+    def add_documents(self, documents: List[Dict]):
+        """Add documents with optimized batch processing"""
+        if not documents:
+            return
+
+        # Prepare texts for batch processing
+        texts = [doc["text"] for doc in documents]
+        
+        # Get embeddings in batch
+        with torch.no_grad():
+            embeddings = self.embedding_model.encode(
+                texts,
+                convert_to_tensor=True,
+                show_progress_bar=False,
+                normalize_embeddings=True
+            )
+            if torch.cuda.is_available():
+                embeddings = embeddings.cpu()
+            embeddings = embeddings.numpy()
+
+        # Add to FAISS index
+        self.index.add(embeddings)
+        self.documents.extend(documents)
+
+    def search(self, query: str, k: int = 3) -> List[Dict]:
+        """Enhanced search with reranking"""
+        # Get query embedding
+        query_embedding = self.get_embedding(query)
+        
+        # First stage: FAISS search
+        distances, indices = self.index.search(query_embedding, k * 2)  # Get more candidates for reranking
+        
+        # Get candidate documents
+        candidates = [self.documents[i] for i in indices[0]]
+        
+        # Second stage: Cross-encoder reranking
+        pairs = [(query, doc["text"]) for doc in candidates]
+        with torch.no_grad():
+            scores = self.cross_encoder.predict(pairs)
+        
+        # Combine scores and sort
+        scored_candidates = list(zip(candidates, scores))
+        scored_candidates.sort(key=lambda x: x[1], reverse=True)
+        
+        # Return top k results
+        return [doc for doc, _ in scored_candidates[:k]]
+
+    def save_local(self, path: str):
+        """Save the vector store to a local directory"""
+        os.makedirs(path, exist_ok=True)
+        
+        # Save the index
+        if self.index is not None:
+            faiss.write_index(self.index, os.path.join(path, 'index.faiss'))
+        
+        # Save the documents and metadata
+        with open(os.path.join(path, 'documents.pkl'), 'wb') as f:
+            pickle.dump({
+                'documents': self.documents,
+                'embedding_model': self.embedding_model,
+                'cross_encoder': self.cross_encoder
+            }, f)
+        
+        print(f"Vector store saved to {path}")
+
+    def load_local(self, path: str):
+        """Load the vector store from a local directory"""
+        # Load the index
+        index_path = os.path.join(path, 'index.faiss')
+        if os.path.exists(index_path):
+            self.index = faiss.read_index(index_path)
+        
+        # Load the documents and metadata
+        documents_path = os.path.join(path, 'documents.pkl')
+        if os.path.exists(documents_path):
+            with open(documents_path, 'rb') as f:
+                data = pickle.load(f)
+                self.documents = data['documents']
+                self.embedding_model = data['embedding_model']
+                self.cross_encoder = data['cross_encoder']
+        
+        print(f"Vector store loaded from {path}")
+
+### =================== Claude Handler =================== ###
+class ClaudeHandler:
+    def __init__(self):
+        self.api_key = OPENAI_API_KEY
+        self.api_url = "https://api.openai.com/v1/chat/completions"
+        self.headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        self.max_retries = 10
+        self.timeout = 600
+        self.response_cache = {}
+        self.session = requests.Session()
+
+    def generate_answer(self, question: str, context: str) -> str:
+        cache_key = f"{question}:{hash(context)}"
+
+        if cache_key in self.response_cache:
+            return self.response_cache[cache_key]
+
+        for attempt in range(self.max_retries):
+            try:
+                # Truncate context if it's too long
+                max_context_length = 20000  # Reduced from 40000 to ~5k tokens
+                if len(context) > max_context_length:
+                    context = context[:max_context_length] + "..."
+
+                messages = [
+                    {
+                        "role": "system",
+                        "content": "Answer based on the context."  # Minimal system prompt
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Context: {context}\nQ: {question}"  # Simplified format
+                    }
+                ]
+
+                payload = {
+                    "model": "gpt-4-turbo-preview",
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_tokens": 1000  # Reduced from 2000
+                }
+
+                response = self.session.post(
+                    self.api_url,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=self.timeout
+                )
+
+                response.raise_for_status()
+                response_data = response.json()
+                answer = response_data["choices"][0]["message"]["content"]
+                self.response_cache[cache_key] = answer
+                return answer
+
+            except requests.exceptions.Timeout:
+                if attempt < self.max_retries - 1:
+                    print(f"Request timed out. Retrying... (Attempt {attempt + 1}/{self.max_retries})")
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    return "Error: Request timed out after multiple attempts. Please try again."
+
+            except requests.exceptions.RequestException as e:
+                error_msg = f"API Error: {str(e)}"
+                if hasattr(e, 'response') and e.response is not None:
+                    error_msg += f"\nResponse: {e.response.text}"
+                return f"Error generating answer: {error_msg}"
+
+            except Exception as e:
+                return f"Error generating answer: {str(e)}"
+
+        return "Error: Maximum retry attempts reached. Please try again."
+
+### =================== Question Handler =================== ###
+class QuestionHandler:
+    def __init__(self, vector_store: VectorStore):
+        self.vector_store = vector_store
+        self.llm = None
+        self._initialize_llm()
+
+    def _initialize_llm(self):
+        """Initialize the language model with optimized settings"""
+        if self.llm is None:
+            self.llm = AutoModelForCausalLM.from_pretrained(
+                "gpt2",  # Using a smaller model for faster inference
+                torch_dtype=torch.float16,  # Use half precision for faster inference
+                low_cpu_mem_usage=True
+            )
+            if torch.cuda.is_available():
+                self.llm = self.llm.cuda()
+            self.llm.eval()  # Set to evaluation mode
+
+    def process_question(self, question: str, query_type: str = "document", k: int = 5) -> str:
+        """Process a single question"""
+        try:
+            # Get relevant documents
+            results = self.vector_store.search(question, k=k)
+            
+            # Prepare context
+            context = "\n".join([r["text"] for r in results])
+            
+            # Generate answer
+            with torch.no_grad():
+                answer = self.llm.generate_answer(question, context)
+            
+            return answer
+        except Exception as e:
+            print(f"Error processing question: {e}")
+            return "Error processing question"
+
+    def process_questions_batch(self, questions: List[str], query_type: str = "document", k: int = 5) -> List[str]:
+        """Process multiple questions in parallel"""
+        try:
+            # Get relevant documents for all questions at once
+            all_results = []
+            for question in questions:
+                results = self.vector_store.search(question, k=k)
+                all_results.append(results)
+            
+            # Prepare contexts
+            contexts = ["\n".join([r["text"] for r in results]) for results in all_results]
+            
+            # Generate answers in parallel
+            with torch.no_grad():
+                answers = []
+                for question, context in zip(questions, contexts):
+                    answer = self.llm.generate_answer(question, context)
+                    answers.append(answer)
+            
+            return answers
+        except Exception as e:
+            print(f"Error processing questions batch: {e}")
+            return ["Error processing question"] * len(questions)
+
+### =================== Main RAG System =================== ###
+class RAGSystem:
+    def __init__(self, settings=None, is_web=False):
+        self.file_handler = WebFileHandler() if is_web else LocalFileHandler()
+        self.vector_store = VectorStore()
+        self.question_handler = QuestionHandler(self.vector_store)
+        self.running = True
+        self.is_web = is_web
+        
+        # Initialize with default settings
         default_settings = {
-            'num_results': 3,
             'chunk_size': 500,
             'chunk_overlap': 50,
             'model_temperature': 0.3,
@@ -238,1090 +516,108 @@ def save_settings(settings):
             'batch_size': 128,
             'use_half_precision': True,
             'doc_percentage': 15,
-            'speed_accuracy': 50
+            'num_results': 3
         }
         
-        # Update defaults with current settings
-        default_settings.update(settings)
+        # Update defaults with provided settings
+        if settings:
+            default_settings.update(settings)
         
-        # Save to file with proper formatting
-        settings_path = os.path.join(app_data_dir, 'settings.json')
-        
-        # First, try to write to a temporary file
-        temp_path = settings_path + '.tmp'
-        try:
-            with open(temp_path, 'w') as f:
-                json.dump(default_settings, f, indent=4)
-            
-            # If successful, rename the temporary file to the actual file
-            if os.path.exists(settings_path):
-                os.remove(settings_path)
-            os.rename(temp_path, settings_path)
-            
-        except Exception as e:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            return False
-        
-        # Update the RAG system with new settings
-        if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
-            st.session_state.rag_system.apply_settings(default_settings)
-            
-            # Save the updated vector store
-            if hasattr(st.session_state.rag_system, 'vector_store') and st.session_state.rag_system.vector_store is not None:
-                vector_store_path = os.path.join(app_data_dir, 'vector_store')
-                st.session_state.rag_system.vector_store.save_local(vector_store_path)
-        
-        # Verify the file was created
-        if os.path.exists(settings_path):
-            st.success("Settings saved successfully!")
-            return True
-        else:
-            st.error("Settings file was not created successfully")
-            return False
-            
-    except Exception as e:
-        st.error(f"Error saving settings: {str(e)}")
-        return False
-
-def load_settings():
-    """Load settings from file"""
-    try:
-        app_data_dir = os.path.abspath('app_data')
-        settings_path = os.path.join(app_data_dir, 'settings.json')
-        
-        if os.path.exists(settings_path):
-            try:
-                with open(settings_path, 'r') as f:
-                    saved_settings = json.load(f)
-                
-                # Ensure all required settings are present
-                default_settings = {
-                    'num_results': 3,
-                    'chunk_size': 500,
-                    'chunk_overlap': 50,
-                    'model_temperature': 0.3,
-                    'sequence_length': 256,
-                    'batch_size': 128,
-                    'use_half_precision': True,
-                    'doc_percentage': 15,
-                    'speed_accuracy': 50
-                }
-                
-                # Update defaults with saved settings
-                default_settings.update(saved_settings)
-                
-                # Apply settings to RAG system if it exists
-                if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
-                    st.session_state.rag_system.apply_settings(default_settings)
-                
-                return default_settings
-            except Exception as e:
-                st.error(f"Error reading settings file: {str(e)}")
-    except Exception as e:
-        st.error(f"Error loading settings: {str(e)}")
+        # Apply settings
+        self.apply_settings(default_settings)
     
-    # Return default settings if no file exists or error occurs
-    return {
-        'num_results': 3,
-        'chunk_size': 500,
-        'chunk_overlap': 50,
-        'model_temperature': 0.3,
-        'sequence_length': 256,
-        'batch_size': 128,
-        'use_half_precision': True,
-        'doc_percentage': 15,
-        'speed_accuracy': 50
-    }
-
-def save_document_state():
-    """Save document state to a file"""
-    if not os.path.exists('app_data'):
-        os.makedirs('app_data')
-    
-    if st.session_state.rag_system and st.session_state.rag_system.vector_store:
-        # Save the vector store
-        st.session_state.rag_system.vector_store.save_local('app_data/vector_store')
-        # Save document state
-        with open('app_data/document_state.json', 'w') as f:
-            json.dump({
-                'documents_loaded': st.session_state.documents_loaded,
-                'last_updated': datetime.now().isoformat()
-            }, f)
-
-def load_document_state():
-    """Load document state from file"""
-    try:
-        if os.path.exists('app_data/document_state.json'):
-            with open('app_data/document_state.json', 'r') as f:
-                state = json.load(f)
-                st.session_state.documents_loaded = state['documents_loaded']
-                
-                # Load the vector store if it exists
-                if os.path.exists('app_data/vector_store'):
-                    st.session_state.rag_system = RAGSystem()
-                    st.session_state.rag_system.vector_store.load_local('app_data/vector_store')
-                    return True
-    except Exception as e:
-        st.error(f"Error loading document state: {str(e)}")
-    return False
-
-# Load saved data
-load_conversation_history()
-settings = load_settings()
-documents_restored = load_document_state()
-
-# Initialize RAG system with settings if it doesn't exist
-try:
-    if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
-        with st.spinner("Initializing RAG system..."):
-            try:
-                # Initialize with explicit device and model settings
-                st.session_state.rag_system = RAGSystem(
-                    settings={
-                        'device': 'cpu',  # Force CPU for web version
-                        'use_half_precision': False,  # Disable half precision for stability
-                        'model_temperature': 0.3,
-                        'chunk_size': 500,
-                        'chunk_overlap': 50,
-                        'num_results': 3
-                    },
-                    is_web=True
-                )
-                st.success("RAG system initialized successfully!")
-            except Exception as e:
-                st.error(f"Error initializing RAG system: {str(e)}")
-                st.info("Please refresh the page and try again.")
-except Exception as e:
-    st.error(f"Critical error initializing RAG system: {str(e)}")
-    st.info("Please refresh the page and try again.")
-
-def update_settings_from_main_slider():
-    """Update all settings based on the main speed/accuracy slider"""
-    try:
-        slider_value = st.session_state.speed_accuracy_slider
-        settings = get_current_settings()
-        
-        # Update all settings based on the main slider
-        settings.update({
-            'doc_percentage': int(5 + (slider_value / 100) * 25),  # Reduced range
-            'chunk_size': int(200 + (slider_value / 100) * 400),   # Reduced range
-            'chunk_overlap': int(20 + (slider_value / 100) * 40),  # Reduced range
-            'model_temperature': float(0.1 + (slider_value / 100) * 0.2),
-            'sequence_length': int(128 + (slider_value / 100) * 256),  # Reduced range
-            'batch_size': int(32 + (slider_value / 100) * 128),    # Reduced range
-            'use_half_precision': slider_value < 50,
-            'speed_accuracy': int(slider_value)
-        })
-        
-        # Apply settings to RAG system
-        if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
-            st.session_state.rag_system.apply_settings(settings)
-            save_settings(settings)
-            st.session_state.update_trigger = True
-    except Exception as e:
-        st.error(f"Error updating settings: {str(e)}")
-
-def update_settings_from_individual_sliders():
-    """Update settings based on individual slider changes"""
-    try:
-        settings = get_current_settings()
-        
-        # Update settings from individual sliders with explicit type conversion
-        settings.update({
-            'doc_percentage': int(st.session_state.doc_percentage_slider),
-            'chunk_size': int(st.session_state.chunk_size_slider),
-            'chunk_overlap': int(st.session_state.chunk_overlap_slider),
-            'model_temperature': float(st.session_state.model_temp_slider),
-            'sequence_length': int(st.session_state.seq_length_slider),
-            'batch_size': int(st.session_state.batch_size_slider),
-            'use_half_precision': bool(st.session_state.half_precision_toggle)
-        })
-        
-        # Calculate new speed_accuracy based on individual settings
-        new_speed_accuracy = int(calculate_speed_accuracy_from_settings(settings))
-        settings['speed_accuracy'] = new_speed_accuracy
-        
-        # Apply settings to RAG system
-        if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
-            st.session_state.rag_system.apply_settings(settings)
-            save_settings(settings)
-            st.session_state.update_trigger = True
-            st.rerun()
-    except Exception as e:
-        st.error(f"Error updating settings: {str(e)}")
-
-def calculate_speed_accuracy_from_settings(settings):
-    """Calculate speed-accuracy value from settings (0-100)"""
-    # Normalize values to 0-100 range
-    doc_percentage = settings['doc_percentage']  # Already 0-100
-    chunk_size = (settings['chunk_size'] - 100) / 9  # 100-1000 -> 0-100
-    chunk_overlap = settings['chunk_overlap']  # Already 0-100
-    temperature = settings['model_temperature'] * 100  # 0-1 -> 0-100
-    sequence_length = (settings['sequence_length'] - 64) / 4.48  # 64-512 -> 0-100
-    batch_size = (settings['batch_size'] - 32) / 2.24  # 32-256 -> 0-100
-    
-    # Weights for each setting (sum to 1.0)
-    weights = {
-        'doc_percentage': 0.2,  # Reduced weight
-        'chunk_size': 0.15,    # Reduced weight
-        'chunk_overlap': 0.15, # Reduced weight
-        'temperature': 0.1,    # Reduced weight
-        'sequence_length': 0.2, # Increased weight
-        'batch_size': 0.2      # Increased weight
-    }
-    
-    # Calculate weighted average
-    speed_accuracy = (
-        doc_percentage * weights['doc_percentage'] +
-        chunk_size * weights['chunk_size'] +
-        chunk_overlap * weights['chunk_overlap'] +
-        temperature * weights['temperature'] +
-        sequence_length * weights['sequence_length'] +
-        batch_size * weights['batch_size']
-    )
-    
-    # Adjust for half precision
-    if settings['use_half_precision']:
-        speed_accuracy *= 0.85  # Reduce by 15% when using half precision
-    
-    return speed_accuracy
-
-def show_settings_page():
-    # Ensure RAG system exists
-    if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
-        settings = load_settings()
-        st.session_state.rag_system = RAGSystem(settings)
-    rag = st.session_state.rag_system
-
-    # Get current settings from our central settings store
-    settings = get_current_settings()
-
-    col1, col2 = st.columns([4, 1])
-
-    with col1:
-        back = st.button("Back to Main", use_container_width=True)
-        if back:
-            st.session_state.current_page = "main"
-            st.rerun()
-
-    with col1:
-        # Speed vs Accuracy Slider with automatic application
-        speed_accuracy = st.slider(
-            "Speed vs Accuracy",
-            0, 100,
-            int(get_current_settings()['speed_accuracy']),
-            step=1,
-            help="Adjust the balance between processing speed and accuracy",
-            key="speed_accuracy_slider",
-            on_change=update_settings_from_main_slider
-        )
-        
-        # Advanced Settings Expander
-        with st.expander("Advanced Settings", expanded=False):
-            with st.form("sidebar_advanced_settings_form"):
-                st.markdown("### Document Processing")
-                doc_percentage = st.slider(
-                    "Document Coverage (%)",
-                    5, 100,
-                    settings['doc_percentage'],
-                    help="Percentage of documents to analyze",
-                    key="doc_percentage_slider"
-                )
-                chunk_size = st.slider(
-                    "Chunk Size (words)",
-                    100, 1000,
-                    settings['chunk_size'],
-                    help="Number of words per text chunk",
-                    key="chunk_size_slider"
-                )
-                chunk_overlap = st.slider(
-                    "Chunk Overlap (words)",
-                    10, 200,
-                    settings['chunk_overlap'],
-                    help="Number of overlapping words between chunks",
-                    key="chunk_overlap_slider"
-                )
-                
-                st.markdown("### Model Configuration")
-                model_temp = st.slider(
-                    "Model Temperature",
-                    0.0, 0.3,
-                    settings['model_temperature'],
-                    step=0.01,
-                    help="Lower values make responses more focused",
-                    key="model_temp_slider"
-                )
-                seq_length = st.slider(
-                    "Sequence Length",
-                    64, 512,
-                    settings['sequence_length'],
-                    help="Maximum number of tokens to process",
-                    key="seq_length_slider"
-                )
-                batch_size = st.slider(
-                    "Batch Size",
-                    32, 256,
-                    settings['batch_size'],
-                    help="Number of items to process at once",
-                    key="batch_size_slider"
-                )
-                half_precision = st.toggle(
-                    "Half Precision",
-                    settings['use_half_precision'],
-                    help="Enable for faster processing",
-                    key="half_precision_toggle"
-                )
-                
-                # Add submit button
-                submitted = st.form_submit_button("Apply Settings")
-                if submitted:
-                    update_settings_from_individual_sliders()
-
-    with col2:
-        pass
-
-def generate_pdf_summary():
-    """Generate a PDF summary of the current conversation"""
-    try:
-        # Create a BytesIO buffer for the PDF
-        buffer = BytesIO()
-        
-        # Create the PDF document
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=letter,
-            rightMargin=72,
-            leftMargin=72,
-            topMargin=72,
-            bottomMargin=72
-        )
-        
-        # Create custom styles
-        styles = getSampleStyleSheet()
-        styles.add(ParagraphStyle(
-            name='BrandTitle',
-            parent=styles['Title'],
-            fontSize=24,
-            spaceAfter=30,
-            textColor=colors.HexColor('#1E3A8A')  # Dark blue
-        ))
-        styles.add(ParagraphStyle(
-            name='SubTitle',
-            parent=styles['Title'],
-            fontSize=16,
-            spaceAfter=20,
-            textColor=colors.HexColor('#4B5563')  # Gray
-        ))
-        styles.add(ParagraphStyle(
-            name='SectionHeader',
-            parent=styles['Heading2'],
-            fontSize=14,
-            spaceAfter=12,
-            textColor=colors.HexColor('#1E3A8A')  # Dark blue
-        ))
-        styles.add(ParagraphStyle(
-            name='Question',
-            parent=styles['Normal'],
-            fontSize=12,
-            spaceAfter=6,
-            textColor=colors.HexColor('#1E3A8A')  # Dark blue
-        ))
-        styles.add(ParagraphStyle(
-            name='Answer',
-            parent=styles['Normal'],
-            fontSize=11,
-            spaceAfter=12,
-            leftIndent=20
-        ))
-        styles.add(ParagraphStyle(
-            name='Source',
-            parent=styles['Normal'],
-            fontSize=10,
-            spaceAfter=6,
-            textColor=colors.HexColor('#6B7280')  # Light gray
-        ))
-        
-        # Build the PDF content
-        story = []
-        
-        # Add header with logo and branding
-        story.append(Paragraph("HERON", styles['BrandTitle']))
-        story.append(Paragraph("Herbert Advisory", styles['SubTitle']))
-        story.append(Paragraph(f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
-        story.append(Spacer(1, 20))
-        
-        # Add main question and answer
-        story.append(Paragraph("Main Question", styles['SectionHeader']))
-        story.append(Paragraph(st.session_state.question, styles['Question']))
-        story.append(Spacer(1, 10))
-        
-        story.append(Paragraph("Answer", styles['SectionHeader']))
-        story.append(Paragraph(st.session_state.main_answer, styles['Answer']))
-        story.append(Spacer(1, 20))
-        
-        # Add sources if available
-        if st.session_state.main_results:
-            story.append(Paragraph("Sources", styles['SectionHeader']))
-            for result in st.session_state.main_results:
-                source = result.get('metadata', {}).get('source', 'Unknown source')
-                story.append(Paragraph(f"• {source}", styles['Source']))
-            story.append(Spacer(1, 20))
-        
-        # Add follow-up questions and answers
-        if hasattr(st.session_state, 'follow_up_questions') and st.session_state.follow_up_questions:
-            story.append(Paragraph("Follow-up Questions", styles['SectionHeader']))
-            for i, (question, answer) in enumerate(st.session_state.follow_up_questions, 1):
-                story.append(Paragraph(f"Follow-up {i}", styles['Question']))
-                story.append(Paragraph(question, styles['Question']))
-                story.append(Paragraph(answer, styles['Answer']))
-                story.append(Spacer(1, 10))
-        
-        # Add footer
-        story.append(Spacer(1, 30))
-        story.append(Paragraph("© 2025 Herbert Advisory. All rights reserved.", styles['Source']))
-        story.append(Paragraph("This document was generated by HERON (Herbert Embedded Retrieval and Oracle Network)", styles['Source']))
-        
-        # Build the PDF
-        doc.build(story)
-        
-        # Get the PDF data from the buffer
-        pdf_data = buffer.getvalue()
-        buffer.close()
-        
-        return pdf_data
-    except Exception as e:
-        st.error(f"Error generating PDF: {str(e)}")
-        return None
-
-def get_memory_usage():
-    """Get current memory usage in MB."""
-    process = psutil.Process(os.getpid())
-    return process.memory_info().rss / 1024 / 1024  # Convert to MB
-
-def should_cleanup():
-    """Check if cleanup is needed based on memory usage."""
-    try:
-        memory_usage = get_memory_usage()
-        # Increase threshold for cloud environments
-        threshold = 2000 if os.environ.get('CLOUD_ENVIRONMENT') else 1000
-        return memory_usage > threshold  # Cleanup if memory usage exceeds threshold
-    except Exception as e:
-        st.warning(f"Error checking memory usage: {str(e)}")
-        return False
-
-def cleanup_resources():
-    """Clean up all resources when the session ends."""
-    try:
-        # Clear Streamlit's cache
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        
-        # Clear PyTorch's cache only if CUDA is available
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        
-        # Clear temporary files
-        temp_dir = "temp"
-        if os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir)
-                os.makedirs(temp_dir)
-            except Exception as e:
-                st.warning(f"Could not clean temp directory: {str(e)}")
-        
-        # Clear session state selectively
-        keys_to_keep = ['rag_system', 'documents_loaded', 'vector_store']
-        for key in list(st.session_state.keys()):
-            if key not in keys_to_keep:
-                del st.session_state[key]
+    def apply_settings(self, settings):
+        """Apply new settings to the RAG system components."""
+        if not settings:
+            return
             
-        # Force garbage collection
-        gc.collect()
+        print("\n=== Applying Settings ===")
+        print(f"Settings received: {settings}")
             
-    except Exception as e:
-        st.warning(f"Error during cleanup: {str(e)}")
+        # Update vector store settings
+        if hasattr(self, 'vector_store') and self.vector_store is not None:
+            old_chunk_size = self.vector_store.chunk_size
+            old_chunk_overlap = self.vector_store.chunk_overlap
+            
+            self.vector_store.chunk_size = settings.get('chunk_size', self.vector_store.chunk_size)
+            self.vector_store.chunk_overlap = settings.get('chunk_overlap', self.vector_store.chunk_overlap)
+            
+            print(f"Vector Store Settings Updated:")
+            print(f"  Chunk Size: {old_chunk_size} -> {self.vector_store.chunk_size}")
+            print(f"  Chunk Overlap: {old_chunk_overlap} -> {self.vector_store.chunk_overlap}")
+            
+        # Update question handler settings
+        if hasattr(self, 'question_handler') and self.question_handler is not None:
+            if hasattr(self.question_handler, 'llm') and self.question_handler.llm is not None:
+                # Store the temperature setting in the class for later use
+                self.question_handler.llm.temperature = settings.get('model_temperature', 0.3)
+                print(f"LLM Settings Updated:")
+                print(f"  Temperature: {self.question_handler.llm.temperature}")
+        print("=== Settings Applied ===\n")
 
-def type_text(text, container, speed=0.01):
-    """Type out text with a typing effect"""
-    full_text = ""
-    for char in text:
-        full_text += char
-        container.markdown(full_text)
-        time.sleep(speed)
+    def initialize(self):
+        print("\n=== Welcome to the Local RAG System ===")
 
-def generate_answer(question, use_internet=False, is_follow_up=False):
-    try:
-        st.session_state.processing = True
-        start_time = time.time()
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        answer_container = st.empty()  # Container for the typing effect
-        
-        # Combine document search and processing
-        process_start = time.time()
-        progress_bar.progress(25)
-        status_text.text("🤔 Processing your question...")
-        
-        # Get document-based answer with reduced context
-        if is_follow_up and 'main_answer' in st.session_state:
-            # Limit the previous context to a shorter version
-            prev_context = f"Previous Q: {st.session_state.question[:100]}...\nA: {st.session_state.main_answer[:200]}...\nFollow-up: {question}"
-        else:
-            prev_context = question
-        
-        # Get search results
-        results = st.session_state.rag_system.vector_store.search(question, k=3)  # Get more results initially
-        
-        # Process and filter results
-        processed_results = []
-        seen_sources = set()
-        seen_texts = set()  # Track unique text content
-        
-        for result in results:
-            source = result.get('metadata', {}).get('source', 'Unknown source')
-            text = result.get('text', '')
-            
-            # Skip if we've seen this source or this exact text before
-            if source in seen_sources or text in seen_texts:
-                continue
-        
-            seen_sources.add(source)
-            seen_texts.add(text)
-            
-            # Calculate relevance score
-            raw_score = result.get('score', 0)
-            
-            # Normalize score to 0-1 range
-            normalized_score = (raw_score + 1) / 2  # Convert to 0-1 range
-            
-            # Boost score for exact matches in source name
-            question_terms = set(question.lower().split())
-            source_terms = set(source.lower().split())
-            
-            # Check for exact matches in source name
-            if any(term in source_terms for term in question_terms):
-                normalized_score = max(normalized_score, 0.9)  # Higher boost for exact matches
-            
-            # Additional boost for financial reports and official documents
-            if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
-                normalized_score = max(normalized_score, 0.85)
-            
-            # Additional boost for recent documents
-            if 'date' in result.get('metadata', {}):
-                doc_date = result['metadata']['date']
-                if doc_date:
-                    try:
-                        doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
-                        days_old = (datetime.now() - doc_date).days
-                        if days_old < 365:  # Boost for documents less than a year old
-                            normalized_score = max(normalized_score, 0.8)
-                    except:
-                        pass
-            
-            processed_results.append({
-                'metadata': result.get('metadata', {}),
-                'score': normalized_score,
-                'text': text
-            })
-        
-        # Sort by score and take top 5
-        processed_results.sort(key=lambda x: x['score'], reverse=True)
-        results = processed_results[:5]  # Increased to 5 sources
-        
-        # Generate answer with optimized parameters
-        answer = st.session_state.rag_system.question_handler.process_question(question)  # Use question directly instead of prev_context
-        
-        # Type out the answer
-        type_text(answer, answer_container)
-        
-        if is_follow_up:
-            st.session_state.follow_up_answer = answer
-        else:
-            st.session_state.main_answer = answer
-            st.session_state.main_results = results
-        
-        # If internet search is requested, do it in parallel
-        if use_internet:
-            internet_context = """You are a document analysis expert with access to the internet.
-            Provide a concise answer using your knowledge and internet access.
-            Cite sources for data. If no source exists, mention that.
-            Focus on accurate, up-to-date information."""
-            
-            internet_start = time.time()
-            status_text.text("🌐 Searching the internet...")
-            
-            # Use ThreadPoolExecutor for parallel processing
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                internet_future = executor.submit(
-                    st.session_state.rag_system.question_handler.llm.generate_answer,
-                    question,
-                    internet_context
-                )
-                internet_answer = internet_future.result()
-            
-            # Type out the internet results
-            type_text("\n\n### Internet Search Results\n" + internet_answer, answer_container)
-            
-            if is_follow_up:
-                st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
+        selected_folder = self.file_handler.select_folder_interactive()
+        if not selected_folder:
+            print("No folder selected. Please try again.")
+            return self.initialize()
+
+        print(f"\nProcessing folder: {selected_folder['name']}")
+        documents = self.file_handler.process_selected_folder(selected_folder['path'])
+
+        if not documents:
+            print("No documents found to process. Please try again.")
+            return self.initialize()
+
+        print("\nIndexing documents...")
+        self.vector_store.add_documents(documents)
+        print("Documents indexed successfully!")
+        return True
+
+    def show_menu(self):
+        print("\n=== RAG System Menu ===")
+        print("1. Ask a question")
+        print("2. Select a different folder")
+        print("3. Exit")
+        return input("Enter your choice (1-3): ")
+
+    def run(self):
+        if not self.initialize():
+            return
+
+        while self.running:
+            choice = self.show_menu()
+
+            if choice == "1":
+                question = input("\nEnter your question: ")
+                answer = self.question_handler.process_question(question)
+                print("\nAnswer:", answer)
+
+            elif choice == "2":
+                if self.initialize():
+                    print("Successfully switched to new folder!")
+                else:
+                    print("Failed to switch folders.")
+
+            elif choice == "3":
+                print("\nThank you for using the RAG System. Goodbye!")
+                self.running = False
+
             else:
-                st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
-        
-        progress_bar.progress(100)
-        status_text.text("✅ Done!")
-        
-        # Clear status after a shorter delay
-        time.sleep(0.5)
-        status_text.empty()
-        progress_bar.empty()
+                print("\nInvalid choice. Please try again.")
 
-    except Exception as e:
-        st.error(f"Error generating answer: {str(e)}")
-    finally:
-        st.session_state.processing = False
-
-def generate_multi_analyst_answer(question, use_internet=False):
-    """Generate an answer using multiple analysts with different perspectives."""
-    try:
-        st.session_state.processing = True
-        start_time = time.time()
-        
-        # Create progress bar and status container
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        # Define different analyst perspectives
-        analysts = {
-            "Technical": {
-                "role": "Technical Analyst",
-                "focus": "Data-driven analysis, focusing on facts, metrics, and logical reasoning",
-                "perspective": "You are a technical analyst focused on data, facts, and logical reasoning. Analyze the question from a technical, data-driven perspective."
-            },
-            "Creative": {
-                "role": "Creative Analyst",
-                "focus": "Innovative thinking and out-of-the-box solutions",
-                "perspective": "You are a creative analyst focused on innovative solutions and thinking outside the box. Consider unique angles and creative approaches."
-            },
-            "Critical": {
-                "role": "Critical Analyst",
-                "focus": "Identifying potential issues, risks, and challenges",
-                "perspective": "You are a critical analyst focused on identifying potential issues and challenges. Analyze potential problems and limitations."
-            },
-            "Strategic": {
-                "role": "Strategic Analyst",
-                "focus": "Long-term implications and big-picture thinking",
-                "perspective": "You are a strategic analyst focused on long-term implications and big-picture thinking. Consider future impact and strategic value."
-            }
-        }
-        
-        # Get initial perspectives
-        progress_bar.progress(25)
-        status_text.text("🤔 Gathering different perspectives...")
-        
-        perspectives = {}
-        for name, info in analysts.items():
-            perspectives[name] = st.session_state.rag_system.question_handler.process_question(info["perspective"])
-        
-        # Display the debate
-        progress_bar.progress(50)
-        status_text.text("💭 Analysts are debating...")
-        
-        st.markdown("### Analyst Perspectives")
-        for name, info in analysts.items():
-            st.markdown(f"#### {info['role']}")
-            st.markdown(f"*{info['focus']}*")
-            st.markdown(perspectives[name])
-            st.markdown("---")
-        
-        # Generate consensus
-        progress_bar.progress(75)
-        status_text.text("🤝 Reaching consensus...")
-        
-        consensus_context = f"""Based on the following perspectives, provide a clear and concise consensus that:
-        1. Summarizes the key points from each analyst
-        2. Identifies areas of agreement and disagreement
-        3. Provides a clear, actionable conclusion
-        4. Suggests next steps or recommendations
-        
-        Question: {question}
-        
-        Analyst Perspectives:
-        {json.dumps(perspectives, indent=2)}
-        """
-        
-        consensus = st.session_state.rag_system.question_handler.process_question(consensus_context)
-        
-        # Display the consensus
-        st.markdown("### Consensus")
-        st.markdown(consensus)
-        
-        # If internet search is requested
-        if use_internet:
-            internet_context = """You are a document analysis expert with access to the internet.
-            Please provide additional context to the consensus, using your knowledge and internet access.
-            Make sure to cite your sources for all data, and if you can't find a source, mention that it does not exist.
-            Focus on providing accurate, up-to-date information from reliable sources."""
+    def process_web_uploads(self, uploaded_files):
+        """Process files uploaded through the web interface"""
+        if not self.is_web:
+            return False
             
-            internet_start = time.time()
-            status_text.text("🌐 Searching the internet for additional information...")
-            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
-            internet_time = time.time() - internet_start
-            
-            # Add internet results to the consensus
-            consensus += "\n\n### Internet Search Results\n" + internet_answer
-        
-        progress_bar.progress(100)
-        status_text.text("✅ Done!")
-        total_time = time.time() - start_time
-        
-        # Display performance metrics
-        with st.expander("Performance Metrics"):
-            st.write(f"Total Processing Time: {total_time:.2f} seconds")
-            if use_internet:
-                st.write(f"Internet Search Time: {internet_time:.2f} seconds")
-        
-        # Clear the status after a short delay
-        time.sleep(1)
-        status_text.empty()
-        progress_bar.empty()
+        documents = self.file_handler.process_uploaded_files(uploaded_files)
+        if documents:
+            self.vector_store.add_documents(documents)
+            return True
+        return False
 
-    except Exception as e:
-        st.error(f"Error generating answer: {str(e)}")
-    finally:
-        st.session_state.processing = False
-
-def show_main_page():
-    """Show the main page with file upload and question input."""
-    try:
-        # Initialize session state variables if they don't exist
-        if 'question' not in st.session_state:
-            st.session_state.question = ""
-        if 'follow_up_question' not in st.session_state:
-            st.session_state.follow_up_question = ""
-        if 'main_answer' not in st.session_state:
-            st.session_state.main_answer = None
-        if 'follow_up_answer' not in st.session_state:
-            st.session_state.follow_up_answer = None
-        if 'processing' not in st.session_state:
-            st.session_state.processing = False
-        
-        # Main content
-        st.markdown("""
-            <div style='text-align: center; padding: 2rem 0; display: flex; flex-direction: column; align-items: center;'>
-                <h1 style='color: #1E3A8A; font-size: 3.5rem; font-weight: 700; margin: 0; text-shadow: 0 0 10px rgba(30, 58, 138, 0.3);'>HERON</h1>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Question input
-        question = st.text_input(
-            label="Ask a question",
-            value=st.session_state.question,
-            label_visibility="collapsed",
-            placeholder="Ask a question...",
-            key="question_input"
-        )
-
-        # Process question if enter is pressed
-        if question and question != st.session_state.question and not st.session_state.processing:
-            try:
-                st.session_state.question = question
-                st.session_state.processing = True
-                
-                # Initialize variables
-                answer_container = st.empty()  # Container for the typing effect
-                is_follow_up = False  # Flag for follow-up questions
-                use_internet = st.session_state.get('use_internet', False)  # Get internet toggle state
-                use_analysts = st.session_state.get('use_analysts', False)  # Get multi-analyst toggle state
-                
-                # Show processing status
-                with st.spinner("Processing your question..."):
-                    if use_analysts:
-                        generate_multi_analyst_answer(question, use_internet)
-                    else:
-                        # Get search results
-                        results = st.session_state.rag_system.vector_store.search(question, k=3)  # Get more results initially
-                        
-                        # Process and filter results
-                        processed_results = []
-                        seen_sources = set()
-                        seen_texts = set()  # Track unique text content
-                        
-                        for result in results:
-                            source = result.get('metadata', {}).get('source', 'Unknown source')
-                            text = result.get('text', '')
-                            
-                            # Skip if we've seen this source or this exact text before
-                            if source in seen_sources or text in seen_texts:
-                                continue
-                                
-                            seen_sources.add(source)
-                            seen_texts.add(text)
-                            
-                            # Calculate relevance score
-                            raw_score = result.get('score', 0)
-                            
-                            # Normalize score to 0-1 range
-                            normalized_score = (raw_score + 1) / 2  # Convert to 0-1 range
-                            
-                            # Boost score for exact matches in source name
-                            question_terms = set(question.lower().split())
-                            source_terms = set(source.lower().split())
-                            
-                            # Check for exact matches in source name
-                            if any(term in source_terms for term in question_terms):
-                                normalized_score = max(normalized_score, 0.9)  # Higher boost for exact matches
-                            
-                            # Additional boost for financial reports and official documents
-                            if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
-                                normalized_score = max(normalized_score, 0.85)
-                            
-                            # Additional boost for recent documents
-                            if 'date' in result.get('metadata', {}):
-                                doc_date = result['metadata']['date']
-                                if doc_date:
-                                    try:
-                                        doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
-                                        days_old = (datetime.now() - doc_date).days
-                                        if days_old < 365:  # Boost for documents less than a year old
-                                            normalized_score = max(normalized_score, 0.8)
-                                    except:
-                                        pass
-                            
-                            processed_results.append({
-                                'metadata': result.get('metadata', {}),
-                                'score': normalized_score,
-                                'text': text
-                            })
-                        
-                        processed_results.sort(key=lambda x: x['score'], reverse=True)
-                        results = processed_results[:5]
-                        
-                        # Generate answer with optimized parameters
-                        answer = st.session_state.rag_system.question_handler.process_question(question)  # Use question directly
-                        
-                        # Type out the answer
-                        type_text(answer, answer_container)
-                        
-                        if is_follow_up:
-                            st.session_state.follow_up_answer = answer
-                        else:
-                            st.session_state.main_answer = answer
-                            st.session_state.main_results = results
-                        
-                        # If internet search is requested, do it in parallel
-                        if use_internet:
-                            internet_context = """You are a document analysis expert with access to the internet.
-                            Provide a concise answer using your knowledge and internet access.
-                            Cite sources for data. If no source exists, mention that.
-                            Focus on accurate, up-to-date information."""
-                            
-                            # Use ThreadPoolExecutor for parallel processing
-                            with ThreadPoolExecutor(max_workers=2) as executor:
-                                internet_future = executor.submit(
-                                    st.session_state.rag_system.question_handler.llm.generate_answer,
-                                    question,
-                                    internet_context
-                                )
-                                internet_answer = internet_future.result()
-                            
-                            # Type out the internet results
-                            type_text("\n\n### Internet Search Results\n" + internet_answer, answer_container)
-                            
-                            if is_follow_up:
-                                st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
-                            else:
-                                st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
-            
-            except Exception as e:
-                st.error(f"Error processing question: {str(e)}")
-                st.info("Please try again or rephrase your question.")
-            finally:
-                st.session_state.processing = False
-
-        # Display sources if they exist (but not the answer since it's already shown)
-        if hasattr(st.session_state, 'main_results') and st.session_state.main_results:
-            st.markdown("### Sources")
-            for i, result in enumerate(st.session_state.main_results, 1):
-                source = result.get('metadata', {}).get('source', 'Unknown source')
-                score = result.get('score', 0)
-                relevance_percentage = round(score * 100, 2)
-                st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
-
-        # Add follow-up question section if we have a main answer
-        if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
-            st.markdown("---")
-            st.markdown("### Follow-up Question")
-            
-            # Initialize follow-up questions list if it doesn't exist
-            if 'follow_up_questions' not in st.session_state:
-                st.session_state.follow_up_questions = []
-            
-            # Display all previous follow-up questions and answers
-            for i, (q, a) in enumerate(st.session_state.follow_up_questions):
-                st.markdown(f"**Follow-up {i+1}:** {q}")
-                st.markdown(a)
-                st.markdown("---")
-            
-            # Add a new follow-up question input
-            follow_up_question = st.text_input(
-                label="Ask a follow-up question",
-                value="",
-                label_visibility="collapsed",
-                placeholder="Ask a follow-up question...",
-                key=f"follow_up_input_{len(st.session_state.follow_up_questions)}"
-            )
-
-            # Process follow-up question if enter is pressed
-            if follow_up_question and not st.session_state.processing:
-                try:
-                    st.session_state.processing = True
-                    
-                    # Initialize variables
-                    follow_up_container = st.empty()  # Container for the typing effect
-                    use_internet = st.session_state.get('use_internet', False)
-                    use_analysts = st.session_state.get('use_analysts', False)
-                    
-                    # Show processing status
-                    with st.spinner("Processing your follow-up question..."):
-                        if use_analysts:
-                            generate_multi_analyst_answer(follow_up_question, use_internet)
-                        else:
-                            # Get search results
-                            results = st.session_state.rag_system.vector_store.search(follow_up_question, k=3)
-                            
-                            # Process and filter results
-                            processed_results = []
-                            seen_sources = set()
-                            seen_texts = set()
-                            
-                            for result in results:
-                                source = result.get('metadata', {}).get('source', 'Unknown source')
-                                text = result.get('text', '')
-                                
-                                if source in seen_sources or text in seen_texts:
-                                    continue
-                                    
-                                seen_sources.add(source)
-                                seen_texts.add(text)
-                                
-                                raw_score = result.get('score', 0)
-                                normalized_score = (raw_score + 1) / 2
-                                
-                                question_terms = set(follow_up_question.lower().split())
-                                source_terms = set(source.lower().split())
-                                
-                                if any(term in source_terms for term in question_terms):
-                                    normalized_score = max(normalized_score, 0.9)
-                                
-                                if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
-                                    normalized_score = max(normalized_score, 0.85)
-                                
-                                if 'date' in result.get('metadata', {}):
-                                    doc_date = result['metadata']['date']
-                                    if doc_date:
-                                        try:
-                                            doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
-                                            days_old = (datetime.now() - doc_date).days
-                                            if days_old < 365:
-                                                normalized_score = max(normalized_score, 0.8)
-                                        except:
-                                            pass
-                                
-                                processed_results.append({
-                                    'metadata': result.get('metadata', {}),
-                                    'score': normalized_score,
-                                    'text': text
-                                })
-                            
-                            processed_results.sort(key=lambda x: x['score'], reverse=True)
-                            results = processed_results[:5]
-                            
-                            # Build context from all previous questions and answers
-                            context = f"Original question: {st.session_state.question}\nOriginal answer: {st.session_state.main_answer}\n"
-                            for prev_q, prev_a in st.session_state.follow_up_questions:
-                                context += f"\nPrevious follow-up: {prev_q}\nPrevious answer: {prev_a}\n"
-                            context += f"\nNew follow-up question: {follow_up_question}"
-                            
-                            # Generate answer with previous context
-                            follow_up_answer = st.session_state.rag_system.question_handler.process_question(context)
-                            
-                            # Type out the answer
-                            type_text(follow_up_answer, follow_up_container)
-                            
-                            # Add to follow-up questions list
-                            st.session_state.follow_up_questions.append((follow_up_question, follow_up_answer))
-                            
-                            # If internet search is enabled, do it in parallel
-                            if use_internet:
-                                internet_context = """You are a document analysis expert with access to the internet.
-                                Provide a concise answer using your knowledge and internet access.
-                                Cite sources for data. If no source exists, mention that.
-                                Focus on accurate, up-to-date information."""
-                                
-                                # Use ThreadPoolExecutor for parallel processing
-                                with ThreadPoolExecutor(max_workers=2) as executor:
-                                    internet_future = executor.submit(
-                                        st.session_state.rag_system.question_handler.llm.generate_answer,
-                                        follow_up_question,
-                                        internet_context
-                                    )
-                                    internet_answer = internet_future.result()
-                                
-                                # Type out the internet results
-                                type_text("\n\n### Internet Search Results\n" + internet_answer, follow_up_container)
-                                st.session_state.follow_up_questions[-1] = (follow_up_question, follow_up_answer + "\n\n### Internet Search Results\n" + internet_answer)
-                
-                except Exception as e:
-                    st.error(f"Error processing follow-up question: {str(e)}")
-                    st.info("Please try again or rephrase your follow-up question.")
-                finally:
-                    st.session_state.processing = False
-                    st.rerun()  # Rerun to show the new follow-up input
-
-        # Options
-        st.session_state.use_internet = st.toggle("Internet")
-        st.session_state.use_analysts = st.toggle("Multi-Analyst")
-        
-        # Add reset and PDF buttons in the middle
-        if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                button_col1, button_col2 = st.columns(2)
-                with button_col1:
-                    if st.button("Reset Conversation", key="reset_button"):
-                        # Clear all conversation-related session state
-                        for key in list(st.session_state.keys()):
-                            if key not in ['rag_system', 'documents_loaded', 'use_internet', 'use_analysts']:
-                                del st.session_state[key]
-                        st.rerun()
-                
-                with button_col2:
-                    try:
-                        pdf_data = generate_pdf_summary()
-                        if pdf_data:
-                            if st.download_button(
-                                label="Download PDF Summary",
-                                data=pdf_data,
-                                file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                                mime="application/pdf",
-                                key="pdf_download_button"
-                            ):
-                                st.success("PDF downloaded successfully!")
-                    except Exception as e:
-                        st.error(f"Error generating PDF: {str(e)}")
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
-        st.info("Please refresh the page and try again.")
-
-# Main app logic
-if st.session_state.current_page == "settings":
-    show_settings_page()
-else:
-    show_main_page()
-
-# streamlit run app.py --server.maxUploadSize=200 --server.maxMessageSize=200 --server.enableCORS=false --server.enableXsrfProtection=false  --server.enableWebsocketCompression=false
+if __name__ == "__main__": 
+    rag_system = RAGSystem()
+    rag_system.run() 
