@@ -504,15 +504,16 @@ def get_current_settings():
     """Get the current settings from session state or defaults"""
     if not hasattr(st.session_state, 'settings'):
         st.session_state.settings = {
-            'doc_percentage': 10,  # Reduced from 15
-            'chunk_size': 300,     # Reduced from 500
-            'chunk_overlap': 30,   # Reduced from 50
-            'model_temperature': 0.3,
-            'sequence_length': 256, # Reduced from 512
-            'batch_size': 64,      # Reduced from 128
-            'use_half_precision': True,
-            'speed_accuracy': 50,
-            'num_results': 2       # Reduced from 3
+            'chunk_size': 500,
+            'chunk_overlap': 50,
+            'max_chunks': 10,
+            'search_depth': 3,
+            'relevance_threshold': 0.7,
+            'temperature': 0.3,
+            'max_tokens': 1000,
+            'top_p': 0.9,
+            'speed': 0.5,
+            'accuracy': 0.5
         }
     return st.session_state.settings
 
