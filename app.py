@@ -1044,6 +1044,8 @@ def show_main_page():
             st.session_state.main_answer = None
         if 'follow_up_answer' not in st.session_state:
             st.session_state.follow_up_answer = None
+        if 'processing' not in st.session_state:
+            st.session_state.processing = False
         
         # Main content area
         st.markdown("""
