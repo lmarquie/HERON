@@ -1041,9 +1041,7 @@ def show_main_page():
                         # First try exact match search
                         results = st.session_state.rag_system.vector_store.search(
                             question,
-                            k=5,  # Get more results initially
-                            search_type="mmr",  # Use MMR for better diversity
-                            fetch_k=10  # Fetch more candidates for better selection
+                            k=5  # Get more results initially
                         )
                         
                         # Process and filter results
@@ -1078,6 +1076,10 @@ def show_main_page():
                     except Exception as e:
                         st.error(f"Error during search: {str(e)}")
                         results = []
+                    
+                    # Get the toggle states
+                    use_internet = st.session_state.get('use_internet', False)
+                    use_analysts = st.session_state.get('use_analysts', False)
                     
                     # Generate answer based on selected options
                     if use_analysts:
@@ -1129,8 +1131,8 @@ def show_main_page():
                 st.session_state.processing = False
         
         # Options
-        use_internet = st.toggle("Internet")
-        use_analysts = st.toggle("Multi-Analyst")
+        st.session_state.use_internet = st.toggle("Internet")
+        st.session_state.use_analysts = st.toggle("Multi-Analyst")
         
         # Add reset conversation and export PDF buttons at the bottom
         if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
