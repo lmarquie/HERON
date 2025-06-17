@@ -74,72 +74,85 @@ with st.sidebar:
     
     st.divider()
     
-    # Display current model settings
-    st.header("Model Settings")
+    # Display current model settings with new design
+    st.markdown("""
+        <div style='background-color: #F8FAFC; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;'>
+            <h2 style='color: #1E3A8A; font-size: 1.2rem; font-weight: 600; margin: 0 0 1rem 0;'>Model Settings</h2>
+        </div>
+    """, unsafe_allow_html=True)
     
     settings = get_current_settings()
     
-    # Document Processing
-    st.subheader("Document Processing")
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("Chunk Size")
-        st.progress(settings['chunk_size'] / 1000)  # Normalize to 0-1 range
-    with col2:
-        st.write(f"{settings['chunk_size']}/1000")
+    # Document Processing Section
+    st.markdown("""
+        <div style='background-color: #F8FAFC; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;'>
+            <h3 style='color: #1E3A8A; font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Document Processing</h3>
+        </div>
+    """, unsafe_allow_html=True)
     
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("Chunk Overlap")
-        st.progress(settings['chunk_overlap'] / 100)  # Normalize to 0-1 range
-    with col2:
-        st.write(f"{settings['chunk_overlap']}/100")
+    for setting, value, max_value, format_str in [
+        ("Chunk Size", settings['chunk_size'], 1000, "d"),
+        ("Chunk Overlap", settings['chunk_overlap'], 100, "d"),
+        ("Max Chunks", settings['max_chunks'], 20, "d")
+    ]:
+        st.markdown(f"""
+            <div style='margin-bottom: 0.5rem;'>
+                <div style='display: flex; justify-content: space-between; margin-bottom: 0.25rem;'>
+                    <span style='color: #4B5563; font-size: 0.9rem;'>{setting}</span>
+                    <span style='color: #1E3A8A; font-size: 0.9rem; font-weight: 500;'>{value:{format_str}}/{max_value}</span>
+                </div>
+                <div style='background-color: #E5E7EB; height: 0.5rem; border-radius: 0.25rem; overflow: hidden;'>
+                    <div style='background-color: #1E3A8A; height: 100%; width: {value/max_value*100}%; border-radius: 0.25rem;'></div>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
     
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("Max Chunks")
-        st.progress(settings['max_chunks'] / 20)  # Normalize to 0-1 range
-    with col2:
-        st.write(f"{settings['max_chunks']}/20")
+    # Search Settings Section
+    st.markdown("""
+        <div style='background-color: #F8FAFC; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;'>
+            <h3 style='color: #1E3A8A; font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Search Settings</h3>
+        </div>
+    """, unsafe_allow_html=True)
     
-    # Search Settings
-    st.subheader("Search Settings")
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("Search Depth")
-        st.progress(settings['search_depth'] / 5)  # Normalize to 0-1 range
-    with col2:
-        st.write(f"{settings['search_depth']}/5")
+    for setting, value, max_value, format_str in [
+        ("Search Depth", settings['search_depth'], 5, "d"),
+        ("Relevance Threshold", settings['relevance_threshold'], 1.0, ".2f")
+    ]:
+        st.markdown(f"""
+            <div style='margin-bottom: 0.5rem;'>
+                <div style='display: flex; justify-content: space-between; margin-bottom: 0.25rem;'>
+                    <span style='color: #4B5563; font-size: 0.9rem;'>{setting}</span>
+                    <span style='color: #1E3A8A; font-size: 0.9rem; font-weight: 500;'>{value:{format_str}}/{max_value:.2f}</span>
+                </div>
+                <div style='background-color: #E5E7EB; height: 0.5rem; border-radius: 0.25rem; overflow: hidden;'>
+                    <div style='background-color: #1E3A8A; height: 100%; width: {value/max_value*100}%; border-radius: 0.25rem;'></div>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
     
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("Relevance Threshold")
-        st.progress(settings['relevance_threshold'])  # Already 0-1 range
-    with col2:
-        st.write(f"{settings['relevance_threshold']:.2f}/1.00")
+    # Model Parameters Section
+    st.markdown("""
+        <div style='background-color: #F8FAFC; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;'>
+            <h3 style='color: #1E3A8A; font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Model Parameters</h3>
+        </div>
+    """, unsafe_allow_html=True)
     
-    # Model Parameters
-    st.subheader("Model Parameters")
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("Temperature")
-        st.progress(settings['temperature'])  # Already 0-1 range
-    with col2:
-        st.write(f"{settings['temperature']:.2f}/1.00")
-    
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("Max Tokens")
-        st.progress(settings['max_tokens'] / 2000)  # Normalize to 0-1 range
-    with col2:
-        st.write(f"{settings['max_tokens']}/2000")
-    
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("Top P")
-        st.progress(settings['top_p'])  # Already 0-1 range
-    with col2:
-        st.write(f"{settings['top_p']:.2f}/1.00")
+    for setting, value, max_value, format_str in [
+        ("Temperature", settings['temperature'], 1.0, ".2f"),
+        ("Max Tokens", settings['max_tokens'], 2000, "d"),
+        ("Top P", settings['top_p'], 1.0, ".2f")
+    ]:
+        st.markdown(f"""
+            <div style='margin-bottom: 0.5rem;'>
+                <div style='display: flex; justify-content: space-between; margin-bottom: 0.25rem;'>
+                    <span style='color: #4B5563; font-size: 0.9rem;'>{setting}</span>
+                    <span style='color: #1E3A8A; font-size: 0.9rem; font-weight: 500;'>{value:{format_str}}/{max_value:.2f}</span>
+                </div>
+                <div style='background-color: #E5E7EB; height: 0.5rem; border-radius: 0.25rem; overflow: hidden;'>
+                    <div style='background-color: #1E3A8A; height: 100%; width: {value/max_value*100}%; border-radius: 0.25rem;'></div>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
 
 # Initialize session state
 if 'current_page' not in st.session_state:
