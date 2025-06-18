@@ -839,9 +839,6 @@ Guidelines:
             st.session_state.main_answer = answer
             st.session_state.main_results = final_results
         
-        # Display the answer
-        st.markdown(answer)
-        
         # If internet search is requested, do it in parallel
         if use_internet:
             internet_context = """You are a document analysis expert with access to the internet.
