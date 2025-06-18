@@ -966,14 +966,14 @@ def show_main_page():
             # Create the follow-up question widget
             follow_up_question = st.text_input(
                 label="Ask a follow-up question",
-                value=st.session_state.get('current_follow_up_input', ''),
+                value="",
                 label_visibility="collapsed",
                 placeholder="Ask a follow-up question...",
                 key="current_follow_up_input"
             )
 
             # Process follow-up question if entered
-            if follow_up_question and follow_up_question != st.session_state.get('current_follow_up_input', '') and not st.session_state.processing:
+            if follow_up_question and follow_up_question.strip() and not st.session_state.processing:
                 try:
                     st.session_state.processing = True
                     
@@ -986,7 +986,6 @@ def show_main_page():
                         st.session_state.follow_up_questions.append((follow_up_question, st.session_state.follow_up_answer))
                     
                     # Clear the input and rerun to show the new follow-up
-                    st.session_state.current_follow_up_input = ""
                     st.rerun()
                     
                 except Exception as e:
