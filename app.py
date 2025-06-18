@@ -43,7 +43,7 @@ def handle_image_request(question):
         all_images = st.session_state.rag_system.get_all_images()
         
         if not all_images:
-            return "No images were found in the uploaded documents."
+            return []
         
         # Extract page number if mentioned
         import re
@@ -52,30 +52,14 @@ def handle_image_request(question):
         if page_match:
             page_num = int(page_match.group(1))
             # Show images from specific page
-            page_images = {k: v for k, v in all_images.items() if v['page'] == page_num}
-            
-            if page_images:
-                result = f"Found {len(page_images)} image(s) on page {page_num}:\n\n"
-                # Display images inline
-                for img_key, img_info in page_images.items():
-                    result += f"• {img_key}\n"
-                    if os.path.exists(img_info['path']):
-                        st.image(img_info['path'], caption=img_key, use_column_width=True)
-                return result
-            else:
-                return f"No images found on page {page_num}."
+            page_images = [img_info for img_info in all_images.values() if img_info['page'] == page_num]
+            return page_images
         else:
             # Show all images
-            result = f"Found {len(all_images)} image(s) in the documents:\n\n"
-            # Display images inline
-            for img_key, img_info in all_images.items():
-                result += f"• {img_key}\n"
-                if os.path.exists(img_info['path']):
-                    st.image(img_info['path'], caption=img_key, use_column_width=True)
-            return result
-            
+            return list(all_images.values())
     except Exception as e:
-        return f"Error handling image request: {str(e)}"
+        st.error(f"Error handling image request: {str(e)}")
+        return []
 
 # Follow-up question generation
 def generate_follow_up(follow_up_question):
@@ -128,7 +112,17 @@ if conversation_history:
     for i, conv in enumerate(conversation_history):
         with st.expander(f"Q{i+1}: {conv['question'][:50]}..."):
             st.write(f"**Question:** {conv['question']}")
-            st.write(f"**Answer:** {conv['answer']}")
+            # If the answer is a list (image info), display images
+            if isinstance(conv['answer'], list):
+                if conv['answer']:
+                    st.write(f"Found {len(conv['answer'])} image(s):")
+                    for img_info in conv['answer']:
+                        if os.path.exists(img_info['path']):
+                            st.image(img_info['path'], caption=f"Page {img_info['page']}, Image {img_info['image_num']}", use_container_width=True)
+                else:
+                    st.write("No images were found in the uploaded documents.")
+            else:
+                st.write(f"**Answer:** {conv['answer']}")
 
 # Current question input
 if not conversation_history:
@@ -139,7 +133,17 @@ if not conversation_history:
         if st.session_state.documents_loaded:
             with st.spinner("Processing..."):
                 answer = generate_answer(question)
-                st.write(answer)
+                # If answer is a list (image info), display images
+                if isinstance(answer, list):
+                    if answer:
+                        st.write(f"Found {len(answer)} image(s):")
+                        for img_info in answer:
+                            if os.path.exists(img_info['path']):
+                                st.image(img_info['path'], caption=f"Page {img_info['page']}, Image {img_info['image_num']}", use_container_width=True)
+                    else:
+                        st.write("No images were found in the uploaded documents.")
+                else:
+                    st.write(answer)
                 st.rerun()  # Refresh to show follow-up input
         else:
             st.error("Please upload documents first")
@@ -151,7 +155,17 @@ else:
         if st.session_state.documents_loaded:
             with st.spinner("Processing follow-up..."):
                 follow_up_answer = generate_follow_up(follow_up_question)
-                st.write(follow_up_answer)
+                # If answer is a list (image info), display images
+                if isinstance(follow_up_answer, list):
+                    if follow_up_answer:
+                        st.write(f"Found {len(follow_up_answer)} image(s):")
+                        for img_info in follow_up_answer:
+                            if os.path.exists(img_info['path']):
+                                st.image(img_info['path'], caption=f"Page {img_info['page']}, Image {img_info['image_num']}", use_container_width=True)
+                    else:
+                        st.write("No images were found in the uploaded documents.")
+                else:
+                    st.write(follow_up_answer)
                 st.rerun()  # Refresh to show next follow-up input
         else:
             st.error("Please upload documents first")
