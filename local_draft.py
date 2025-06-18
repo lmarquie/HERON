@@ -193,6 +193,7 @@ class TextProcessor:
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extract text from PDF including images using OCR and vision analysis."""
         try:
+            print(f"Processing PDF: {pdf_path}")
             # Extract regular text
             doc = fitz.open(pdf_path)
             text_content = []
@@ -204,20 +205,26 @@ class TextProcessor:
                 text = page.get_text()
                 text_content.append(f"Page {page_num + 1} Text:\n{text}\n")
                 
-                # Extract images and analyze them
+                # Try multiple methods to extract images
+                images_found = 0
+                
+                # Method 1: get_images()
                 image_list = page.get_images()
+                print(f"Page {page_num + 1}: Found {len(image_list)} images via get_images()")
                 
                 if image_list:
                     text_content.append(f"Page {page_num + 1} Images:\n")
                     
                     for img_index, img in enumerate(image_list):
                         try:
+                            print(f"Processing image {img_index + 1} on page {page_num + 1}")
                             # Get image data
                             xref = img[0]
                             pix = fitz.Pixmap(doc, xref)
                             
                             # Handle different image formats
                             if pix.n - pix.alpha < 4:  # GRAY or RGB
+                                print(f"Image {img_index + 1}: RGB/Gray format")
                                 # Convert to PIL Image
                                 img_data = pix.tobytes("png")
                                 pil_image = Image.open(io.BytesIO(img_data))
@@ -225,7 +232,9 @@ class TextProcessor:
                                 # Analyze image with OCR and vision
                                 image_analysis = self.analyze_image(pil_image, page_num + 1, img_index + 1)
                                 text_content.append(image_analysis)
+                                images_found += 1
                             elif pix.n == 4:  # CMYK
+                                print(f"Image {img_index + 1}: CMYK format, converting to RGB")
                                 # Convert CMYK to RGB
                                 pix_rgb = fitz.Pixmap(fitz.csRGB, pix)
                                 img_data = pix_rgb.tobytes("png")
@@ -236,19 +245,25 @@ class TextProcessor:
                                 text_content.append(image_analysis)
                                 
                                 pix_rgb = None  # Free memory
+                            else:
+                                print(f"Image {img_index + 1}: Skipped (format: {pix.n} channels)")
                             
                             pix = None  # Free memory
                         except Exception as e:
+                            print(f"Error processing image {img_index + 1}: {str(e)}")
                             text_content.append(f"Error processing image {img_index + 1}: {str(e)}\n")
                 
-                # Also try to extract images using a different method
+                # Method 2: get_image_info()
                 try:
-                    # Get image blocks
                     image_blocks = page.get_image_info()
+                    print(f"Page {page_num + 1}: Found {len(image_blocks)} images via get_image_info()")
                     if image_blocks:
-                        text_content.append(f"Page {page_num + 1} Additional Images:\n")
+                        if not image_list:  # Only add header if we didn't already
+                            text_content.append(f"Page {page_num + 1} Images:\n")
+                        
                         for block_index, block in enumerate(image_blocks):
                             try:
+                                print(f"Processing image block {block_index + 1} on page {page_num + 1}")
                                 # Try to extract the image
                                 pix = fitz.Pixmap(doc, block["xref"])
                                 if pix.n - pix.alpha < 4:  # GRAY or RGB
@@ -258,18 +273,60 @@ class TextProcessor:
                                     # Analyze image
                                     image_analysis = self.analyze_image(pil_image, page_num + 1, f"block_{block_index + 1}")
                                     text_content.append(image_analysis)
+                                    images_found += 1
                                 
                                 pix = None  # Free memory
                             except Exception as e:
+                                print(f"Error processing image block {block_index + 1}: {str(e)}")
                                 text_content.append(f"Error processing image block {block_index + 1}: {str(e)}\n")
                 except Exception as e:
-                    # If this method fails, continue
-                    pass
+                    print(f"Error with get_image_info() on page {page_num + 1}: {str(e)}")
+                
+                # Method 3: get_drawings() - for vector graphics that might be charts
+                try:
+                    drawings = page.get_drawings()
+                    print(f"Page {page_num + 1}: Found {len(drawings)} drawings")
+                    if drawings and len(drawings) > 5:  # If there are many drawing elements, might be a chart
+                        text_content.append(f"Page {page_num + 1} Vector Graphics:\n")
+                        text_content.append(f"Vector graphics detected - possible chart or diagram with {len(drawings)} elements\n")
+                except Exception as e:
+                    print(f"Error with get_drawings() on page {page_num + 1}: {str(e)}")
+                
+                # Method 4: Convert page to image and analyze if no images found
+                if images_found == 0:
+                    print(f"Page {page_num + 1}: No images found, converting page to image for analysis")
+                    try:
+                        # Convert page to image
+                        mat = fitz.Matrix(2, 2)  # 2x zoom for better quality
+                        pix = page.get_pixmap(matrix=mat)
+                        img_data = pix.tobytes("png")
+                        pil_image = Image.open(io.BytesIO(img_data))
+                        
+                        # Save the page image
+                        page_filename = f"page_{page_num + 1}_full.png"
+                        page_path = os.path.join("app_data", "images", page_filename)
+                        os.makedirs(os.path.dirname(page_path), exist_ok=True)
+                        pil_image.save(page_path)
+                        
+                        # Add page image reference
+                        text_content.append(f"Page {page_num + 1} Full Page Image:\n")
+                        text_content.append(f"IMAGE_REF:{page_filename}\n")
+                        
+                        # Analyze the page image for charts/tables
+                        page_analysis = self.analyze_image(pil_image, page_num + 1, "full_page")
+                        text_content.append(page_analysis)
+                        
+                        pix = None  # Free memory
+                    except Exception as e:
+                        print(f"Error converting page {page_num + 1} to image: {str(e)}")
             
             doc.close()
-            return "\n".join(text_content)
+            final_content = "\n".join(text_content)
+            print(f"PDF processing completed. Total content length: {len(final_content)}")
+            return final_content
             
         except Exception as e:
+            print(f"Error extracting text from PDF: {str(e)}")
             return f"Error extracting text from PDF: {str(e)}"
 
     def analyze_image(self, image: Image.Image, page_num: int, img_index) -> str:
@@ -277,6 +334,7 @@ class TextProcessor:
         analysis_parts = []
         
         try:
+            print(f"Starting analysis of image {img_index} on page {page_num}")
             # Convert img_index to string for filename
             img_index_str = str(img_index)
             
@@ -285,54 +343,82 @@ class TextProcessor:
             image_path = os.path.join("app_data", "images", image_filename)
             os.makedirs(os.path.dirname(image_path), exist_ok=True)
             image.save(image_path)
+            print(f"Image saved to: {image_path}")
             
             # Add image reference for display
             analysis_parts.append(f"IMAGE_REF:{image_filename}")
+            print(f"Added image reference: {image_filename}")
             
             # 1. OCR Text Extraction (with error handling)
             try:
+                print("Running OCR...")
                 ocr_text = pytesseract.image_to_string(image)
                 if ocr_text.strip():
                     analysis_parts.append(f"OCR Text: {ocr_text.strip()}")
+                    print(f"OCR found text: {len(ocr_text.strip())} characters")
+                else:
+                    print("OCR found no text")
             except Exception as e:
+                print(f"OCR failed: {str(e)}")
                 # If OCR fails, continue without it
                 analysis_parts.append(f"OCR Text: [OCR processing failed: {str(e)}]")
             
             # 2. Table Detection and Extraction (with error handling)
             try:
+                print("Running table detection...")
                 table_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
                 # Process table data if detected
                 if any(float(conf) > 60 for conf in table_data['conf'] if conf != '-1'):
                     analysis_parts.append("Table detected - data extracted via OCR")
+                    print("Table detected via OCR")
+                else:
+                    print("No table detected via OCR")
             except Exception as e:
+                print(f"Table detection failed: {str(e)}")
                 # If table detection fails, continue without it
                 pass
             
             # 3. Vision API Analysis (OpenAI GPT-4 Vision)
             try:
+                print("Running vision API analysis...")
                 vision_analysis = self.analyze_image_with_vision_api(image)
                 if vision_analysis:
                     analysis_parts.append(f"Vision Analysis: {vision_analysis}")
+                    print(f"Vision API analysis completed: {len(vision_analysis)} characters")
+                else:
+                    print("Vision API analysis failed or returned no results")
             except Exception as e:
+                print(f"Vision API failed: {str(e)}")
                 # If vision API fails, continue without it
                 analysis_parts.append(f"Vision Analysis: [Vision API failed: {str(e)}]")
             
             # 4. Chart/Graph Detection (with error handling)
             try:
+                print("Running chart detection...")
                 chart_analysis = self.detect_charts_and_graphs(image)
                 if chart_analysis:
                     analysis_parts.append(f"Chart Analysis: {chart_analysis}")
+                    print(f"Chart analysis completed: {len(chart_analysis)} characters")
+                else:
+                    print("Chart detection found no charts")
             except Exception as e:
+                print(f"Chart detection failed: {str(e)}")
                 # If chart detection fails, continue without it
                 pass
             
             if analysis_parts:
-                return f"Image {img_index_str} Analysis:\n" + "\n".join(analysis_parts) + "\n"
+                result = f"Image {img_index_str} Analysis:\n" + "\n".join(analysis_parts) + "\n"
+                print(f"Image analysis completed successfully. Result length: {len(result)}")
+                return result
             else:
-                return f"Image {img_index_str}: No text or significant content detected\n"
+                result = f"Image {img_index_str}: No text or significant content detected\n"
+                print("Image analysis completed but found no significant content")
+                return result
                 
         except Exception as e:
-            return f"Image {img_index_str} Analysis Error: {str(e)}\n"
+            error_msg = f"Image {img_index_str} Analysis Error: {str(e)}\n"
+            print(f"Image analysis error: {str(e)}")
+            return error_msg
 
     def analyze_image_with_vision_api(self, image: Image.Image) -> str:
         """Use OpenAI's GPT-4 Vision API for comprehensive image analysis."""
