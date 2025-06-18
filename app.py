@@ -830,7 +830,7 @@ Guidelines:
 6. Be clear about assumptions made
 7. If the context doesn't contain enough information, say so clearly"""
 
-                answer = st.session_state.rag_system.question_handler.process_question(doc_context)
+                answer = st.session_state.rag_system.question_handler.process_question(question)
         
         # Store the answer
         if is_follow_up:
@@ -1192,10 +1192,6 @@ def show_main_page():
                     st.session_state.processing = False
                     st.rerun()  # Rerun to show the new follow-up input
 
-        # Options
-        st.session_state.use_internet = st.toggle("Internet")
-        st.session_state.use_analysts = st.toggle("Multi-Analyst")
-        
         # Only show reset and export buttons if there's an answer
         if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
             st.markdown("---")
