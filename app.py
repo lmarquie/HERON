@@ -789,11 +789,11 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         
         # Sort by score and take top 5
         processed_results.sort(key=lambda x: x['score'], reverse=True)
-        results = processed_results[:5]  # Increased to 5 sources
+        final_results = processed_results[:5]  # Increased to 5 sources
         
         # Generate answer with optimized parameters
         if use_internet:
-            internet_context = """You are an AI assistant with access to the internet.
+            internet_context = f"""You are an AI assistant with access to the internet.
             Provide a comprehensive answer using your knowledge and internet access.
             Make sure to:
             1. Cite sources for all factual information
@@ -812,8 +812,8 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
                 doc_context += f"Question: {question}\n\n"
                 doc_context += "Document Information:\n"
                 
-                if results:
-                    for i, result in enumerate(results, 1):
+                if final_results:
+                    for i, result in enumerate(final_results, 1):
                         source = result.get('metadata', {}).get('source', 'Unknown source')
                         text = result.get('text', '')
                         doc_context += f"Source {i}: {source}\n"
@@ -830,7 +830,7 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
             st.session_state.follow_up_answer = answer
         else:
             st.session_state.main_answer = answer
-            st.session_state.main_results = results
+            st.session_state.main_results = final_results
         
         # Display the answer
         st.markdown(answer)
