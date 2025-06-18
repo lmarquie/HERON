@@ -109,16 +109,9 @@ else:
 
 # Control buttons
 st.markdown("---")
-col1, col2 = st.columns(2)
-
-with col1:
-    if st.button("Clear"):
-        st.rerun()
-
-with col2:
-    if st.button("Reset"):
-        # Clear session state and conversation history
-        st.session_state.rag_system.clear_conversation_history()
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.rerun() 
+if st.button("Reset"):
+    # Clear session state and conversation history
+    st.session_state.rag_system.clear_conversation_history()
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun() 
