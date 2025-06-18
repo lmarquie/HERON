@@ -811,7 +811,7 @@ def generate_answer(question, is_follow_up=False):
         
         # Generate answer with optimized parameters
         if use_internet:
-            internet_context = """You are an AI assistant with access to the internet.
+            internet_context = f"""You are an AI assistant with access to the internet.
             Provide a comprehensive answer using your knowledge and internet access.
             Make sure to:
             1. Cite sources for all factual information
@@ -820,7 +820,13 @@ def generate_answer(question, is_follow_up=False):
             4. Be clear about what information comes from your training vs internet sources
             
             Question: {question}"""
-            answer = st.session_state.rag_system.question_handler.process_question(internet_context)
+            
+            try:
+                # Use direct LLM call for internet search
+                answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
+            except Exception as e:
+                st.error(f"Internet search failed: {str(e)}")
+                answer = "I'm sorry, I encountered an error while trying to search the internet. Please try again or disable internet search."
         else:
             if not st.session_state.documents_loaded:
                 answer = "I cannot answer this question as there are no documents loaded. Please either upload documents or enable internet search."
@@ -860,6 +866,11 @@ def generate_answer(question, is_follow_up=False):
 
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
+        # Provide a fallback answer
+        if is_follow_up:
+            st.session_state.follow_up_answer = "I'm sorry, I encountered an error while processing your question. Please try again."
+        else:
+            st.session_state.main_answer = "I'm sorry, I encountered an error while processing your question. Please try again."
     finally:
         st.session_state.processing = False
 
@@ -900,6 +911,9 @@ def show_main_page():
             placeholder="Ask a question...",
             key="question_input"
         )
+
+        # Internet toggle (global setting) - positioned right after question input
+        st.session_state.use_internet = st.toggle("Internet Search", help="Enable internet search for all questions in this session")
 
         # Process question if enter is pressed
         if question and question != st.session_state.question and not st.session_state.processing:
@@ -981,9 +995,6 @@ def show_main_page():
                 finally:
                     st.session_state.processing = False
 
-        # Internet toggle (global setting)
-        st.session_state.use_internet = st.toggle("Internet Search", help="Enable internet search for all questions in this session")
-        
         # Only show reset and export buttons if there's an answer
         if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
             st.markdown("---")
