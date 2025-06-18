@@ -467,7 +467,7 @@ class TextProcessor:
             }
             
             payload = {
-                "model": "gpt-4-vision-preview",
+                "model": "gpt-4o",
                 "messages": [
                     {
                         "role": "user",
@@ -1083,7 +1083,7 @@ class RAGSystem:
 
             elif choice == "3":
                 print("\nThank you for using the RAG System. Goodbye!")
-                self.running = False 
+                self.running = False
 
             else:
                 print("\nInvalid choice. Please try again.")
