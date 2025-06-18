@@ -255,18 +255,24 @@ class TextProcessor:
                 # Don't add table detection error to analysis since it's optional
             
             # 3. Vision API Analysis (OpenAI GPT-4 Vision) - This is the main analysis
-            try:
-                print("Running vision API analysis...")
-                vision_analysis = self.analyze_image_with_vision_api(image)
-                if vision_analysis:
-                    analysis_parts.append(f"Vision Analysis: {vision_analysis}")
-                    print(f"Vision API analysis completed: {len(vision_analysis)} characters")
-                else:
-                    print("Vision API analysis failed or returned no results")
-            except Exception as e:
-                print(f"Vision API failed: {str(e)}")
-                # If vision API fails, continue without it
-                analysis_parts.append(f"Vision Analysis: [Vision API failed: {str(e)}]")
+            # Check if Vision API should be skipped (can be set via environment variable)
+            skip_vision_api = os.getenv('SKIP_VISION_API', 'false').lower() == 'true'
+            if skip_vision_api:
+                print("Vision API analysis skipped due to SKIP_VISION_API setting")
+                analysis_parts.append("Vision Analysis: Skipped (disabled)")
+            else:
+                try:
+                    print("Running vision API analysis...")
+                    vision_analysis = self.analyze_image_with_vision_api(image)
+                    if vision_analysis:
+                        analysis_parts.append(f"Vision Analysis: {vision_analysis}")
+                        print(f"Vision API analysis completed: {len(vision_analysis)} characters")
+                    else:
+                        print("Vision API analysis failed or returned no results")
+                except Exception as e:
+                    print(f"Vision API failed: {str(e)}")
+                    # If vision API fails, continue without it
+                    analysis_parts.append(f"Vision Analysis: [Vision API failed: {str(e)}]")
             
             # 4. Chart/Graph Detection (with error handling)
             try:
@@ -335,11 +341,12 @@ class TextProcessor:
             if not OPENAI_API_KEY:
                 return "Vision API Error: No API key configured"
             
-            # Use the newer OpenAI library approach
+            # Use the newer OpenAI library approach with timeout
             try:
                 from openai import OpenAI
-                client = OpenAI(api_key=OPENAI_API_KEY)
+                client = OpenAI(api_key=OPENAI_API_KEY, timeout=30.0)  # 30 second timeout
                 
+                print("Sending request to Vision API...")
                 response = client.chat.completions.create(
                     model="gpt-4o",
                     messages=[
@@ -398,6 +405,9 @@ Be specific about what you see and provide actionable insights."""
                 # Fallback to requests if openai library not available
                 print("OpenAI library not available, using requests fallback")
                 return self._analyze_image_with_requests(image, img_str)
+            except Exception as e:
+                print(f"Vision API call failed: {str(e)}")
+                return f"Vision API Error: {str(e)}"
                 
         except Exception as e:
             error_msg = f"Vision API Error: {str(e)}"
@@ -435,21 +445,32 @@ Be specific about what you see and provide actionable insights."""
                 "temperature": 0.1
             }
             
+            print("Sending request to Vision API via requests...")
             response = requests.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=60
+                timeout=30  # 30 second timeout
             )
             
             if response.status_code == 200:
                 result = response.json()
-                return result["choices"][0]["message"]["content"]
+                content = result["choices"][0]["message"]["content"]
+                print(f"Vision API response received via requests: {len(content)} characters")
+                return content
             else:
-                return f"Vision API Error: {response.status_code}"
+                error_msg = f"Vision API Error: {response.status_code} - {response.text}"
+                print(f"Vision API error: {error_msg}")
+                return error_msg
                 
+        except requests.exceptions.Timeout:
+            error_msg = "Vision API Error: Request timed out after 30 seconds"
+            print(error_msg)
+            return error_msg
         except Exception as e:
-            return f"Vision API Error: {str(e)}"
+            error_msg = f"Vision API Error: {str(e)}"
+            print(f"Vision API exception: {error_msg}")
+            return error_msg
 
     def detect_charts_and_graphs(self, image: Image.Image) -> str:
         """Detect and analyze charts, graphs, and visual data."""
@@ -1049,12 +1070,22 @@ Answer based on the context provided."""
 
 ### =================== Main RAG System =================== ###
 class RAGSystem:
-    def __init__(self, settings=None, is_web=False):
+    def __init__(self, settings=None, is_web=False, use_vision_api=True):
         self.file_handler = WebFileHandler() if is_web else LocalFileHandler()
         self.vector_store = VectorStore()
         self.question_handler = QuestionHandler(self.vector_store)
         self.running = True
         self.is_web = is_web
+        self.use_vision_api = use_vision_api
+        
+        # Set environment variable for TextProcessor
+        if not use_vision_api:
+            os.environ['SKIP_VISION_API'] = 'true'
+            print("Vision API disabled for this session")
+        else:
+            # Remove the environment variable if it exists
+            os.environ.pop('SKIP_VISION_API', None)
+            print("Vision API enabled for this session")
         
         # Initialize with default settings
         default_settings = {
