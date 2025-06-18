@@ -1,6 +1,11 @@
 import streamlit as st
 import os
 from local_draft import RAGSystem, WebFileHandler
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from datetime import datetime
 
 # Set page config
 st.set_page_config(
@@ -81,6 +86,66 @@ def generate_follow_up(follow_up_question):
         
     except Exception as e:
         return f"Error: {str(e)}"
+
+# PDF Export function
+def export_conversation_to_pdf():
+    """Export conversation history to PDF."""
+    try:
+        conversation_history = st.session_state.rag_system.get_conversation_history()
+        
+        if not conversation_history:
+            return None
+        
+        # Create PDF file
+        pdf_filename = f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        pdf_path = os.path.join("exports", pdf_filename)
+        os.makedirs("exports", exist_ok=True)
+        
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
+        
+        # Title
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            spaceAfter=30
+        )
+        story.append(Paragraph("HERON Conversation Export", title_style))
+        story.append(Spacer(1, 12))
+        
+        # Add each conversation exchange
+        for i, conv in enumerate(conversation_history):
+            # Question
+            question_style = ParagraphStyle(
+                'Question',
+                parent=styles['Normal'],
+                fontSize=12,
+                spaceAfter=6,
+                leftIndent=20
+            )
+            story.append(Paragraph(f"<b>Q{i+1}:</b> {conv['question']}", question_style))
+            
+            # Answer
+            if isinstance(conv['answer'], list):
+                # Handle image answers
+                answer_text = f"Found {len(conv['answer'])} image(s)"
+                story.append(Paragraph(f"<b>A{i+1}:</b> {answer_text}", question_style))
+            else:
+                # Handle text answers
+                story.append(Paragraph(f"<b>A{i+1}:</b> {conv['answer']}", question_style))
+            
+            story.append(Spacer(1, 12))
+        
+        # Build PDF
+        doc.build(story)
+        
+        return pdf_path
+        
+    except Exception as e:
+        st.error(f"Error creating PDF: {str(e)}")
+        return None
 
 # Main app
 initialize_rag_system()
@@ -170,9 +235,30 @@ else:
 
 # Control buttons
 st.markdown("---")
-if st.button("Reset"):
-    # Clear session state and conversation history
-    st.session_state.rag_system.clear_conversation_history()
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    st.rerun() 
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button("Reset"):
+        # Clear session state and conversation history
+        st.session_state.rag_system.clear_conversation_history()
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
+
+with col2:
+    if st.button("Export PDF"):
+        if conversation_history:
+            pdf_path = export_conversation_to_pdf()
+            if pdf_path:
+                # Read the PDF file and create download button
+                with open(pdf_path, "rb") as pdf_file:
+                    pdf_bytes = pdf_file.read()
+                
+                st.download_button(
+                    label="Download PDF",
+                    data=pdf_bytes,
+                    file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf"
+                )
+        else:
+            st.warning("No conversation to export") 
