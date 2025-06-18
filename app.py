@@ -14,15 +14,10 @@ import psutil
 import torch
 import gc
 import shutil
-from PIL import Image
-
-# Set fast mode by default for better performance
-os.environ['FAST_MODE'] = 'true'
 
 # Create app data directory if it doesn't exist
 DATA_DIR = 'app_data'
 os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(os.path.join(DATA_DIR, 'images'), exist_ok=True)
 
 # Add caching for expensive operations
 @st.cache_data(ttl=3600)  # Cache for 1 hour
@@ -61,11 +56,7 @@ def get_current_settings():
             'max_tokens': 1000,
             'top_p': 0.9,
             'speed': 0.5,
-            'accuracy': 0.5,
-            'enable_image_recognition': True,
-            'enable_ocr': True,
-            'enable_vision_api': True,
-            'enable_chart_detection': True
+            'accuracy': 0.5
         }
     return st.session_state.settings
 
@@ -94,7 +85,6 @@ with st.sidebar:
     # Document processing options
     st.subheader("Processing Options")
     max_pages = st.slider("Max Pages to Process", 1, 50, 10, help="Limit pages to process for faster loading")
-    skip_images = st.checkbox("Skip Image Processing", value=True, help="Skip all image extraction for maximum speed")
     
     try:
         uploaded_files = st.file_uploader(
@@ -109,7 +99,6 @@ with st.sidebar:
         if uploaded_files:
             # Set processing options in session state
             st.session_state.max_pages = max_pages
-            st.session_state.skip_images = skip_images
             
             if st.session_state.rag_system.process_web_uploads(uploaded_files):
                 st.success(f"Successfully processed {len(uploaded_files)} file(s)")
@@ -152,17 +141,6 @@ with st.sidebar:
     st.write("Top P")
     st.progress(settings['top_p'])  # Already 0-1 range
     
-    # Image Recognition Settings
-    st.subheader("Image Recognition")
-    st.write("Image Recognition")
-    st.progress(1.0 if settings.get('enable_image_recognition', True) else 0.0)
-    st.write("OCR Processing")
-    st.progress(1.0 if settings.get('enable_ocr', True) else 0.0)
-    st.write("Vision API")
-    st.progress(1.0 if settings.get('enable_vision_api', True) else 0.0)
-    st.write("Chart Detection")
-    st.progress(1.0 if settings.get('enable_chart_detection', True) else 0.0)
-    
     # Vision API Toggle
     st.divider()
     st.subheader("Vision API Control")
@@ -190,34 +168,19 @@ with st.sidebar:
     if not vision_api_enabled:
         st.info("Vision API is disabled. Images will still be extracted and saved, but AI analysis will be skipped.")
     
-    # Fast Mode Toggle
+    # Cache Management
     st.divider()
-    st.subheader("Performance Settings")
+    st.subheader("Cache Management")
     
-    # Initialize fast_mode in session state if not exists
-    if 'fast_mode' not in st.session_state:
-        st.session_state.fast_mode = True  # Set to True by default
+    col1, col2 = st.columns(2)
     
-    # Create toggle for Fast Mode
-    fast_mode_enabled = st.toggle(
-        "Enable Fast Mode",
-        value=st.session_state.fast_mode,
-        help="Skip expensive image analysis for faster processing. Only extracts and displays images without AI analysis."
-    )
+    with col1:
+        if st.button("Clear Caches", type="secondary", use_container_width=True):
+            clear_all_caches()
     
-    # Update session state and environment variable if setting changed
-    if fast_mode_enabled != st.session_state.fast_mode:
-        st.session_state.fast_mode = fast_mode_enabled
-        # Set environment variable for the TextProcessor
-        os.environ['FAST_MODE'] = 'true' if fast_mode_enabled else 'false'
-        st.success(f"Fast mode {'enabled' if fast_mode_enabled else 'disabled'}")
-    
-    # Always set the environment variable to match the current state
-    os.environ['FAST_MODE'] = 'true' if st.session_state.fast_mode else 'false'
-    
-    if st.session_state.fast_mode:
-        st.info("Fast mode is enabled. Image analysis will be skipped for faster processing.")
-        st.warning("Only charts and graphs will be extracted and displayed without AI analysis.")
+    with col2:
+        if st.button("Force Restart", type="secondary", use_container_width=True):
+            force_restart()
 
 # Initialize session state
 if 'current_page' not in st.session_state:
@@ -783,85 +746,19 @@ def cleanup_resources():
         st.error(f"Error during cleanup: {str(e)}")
 
 def monitor_performance():
-    """Monitor and display performance metrics"""
-    memory_mb = get_memory_usage()
-    
-    with st.expander("Performance Monitor"):
-        col1, col2, col3 = st.columns(3)
+    """Monitor and display performance metrics."""
+    try:
+        # Get memory usage
+        memory_usage = get_memory_usage()
         
-        with col1:
-            st.metric("Memory Usage", f"{memory_mb:.1f} MB")
-        
-        with col2:
-            if 'rag_system' in st.session_state and st.session_state.rag_system:
-                doc_count = len(st.session_state.rag_system.vector_store.documents) if hasattr(st.session_state.rag_system, 'vector_store') else 0
-                st.metric("Documents Loaded", doc_count)
-            else:
-                st.metric("Documents Loaded", 0)
-        
-        with col3:
-            if should_cleanup():
-                st.warning("High memory usage")
-                if st.button("Cleanup Resources"):
-                    cleanup_resources()
-            else:
-                st.success("Memory OK")
-
-def display_answer_with_images(answer_text):
-    """Display answer text with embedded images."""
-    if not answer_text:
-        return
-    
-    # Debug: Check if there are any image references
-    if 'IMAGE_REF:' not in answer_text:
-        # No images, just display text normally
-        st.markdown(answer_text)
-        return
-    
-    # Split the answer into parts
-    parts = answer_text.split('\n')
-    current_text = []
-    
-    for part in parts:
-        if part.startswith('IMAGE_REF:'):
-            # Display accumulated text
-            if current_text:
-                st.markdown('\n'.join(current_text))
-                current_text = []
-            
-            # Display the image with enhanced styling
-            image_filename = part.replace('IMAGE_REF:', '').strip()
-            image_path = os.path.join("app_data", "images", image_filename)
-            
-            if os.path.exists(image_path):
-                try:
-                    # Add a visual separator and header for the image
-                    st.markdown("---")
-                    st.markdown(f"**📊 Document Image: {image_filename}**")
-                    
-                    # Display the image with better styling
-                    st.image(image_path, caption=f"From document: {image_filename}", width=500)
-                    
-                    # Add some spacing after the image
-                    st.markdown("")
-                    
-                except Exception as e:
-                    st.error(f"Error displaying image {image_filename}: {str(e)}")
-            else:
-                st.warning(f"Image not found: {image_filename}")
-                # List available images for debugging
-                images_dir = os.path.join("app_data", "images")
-                if os.path.exists(images_dir):
-                    available_images = os.listdir(images_dir)
-                    st.info(f"Available images: {available_images}")
-                else:
-                    st.error("Images directory does not exist!")
+        # Check if cleanup is needed
+        if should_cleanup():
+            cleanup_resources()
+            st.warning("Memory cleanup performed")
         else:
-            current_text.append(part)
-    
-    # Display any remaining text
-    if current_text:
-        st.markdown('\n'.join(current_text))
+            st.success("Memory OK")
+    except Exception as e:
+        st.error(f"Performance monitoring error: {str(e)}")
 
 def type_text(text, container, speed=0.01):
     """Type out text with a typing effect"""
@@ -986,7 +883,6 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
                 # When not using internet, explicitly instruct to only use document information
                 doc_context = f"""You are a financial analysis expert. Your task is to analyze financial documents and provide detailed, accurate answers to questions about them.
 
-
 Key capabilities:
 - Analyze financial statements, reports, and documents
 - Extract and interpret financial metrics and data
@@ -996,7 +892,6 @@ Key capabilities:
 - Provide context for financial decisions
 - Highlight important financial insights
 
-
 Guidelines:
 1. Base your answers primarily on the provided context
 2. Be precise with numbers and financial data
@@ -1004,52 +899,32 @@ Guidelines:
 4. Highlight any uncertainties or missing information
 5. Provide relevant context for your analysis
 6. Be clear about assumptions made
-7. If the context doesn't contain enough information, say so clearly"""
 
-                answer = st.session_state.rag_system.question_handler.process_question(question)
+Question: {question}
+
+Context from documents:
+{chr(10).join([f"Source: {r['metadata'].get('source', 'Unknown')} (Relevance: {r['score']:.2f})\n{r['text']}\n" for r in final_results])}
+
+Please provide a comprehensive answer based on the document context provided."""
+                
+                answer = st.session_state.rag_system.question_handler.process_question(doc_context)
         
-        # Store the answer
-        if is_follow_up:
-            st.session_state.follow_up_answer = answer
-        else:
-            st.session_state.main_answer = answer
-            st.session_state.main_results = final_results
+        # Store results for follow-up questions
+        st.session_state.main_results = final_results
+        st.session_state.main_answer = answer
         
-        # If internet search is requested, do it in parallel
-        if use_internet:
-            internet_context = """You are a document analysis expert with access to the internet.
-            Provide a concise answer using your knowledge and internet access.
-            Cite sources for data. If no source exists, mention that.
-            Focus on accurate, up-to-date information."""
-            
-            internet_start = time.time()
-            status_text.text("🌐 Searching the internet...")
-            
-            # Use ThreadPoolExecutor for parallel processing
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                internet_future = executor.submit(
-                    st.session_state.rag_system.question_handler.llm.generate_answer,
-                    question,
-                    internet_context
-                )
-                internet_answer = internet_future.result()
-            
-            # Display internet results
-            st.markdown("\n\n### Internet Search Results\n" + internet_answer)
-            
-            if is_follow_up:
-                st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
-            else:
-                st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
-        
+        # Display the answer with typing effect
         progress_bar.progress(100)
-        status_text.text("✅ Done!")
+        status_text.text("✅ Answer ready!")
         
-        # Clear status after a shorter delay
-        time.sleep(0.5)
-        status_text.empty()
-        progress_bar.empty()
-
+        # Type out the answer
+        type_text(answer, answer_container)
+        
+        # Show processing time
+        end_time = time.time()
+        processing_time = end_time - start_time
+        st.info(f"Processing completed in {processing_time:.2f} seconds")
+        
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
     finally:
@@ -1160,132 +1035,6 @@ def generate_multi_analyst_answer(question, use_internet=False):
     finally:
         st.session_state.processing = False
 
-def test_image_processing():
-    """Test function to manually process images from documents."""
-    if not hasattr(st.session_state, 'rag_system') or not st.session_state.rag_system:
-        st.error("RAG system not initialized")
-        return
-    
-    if not st.session_state.documents_loaded:
-        st.error("No documents loaded")
-        return
-    
-    st.info("Testing image processing...")
-    
-    # Check if images directory exists
-    images_dir = os.path.join("app_data", "images")
-    if os.path.exists(images_dir):
-        images = os.listdir(images_dir)
-        st.success(f"Images directory exists. Found {len(images)} images")
-        
-        # Check fast mode status
-        fast_mode = st.session_state.get('fast_mode', False)
-        if fast_mode:
-            st.warning("⚠️ Fast mode is enabled - only basic image extraction is active")
-        else:
-            st.info("✅ Full image analysis mode is active")
-        
-        # Display a few sample images
-        if images:
-            st.markdown("### Sample Images")
-            
-            # Show first 6 images in a simple vertical layout
-            sample_images = images[:6]
-            
-            for i, image_name in enumerate(sample_images):
-                st.markdown(f"**Image {i+1}:** {image_name}")
-                image_path = os.path.join(images_dir, image_name)
-                
-                try:
-                    # Display the image
-                    st.image(image_path, caption=image_name, width=400)
-                    
-                    # Show image info
-                    file_size = os.path.getsize(image_path)
-                    st.write(f"Size: {file_size:,} bytes")
-                    
-                    # Try to determine if this is likely a chart
-                    try:
-                        img = Image.open(image_path)
-                        width, height = img.size
-                        st.write(f"Dimensions: {width}x{height}")
-                        
-                        # Basic chart detection
-                        if width > 300 and height > 200:
-                            st.success("✅ Likely a chart/graph (substantial size)")
-                        elif width < 150 or height < 100:
-                            st.warning("⚠️ Small image - may be decorative")
-                        else:
-                            st.info("ℹ️ Medium size - could be chart or text")
-                            
-                    except Exception as e:
-                        st.error(f"Error analyzing image: {str(e)}")
-                    
-                except Exception as e:
-                    st.error(f"Error loading {image_name}: {str(e)}")
-                
-                st.markdown("---")
-            
-            # Show remaining image count
-            if len(images) > 6:
-                st.info(f"... and {len(images) - 6} more images")
-                
-    else:
-        st.error("Images directory does not exist!")
-    
-    # Check if any documents contain image references
-    if hasattr(st.session_state, 'main_results') and st.session_state.main_results:
-        st.markdown("### Image References in Documents")
-        found_refs = False
-        for result in st.session_state.main_results:
-            text = result.get('text', '')
-            if 'IMAGE_REF:' in text:
-                found_refs = True
-                st.success("Found image references in document results!")
-                
-                # Extract and display image references
-                import re
-                image_refs = re.findall(r'IMAGE_REF:([^\n]+)', text)
-                if image_refs:
-                    st.write("Image references found:")
-                    for ref in image_refs:
-                        st.write(f"- {ref.strip()}")
-                        
-                        # Try to display the referenced image
-                        image_path = os.path.join(images_dir, ref.strip())
-                        if os.path.exists(image_path):
-                            st.image(image_path, caption=f"Referenced: {ref.strip()}", width=300)
-                        else:
-                            st.warning(f"Image file not found: {ref.strip()}")
-                break
-        if not found_refs:
-            st.warning("No image references found in document results")
-    
-    # Show filtering information
-    st.markdown("### Image Filtering Information")
-    st.info("""
-    **Chart Detection Criteria:**
-    - Minimum size: 150x100 pixels
-    - Multiple colors (3+ colors)
-    - Moderate edge density (not too text-heavy)
-    - Appropriate aspect ratio (0.5-2.0)
-    
-    **Images that are filtered out:**
-    - Small decorative elements
-    - Text-heavy images
-    - Single-color images
-    - Very large photos with too many colors
-    """)
-    
-    if st.session_state.fast_mode:
-        st.warning("""
-        **Fast Mode Active:**
-        - All image analysis is skipped
-        - Images are still extracted and saved
-        - No AI analysis is performed
-        - Much faster processing
-        """)
-
 def show_main_page():
     """Show the main page with file upload and question input."""
     try:
@@ -1346,7 +1095,7 @@ def show_main_page():
                         
                 # Display the answer
                 if st.session_state.main_answer:
-                    display_answer_with_images(st.session_state.main_answer)
+                    st.markdown(st.session_state.main_answer)
 
             except Exception as e:
                 st.error(f"Error processing question: {str(e)}")
@@ -1375,7 +1124,7 @@ def show_main_page():
             # Display all previous follow-up questions and answers
             for i, (q, a) in enumerate(st.session_state.follow_up_questions):
                 st.markdown(f"**Follow-up {i+1}:** {q}")
-                display_answer_with_images(a)
+                st.markdown(a)
                 st.markdown("---")
             
             # Add a new follow-up question input
@@ -1503,8 +1252,8 @@ def show_main_page():
                 # Create a container for the buttons
                 button_container = st.container()
                 with button_container:
-                    # Create three equal columns for the buttons
-                    button_col1, button_col2, button_col3 = st.columns(3)
+                    # Create two equal columns for the buttons
+                    button_col1, button_col2 = st.columns(2)
                     
                     # Define a common button style
                     button_style = """
@@ -1551,10 +1300,6 @@ def show_main_page():
                                     os.remove(pdf_path)
                             except Exception as e:
                                 st.error(f"Error generating PDF: {str(e)}")
-                    
-                    with button_col3:
-                        if st.button("Test Images", type="secondary", use_container_width=True):
-                            test_image_processing()
         
         # Add performance monitor at the bottom
         monitor_performance()
@@ -1564,6 +1309,58 @@ def show_main_page():
     except Exception as e:
         st.error(f"An unexpected error occurred: {str(e)}")
         st.info("Please refresh the page and try again.")
+
+def clear_all_caches():
+    """Clear all caches to force fresh processing"""
+    try:
+        # Clear Streamlit caches
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        
+        # Clear session state
+        if 'rag_system' in st.session_state:
+            del st.session_state.rag_system
+        if 'documents_loaded' in st.session_state:
+            st.session_state.documents_loaded = False
+        if 'main_answer' in st.session_state:
+            del st.session_state.main_answer
+        if 'main_results' in st.session_state:
+            del st.session_state.main_results
+        
+        # Force garbage collection
+        gc.collect()
+        
+        st.success("All caches cleared! Please refresh the page.")
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"Error clearing caches: {str(e)}")
+
+def force_restart():
+    """Force a complete restart by clearing everything"""
+    try:
+        # Clear all Streamlit caches
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        
+        # Clear all session state
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        
+        # Force garbage collection
+        gc.collect()
+        
+        # Clear torch cache if available
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        st.success("🔄 Complete restart initiated! Please refresh the page.")
+        
+        # Force a rerun
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"Error during force restart: {str(e)}")
 
 # Main app logic
 if st.session_state.current_page == "settings":
