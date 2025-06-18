@@ -156,6 +156,30 @@ class TextProcessor:
             print(f"Error analyzing image: {e}")
             return None
 
+    def is_blank_image(self, img_pil):
+        """Check if image is mostly blank/white space."""
+        try:
+            # Convert to grayscale for easier processing
+            gray_img = img_pil.convert('L')
+            
+            # Get pixel data
+            pixels = list(gray_img.getdata())
+            
+            # Count non-white pixels (assuming white is close to 255)
+            white_threshold = 250  # Very close to white
+            non_white_pixels = sum(1 for pixel in pixels if pixel < white_threshold)
+            
+            # Calculate percentage of non-white pixels
+            total_pixels = len(pixels)
+            non_white_percentage = (non_white_pixels / total_pixels) * 100
+            
+            # Consider image blank if less than 5% non-white pixels
+            return non_white_percentage < 5
+            
+        except Exception as e:
+            print(f"Error checking if image is blank: {e}")
+            return False  # If we can't check, assume it's not blank
+
     def get_image_path(self, page_num, image_num=None):
         """Get the path to a specific image for display."""
         if image_num:
