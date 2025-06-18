@@ -349,36 +349,46 @@ class TextProcessor:
             analysis_parts.append(f"IMAGE_REF:{image_filename}")
             print(f"Added image reference: {image_filename}")
             
-            # 1. OCR Text Extraction (with error handling)
+            # 1. OCR Text Extraction (optional - only if Tesseract is available)
             try:
-                print("Running OCR...")
-                ocr_text = pytesseract.image_to_string(image)
-                if ocr_text.strip():
-                    analysis_parts.append(f"OCR Text: {ocr_text.strip()}")
-                    print(f"OCR found text: {len(ocr_text.strip())} characters")
+                # Check if tesseract is available
+                import subprocess
+                result = subprocess.run(['tesseract', '--version'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    print("Running OCR...")
+                    ocr_text = pytesseract.image_to_string(image)
+                    if ocr_text.strip():
+                        analysis_parts.append(f"OCR Text: {ocr_text.strip()}")
+                        print(f"OCR found text: {len(ocr_text.strip())} characters")
+                    else:
+                        print("OCR found no text")
                 else:
-                    print("OCR found no text")
+                    print("Tesseract not available, skipping OCR")
             except Exception as e:
-                print(f"OCR failed: {str(e)}")
-                # If OCR fails, continue without it
-                analysis_parts.append(f"OCR Text: [OCR processing failed: {str(e)}]")
+                print(f"OCR not available: {str(e)}")
+                # Don't add OCR error to analysis since it's optional
             
-            # 2. Table Detection and Extraction (with error handling)
+            # 2. Table Detection and Extraction (optional - only if Tesseract is available)
             try:
-                print("Running table detection...")
-                table_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
-                # Process table data if detected
-                if any(float(conf) > 60 for conf in table_data['conf'] if conf != '-1'):
-                    analysis_parts.append("Table detected - data extracted via OCR")
-                    print("Table detected via OCR")
+                # Check if tesseract is available
+                import subprocess
+                result = subprocess.run(['tesseract', '--version'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    print("Running table detection...")
+                    table_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+                    # Process table data if detected
+                    if any(float(conf) > 60 for conf in table_data['conf'] if conf != '-1'):
+                        analysis_parts.append("Table detected - data extracted via OCR")
+                        print("Table detected via OCR")
+                    else:
+                        print("No table detected via OCR")
                 else:
-                    print("No table detected via OCR")
+                    print("Tesseract not available, skipping table detection")
             except Exception as e:
-                print(f"Table detection failed: {str(e)}")
-                # If table detection fails, continue without it
-                pass
+                print(f"Table detection not available: {str(e)}")
+                # Don't add table detection error to analysis since it's optional
             
-            # 3. Vision API Analysis (OpenAI GPT-4 Vision)
+            # 3. Vision API Analysis (OpenAI GPT-4 Vision) - This is the main analysis
             try:
                 print("Running vision API analysis...")
                 vision_analysis = self.analyze_image_with_vision_api(image)
@@ -423,10 +433,32 @@ class TextProcessor:
     def analyze_image_with_vision_api(self, image: Image.Image) -> str:
         """Use OpenAI's GPT-4 Vision API for comprehensive image analysis."""
         try:
+            print("Preparing image for Vision API...")
+            
+            # Validate and prepare image
+            if image.mode not in ['RGB', 'RGBA']:
+                image = image.convert('RGB')
+                print("Converted image to RGB mode")
+            
+            # Resize image if it's too large (Vision API has size limits)
+            max_size = 1024
+            if image.width > max_size or image.height > max_size:
+                image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                print(f"Resized image to {image.width}x{image.height}")
+            
             # Convert image to base64
             buffered = io.BytesIO()
-            image.save(buffered, format="PNG")
+            image.save(buffered, format="PNG", optimize=True)
             img_str = base64.b64encode(buffered.getvalue()).decode()
+            print(f"Image converted to base64, size: {len(img_str)} characters")
+            
+            # Check if image data is reasonable size
+            if len(img_str) > 20000000:  # ~20MB limit
+                print("Warning: Image data is very large, may cause API issues")
+            
+            # Check if API key is available
+            if not OPENAI_API_KEY:
+                return "Vision API Error: No API key configured"
             
             # Prepare the API request
             headers = {
@@ -442,16 +474,18 @@ class TextProcessor:
                         "content": [
                             {
                                 "type": "text",
-                                "text": """Analyze this image comprehensively for financial document analysis. Focus on:
+                                "text": """You are analyzing an image from a financial document. Please provide a detailed analysis of what you see in this specific image.
 
-1. **Text Content**: Extract any visible text, numbers, dates, percentages
-2. **Charts & Graphs**: Identify chart types, data trends, key metrics
-3. **Tables**: Extract table data, headers, values
-4. **Financial Elements**: Revenue, profit, loss, ratios, KPIs
-5. **Visual Elements**: Logos, signatures, stamps, watermarks
-6. **Layout**: Document structure, sections, formatting
+IMPORTANT: Do NOT say you cannot see or analyze images. You CAN see this image and should analyze it.
 
-Provide a detailed analysis that can be used for financial document processing."""
+Please analyze:
+1. Any text, numbers, or data visible in the image
+2. If it's a chart, graph, or table - describe the type and key data points
+3. If it's a financial statement, report, or document - extract key information
+4. Any visual elements like logos, signatures, or formatting
+5. The overall content and purpose of this image
+
+Be specific about what you actually see in this image. If you see text, quote it. If you see numbers, state them. If you see a chart, describe its type and key trends."""
                             },
                             {
                                 "type": "image_url",
@@ -466,21 +500,42 @@ Provide a detailed analysis that can be used for financial document processing."
                 "temperature": 0.1
             }
             
+            print("Sending request to Vision API...")
             response = requests.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=30
+                timeout=60  # Increased timeout
             )
+            
+            print(f"Vision API response status: {response.status_code}")
             
             if response.status_code == 200:
                 result = response.json()
-                return result["choices"][0]["message"]["content"]
+                content = result["choices"][0]["message"]["content"]
+                print(f"Vision API response received: {len(content)} characters")
+                
+                # Check if response is generic
+                if "unable to display or analyze images" in content.lower() or "cannot see" in content.lower():
+                    print("Warning: Vision API returned generic response")
+                    return "Vision API returned generic response - image may not have been processed correctly"
+                
+                return content
             else:
-                return f"Vision API Error: {response.status_code}"
+                error_msg = f"Vision API Error: {response.status_code}"
+                try:
+                    error_detail = response.json()
+                    error_msg += f" - {error_detail.get('error', {}).get('message', 'Unknown error')}"
+                except:
+                    error_msg += f" - {response.text[:200]}"
+                
+                print(f"Vision API error: {error_msg}")
+                return error_msg
                 
         except Exception as e:
-            return f"Vision API Error: {str(e)}"
+            error_msg = f"Vision API Error: {str(e)}"
+            print(f"Vision API exception: {error_msg}")
+            return error_msg
 
     def detect_charts_and_graphs(self, image: Image.Image) -> str:
         """Detect and analyze charts, graphs, and visual data."""
