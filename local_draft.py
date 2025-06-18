@@ -41,163 +41,20 @@ class TextProcessor:
     def __init__(self, chunk_size: int = 500, overlap: int = 30):
         self.chunk_size = chunk_size
         self.overlap = overlap
-        self.image_analysis_cache = {}  # Cache for image analysis results
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract text from PDF including images using OCR and vision analysis."""
+        """Extract text from PDF - text only, no image processing."""
         try:
             print(f"Processing PDF: {pdf_path}")
-            # Extract regular text
+            # Extract regular text only
             doc = fitz.open(pdf_path)
             text_content = []
             
-            # Check if we should use fast mode (skip expensive processing)
-            fast_mode = os.getenv('FAST_MODE', 'false').lower() == 'true'
-            if fast_mode:
-                print("Using FAST MODE - skipping expensive image analysis")
-            
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
-                
-                # Extract regular text
                 text = page.get_text()
                 text_content.append(f"Page {page_num + 1} Text:\n{text}\n")
-                
-                # Skip expensive image processing in fast mode
-                if fast_mode:
-                    print(f"Page {page_num + 1}: Fast mode - skipping all image processing")
-                    continue
-                
-                # Original slow processing (only if not in fast mode)
-                # Try multiple methods to extract images
-                images_found = 0
-                
-                # Method 1: get_images()
-                image_list = page.get_images()
-                print(f"Page {page_num + 1}: Found {len(image_list)} images via get_images()")
-                
-                if image_list:
-                    text_content.append(f"Page {page_num + 1} Images:\n")
-                    
-                    for img_index, img in enumerate(image_list):
-                        try:
-                            print(f"Processing image {img_index + 1} on page {page_num + 1}")
-                            # Get image data
-                            xref = img[0]
-                            pix = fitz.Pixmap(doc, xref)
-                            
-                            # Handle different image formats
-                            if pix.n - pix.alpha < 4:  # GRAY or RGB
-                                print(f"Image {img_index + 1}: RGB/Gray format")
-                                # Convert to PIL Image
-                                img_data = pix.tobytes("png")
-                                pil_image = Image.open(io.BytesIO(img_data))
-                                
-                                # Analyze image with OCR and vision
-                                image_analysis = self.analyze_image(pil_image, page_num + 1, img_index + 1)
-                                text_content.append(image_analysis)
-                                images_found += 1
-                            elif pix.n == 4:  # CMYK
-                                print(f"Image {img_index + 1}: CMYK format, converting to RGB")
-                                # Convert CMYK to RGB
-                                pix_rgb = fitz.Pixmap(fitz.csRGB, pix)
-                                img_data = pix_rgb.tobytes("png")
-                                pil_image = Image.open(io.BytesIO(img_data))
-                                
-                                # Analyze image with OCR and vision
-                                image_analysis = self.analyze_image(pil_image, page_num + 1, img_index + 1)
-                                text_content.append(image_analysis)
-                                images_found += 1
-                                
-                                pix_rgb = None  # Free memory
-                            else:
-                                print(f"Image {img_index + 1}: Skipped (format: {pix.n} channels)")
-                            
-                            pix = None  # Free memory
-                        except Exception as e:
-                            print(f"Error processing image {img_index + 1}: {str(e)}")
-                            text_content.append(f"Error processing image {img_index + 1}: {str(e)}\n")
-                
-                # Skip expensive methods in fast mode
-                if not fast_mode:
-                    # Method 2: get_image_info()
-                    try:
-                        image_blocks = page.get_image_info()
-                        print(f"Page {page_num + 1}: Found {len(image_blocks)} images via get_image_info()")
-                        if image_blocks:
-                            if not image_list:  # Only add header if we didn't already
-                                text_content.append(f"Page {page_num + 1} Images:\n")
-                            
-                            for block_index, block in enumerate(image_blocks):
-                                try:
-                                    print(f"Processing image block {block_index + 1} on page {page_num + 1}")
-                                    # Try to extract the image - check if xref exists
-                                    if "xref" in block:
-                                        pix = fitz.Pixmap(doc, block["xref"])
-                                        if pix.n - pix.alpha < 4:  # GRAY or RGB
-                                            img_data = pix.tobytes("png")
-                                            pil_image = Image.open(io.BytesIO(img_data))
-                                            
-                                            # Analyze image
-                                            image_analysis = self.analyze_image(pil_image, page_num + 1, f"block_{block_index + 1}")
-                                            text_content.append(image_analysis)
-                                            images_found += 1
-                                        
-                                        pix = None  # Free memory
-                                    else:
-                                        print(f"Image block {block_index + 1}: No xref found in block")
-                                except Exception as e:
-                                    print(f"Error processing image block {block_index + 1}: {str(e)}")
-                                    text_content.append(f"Error processing image block {block_index + 1}: {str(e)}\n")
-                    except Exception as e:
-                        print(f"Error with get_image_info() on page {page_num + 1}: {str(e)}")
-                    
-                    # Method 3: get_drawings() - for vector graphics that might be charts
-                    try:
-                        drawings = page.get_drawings()
-                        print(f"Page {page_num + 1}: Found {len(drawings)} drawings")
-                        if drawings and len(drawings) > 5:  # If there are many drawing elements, might be a chart
-                            text_content.append(f"Page {page_num + 1} Vector Graphics:\n")
-                            text_content.append(f"Vector graphics detected - possible chart or diagram with {len(drawings)} elements\n")
-                    except Exception as e:
-                        print(f"Error with get_drawings() on page {page_num + 1}: {str(e)}")
-                    
-                    # Method 4: Convert page to image and analyze if no images found AND page has substantial content
-                    if images_found == 0:
-                        # Only convert to image if page has substantial text content (likely to have charts/tables)
-                        page_text = page.get_text().strip()
-                        if len(page_text) > 100:  # Only process pages with substantial text
-                            print(f"Page {page_num + 1}: No images found but substantial text, converting page to image for analysis")
-                            try:
-                                # Convert page to image
-                                mat = fitz.Matrix(2, 2)  # 2x zoom for better quality
-                                pix = page.get_pixmap(matrix=mat)
-                                img_data = pix.tobytes("png")
-                                pil_image = Image.open(io.BytesIO(img_data))
-                                
-                                # Check if the page image is likely to contain charts before processing
-                                if self.is_likely_chart(pil_image):
-                                    # Save the page image
-                                    page_filename = f"page_{page_num + 1}_full.png"
-                                    page_path = os.path.join("app_data", "images", page_filename)
-                                    os.makedirs(os.path.dirname(page_path), exist_ok=True)
-                                    pil_image.save(page_path)
-                                    
-                                    # Add page image reference
-                                    text_content.append(f"Page {page_num + 1} Full Page Image:\n")
-                                    text_content.append(f"IMAGE_REF:{page_filename}\n")
-                                    
-                                    # Analyze the page image for charts/tables
-                                    page_analysis = self.analyze_image(pil_image, page_num + 1, "full_page")
-                                    text_content.append(page_analysis)
-                                else:
-                                    print(f"Page {page_num + 1}: Converted page image appears to be text-heavy, skipping analysis")
-                                
-                                pix = None  # Free memory
-                            except Exception as e:
-                                print(f"Error converting page {page_num + 1} to image: {str(e)}")
-                        else:
-                            print(f"Page {page_num + 1}: No images found and minimal text, skipping page conversion")
+                print(f"Page {page_num + 1}: Text extracted")
             
             doc.close()
             final_content = "\n".join(text_content)
@@ -208,458 +65,9 @@ class TextProcessor:
             print(f"Error extracting text from PDF: {str(e)}")
             return f"Error extracting text from PDF: {str(e)}"
 
-    def analyze_image(self, image: Image.Image, page_num: int, img_index) -> str:
-        """Analyze image using OCR and vision APIs for comprehensive understanding."""
-        analysis_parts = []
-        
-        try:
-            print(f"Starting analysis of image {img_index} on page {page_num}")
-            
-            # Check for fast mode - skip all analysis if enabled
-            fast_mode = os.getenv('FAST_MODE', 'false').lower() == 'true'
-            if fast_mode:
-                print(f"Fast mode enabled - skipping detailed analysis of image {img_index}")
-                # Still save the image for display
-                img_index_str = str(img_index)
-                image_filename = f"image_page_{page_num}_img_{img_index_str}.png"
-                image_path = os.path.join("app_data", "images", image_filename)
-                os.makedirs(os.path.dirname(image_path), exist_ok=True)
-                image.save(image_path)
-                return f"Image {img_index}: Fast mode - image saved for display\n"
-            
-            # First, check if this image is likely a chart/graph
-            if not self.is_likely_chart(image):
-                print(f"Image {img_index} on page {page_num}: Skipped - likely text or decorative element")
-                return f"Image {img_index}: Skipped - not a chart/graph (text or decorative element)\n"
-            
-            # Convert img_index to string for filename
-            img_index_str = str(img_index)
-            
-            # Create cache key based on image hash
-            import hashlib
-            img_hash = hashlib.md5(image.tobytes()).hexdigest()
-            cache_key = f"{img_hash}_{page_num}_{img_index_str}"
-            
-            # Check cache first
-            if cache_key in self.image_analysis_cache:
-                print(f"Using cached analysis for image {img_index_str}")
-                return self.image_analysis_cache[cache_key]
-            
-            # Save image for display in answers
-            image_filename = f"image_page_{page_num}_img_{img_index_str}.png"
-            image_path = os.path.join("app_data", "images", image_filename)
-            os.makedirs(os.path.dirname(image_path), exist_ok=True)
-            image.save(image_path)
-            print(f"Image saved to: {image_path}")
-            
-            # Add image reference for display
-            analysis_parts.append(f"IMAGE_REF:{image_filename}")
-            print(f"Added image reference: {image_filename}")
-            
-            # 1. OCR Text Extraction (optional - only if Tesseract is available)
-            try:
-                import pytesseract
-                # Check if tesseract is available
-                import subprocess
-                result = subprocess.run(['tesseract', '--version'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    print("Running OCR...")
-                    ocr_text = pytesseract.image_to_string(image)
-                    if ocr_text.strip():
-                        analysis_parts.append(f"OCR Text: {ocr_text.strip()}")
-                        print(f"OCR found text: {len(ocr_text.strip())} characters")
-                    else:
-                        print("OCR found no text")
-                else:
-                    print("Tesseract not available, skipping OCR")
-            except ImportError:
-                print("OCR skipped - pytesseract not available")
-            except Exception as e:
-                print(f"OCR not available: {str(e)}")
-                # Don't add OCR error to analysis since it's optional
-            
-            # 2. Table Detection and Extraction (optional - only if Tesseract is available)
-            try:
-                import pytesseract
-                # Check if tesseract is available
-                import subprocess
-                result = subprocess.run(['tesseract', '--version'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    print("Running table detection...")
-                    table_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
-                    # Process table data if detected
-                    if any(float(conf) > 60 for conf in table_data['conf'] if conf != '-1'):
-                        analysis_parts.append("Table detected - data extracted via OCR")
-                        print("Table detected via OCR")
-                    else:
-                        print("No table detected via OCR")
-                else:
-                    print("Tesseract not available, skipping table detection")
-            except ImportError:
-                print("Table detection skipped - pytesseract not available")
-            except Exception as e:
-                print(f"Table detection not available: {str(e)}")
-                # Don't add table detection error to analysis since it's optional
-            
-            # 3. Vision API Analysis (OpenAI GPT-4 Vision) - This is the main analysis
-            # Check if Vision API should be skipped (can be set via environment variable)
-            skip_vision_api = os.getenv('SKIP_VISION_API', 'false').lower() == 'true'
-            if skip_vision_api:
-                print("Vision API analysis skipped due to SKIP_VISION_API setting")
-                analysis_parts.append("Vision Analysis: Skipped (disabled)")
-            else:
-                try:
-                    print("Running vision API analysis...")
-                    vision_analysis = self.analyze_image_with_vision_api(image)
-                    if vision_analysis:
-                        analysis_parts.append(f"Vision Analysis: {vision_analysis}")
-                        print(f"Vision API analysis completed: {len(vision_analysis)} characters")
-                    else:
-                        print("Vision API analysis failed or returned no results")
-                except Exception as e:
-                    print(f"Vision API failed: {str(e)}")
-                    # If vision API fails, continue without it
-                    analysis_parts.append(f"Vision Analysis: [Vision API failed: {str(e)}]")
-            
-            # 4. Chart/Graph Detection (with error handling)
-            try:
-                print("Running chart detection...")
-                chart_analysis = self.detect_charts_and_graphs(image)
-                if chart_analysis:
-                    analysis_parts.append(f"Chart Analysis: {chart_analysis}")
-                    print(f"Chart analysis completed: {len(chart_analysis)} characters")
-                else:
-                    print("Chart detection found no charts")
-            except Exception as e:
-                print(f"Chart detection failed: {str(e)}")
-                # If chart detection fails, continue without it
-                pass
-            
-            if analysis_parts:
-                result = f"Image {img_index_str} Analysis:\n" + "\n".join(analysis_parts) + "\n"
-                print(f"Image analysis completed successfully. Result length: {len(result)}")
-                
-                # Cache the result
-                self.image_analysis_cache[cache_key] = result
-                print(f"Cached analysis for image {img_index_str}")
-                
-                return result
-            else:
-                result = f"Image {img_index_str}: No text or significant content detected\n"
-                print("Image analysis completed but found no significant content")
-                
-                # Cache the result
-                self.image_analysis_cache[cache_key] = result
-                
-                return result
-                
-        except Exception as e:
-            error_msg = f"Image {img_index_str} Analysis Error: {str(e)}\n"
-            print(f"Image analysis error: {str(e)}")
-            return error_msg
-
-    def analyze_image_with_vision_api(self, image: Image.Image) -> str:
-        """Use OpenAI's GPT-4 Vision API for comprehensive image analysis."""
-        try:
-            print("Preparing image for Vision API...")
-            
-            # Validate and prepare image
-            if image.mode not in ['RGB', 'RGBA']:
-                image = image.convert('RGB')
-                print("Converted image to RGB mode")
-            
-            # Resize image if it's too large (Vision API has size limits)
-            max_size = 1024
-            if image.width > max_size or image.height > max_size:
-                image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                print(f"Resized image to {image.width}x{image.height}")
-            
-            # Convert image to base64
-            buffered = io.BytesIO()
-            image.save(buffered, format="PNG", optimize=True)
-            img_str = base64.b64encode(buffered.getvalue()).decode()
-            print(f"Image converted to base64, size: {len(img_str)} characters")
-            
-            # Check if image data is reasonable size
-            if len(img_str) > 20000000:  # ~20MB limit
-                print("Warning: Image data is very large, may cause API issues")
-            
-            # Check if API key is available
-            if not OPENAI_API_KEY:
-                return "Vision API Error: No API key configured"
-            
-            # Use the newer OpenAI library approach with timeout
-            try:
-                from openai import OpenAI
-                client = OpenAI(api_key=OPENAI_API_KEY, timeout=30.0)  # 30 second timeout
-                
-                print("Sending request to Vision API...")
-                response = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {
-                            "role": "system", 
-                            "content": "You are a financial document analysis expert. Analyze images comprehensively and provide detailed insights."
-                        },
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": """Analyze this image from a financial document and provide a detailed report with:
-
-**Observations:**
-- Any text, numbers, dates, or data visible
-- Chart types, graph elements, or table structures
-- Visual elements like logos, signatures, or formatting
-
-**Important Details:**
-- Key financial metrics, trends, or data points
-- Specific values, percentages, or figures
-- Document structure and layout
-
-**Analysis:**
-- What type of financial content this represents
-- Key insights or patterns identified
-- Any notable findings or anomalies
-
-Be specific about what you see and provide actionable insights."""
-                                },
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/png;base64,{img_str}"
-                                    }
-                                }
-                            ]
-                        }
-                    ],
-                    temperature=0.1,
-                    max_tokens=1000
-                )
-                
-                content = response.choices[0].message.content
-                print(f"Vision API response received: {len(content)} characters")
-                
-                # Check if response is generic
-                if "unable to display or analyze images" in content.lower() or "cannot see" in content.lower():
-                    print("Warning: Vision API returned generic response")
-                    return "Vision API returned generic response - image may not have been processed correctly"
-                
-                return content
-                
-            except ImportError:
-                # Fallback to requests if openai library not available
-                print("OpenAI library not available, using requests fallback")
-                return self._analyze_image_with_requests(image, img_str)
-            except Exception as e:
-                print(f"Vision API call failed: {str(e)}")
-                return f"Vision API Error: {str(e)}"
-                
-        except Exception as e:
-            error_msg = f"Vision API Error: {str(e)}"
-            print(f"Vision API exception: {error_msg}")
-            return error_msg
-    
-    def _analyze_image_with_requests(self, image: Image.Image, img_str: str) -> str:
-        """Fallback method using requests library."""
-        try:
-            headers = {
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            
-            payload = {
-                "model": "gpt-4o",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Analyze this financial document image comprehensively and provide detailed insights about any text, charts, tables, or data visible."
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{img_str}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                "max_tokens": 1000,
-                "temperature": 0.1
-            }
-            
-            print("Sending request to Vision API via requests...")
-            response = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=30  # 30 second timeout
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                content = result["choices"][0]["message"]["content"]
-                print(f"Vision API response received via requests: {len(content)} characters")
-                return content
-            else:
-                error_msg = f"Vision API Error: {response.status_code} - {response.text}"
-                print(f"Vision API error: {error_msg}")
-                return error_msg
-                
-        except requests.exceptions.Timeout:
-            error_msg = "Vision API Error: Request timed out after 30 seconds"
-            print(error_msg)
-            return error_msg
-        except Exception as e:
-            error_msg = f"Vision API Error: {str(e)}"
-            print(f"Vision API exception: {error_msg}")
-            return error_msg
-
-    def detect_charts_and_graphs(self, image: Image.Image) -> str:
-        """Detect and analyze charts, graphs, and visual data with improved filtering."""
-        try:
-            # Convert to grayscale for analysis
-            gray_image = image.convert('L')
-            width, height = image.size
-            
-            # More sophisticated chart detection heuristics
-            chart_score = 0
-            chart_indicators = []
-            
-            # 1. Size check - charts are usually substantial
-            if width > 300 and height > 200:
-                chart_score += 2
-                chart_indicators.append("substantial size")
-            elif width < 100 or height < 100:
-                # Too small, likely decorative
-                return "Image too small - likely decorative element"
-            
-            # 2. Color analysis for graphs
-            if image.mode in ['RGB', 'RGBA']:
-                colors = image.getcolors(maxcolors=1000)
-                if colors:
-                    unique_colors = len(colors)
-                    # Charts typically have multiple colors but not too many
-                    if 5 <= unique_colors <= 50:
-                        chart_score += 2
-                        chart_indicators.append(f"appropriate color count ({unique_colors})")
-                    elif unique_colors > 100:
-                        # Too many colors, might be a photo or complex image
-                        chart_score -= 1
-                        chart_indicators.append("too many colors")
-            
-            # 3. Edge detection for chart elements
-            try:
-                import numpy as np
-                from PIL import ImageFilter
-                
-                # Apply edge detection
-                edges = gray_image.filter(ImageFilter.FIND_EDGES)
-                edge_array = np.array(edges)
-                
-                # Count edge pixels
-                edge_pixels = np.sum(edge_array > 50)
-                total_pixels = width * height
-                edge_ratio = edge_pixels / total_pixels
-                
-                # Charts typically have moderate edge density
-                if 0.05 <= edge_ratio <= 0.3:
-                    chart_score += 2
-                    chart_indicators.append("appropriate edge density")
-                elif edge_ratio < 0.02:
-                    # Very few edges, might be plain text
-                    chart_score -= 2
-                    chart_indicators.append("low edge density - likely text")
-                    
-            except ImportError:
-                # numpy not available, skip edge detection
-                pass
-            
-            # 4. Text density check (if OCR is available)
-            try:
-                import pytesseract
-                import subprocess
-                result = subprocess.run(['tesseract', '--version'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    ocr_text = pytesseract.image_to_string(image)
-                    text_length = len(ocr_text.strip())
-                    
-                    # If image is mostly text, it's not a chart
-                    if text_length > (width * height * 0.01):  # High text density
-                        chart_score -= 3
-                        chart_indicators.append("high text density - likely text image")
-                    elif text_length < 10:  # Very little text
-                        chart_score += 1
-                        chart_indicators.append("low text density")
-                        
-            except (ImportError, Exception):
-                # OCR not available, skip text analysis
-                pass
-            
-            # 5. Aspect ratio check
-            aspect_ratio = width / height
-            if 0.5 <= aspect_ratio <= 2.0:  # Typical chart aspect ratios
-                chart_score += 1
-                chart_indicators.append("appropriate aspect ratio")
-            
-            # Determine if this is likely a chart
-            if chart_score >= 3:
-                return f"Chart/Graph detected (score: {chart_score}): {', '.join(chart_indicators)}"
-            elif chart_score >= 1:
-                return f"Possible chart (score: {chart_score}): {', '.join(chart_indicators)}"
-            else:
-                return "Not a chart - likely text or decorative element"
-                
-        except Exception as e:
-            return f"Chart detection error: {str(e)}"
-
-    def is_likely_chart(self, image: Image.Image) -> bool:
-        """Quick check to determine if image is likely a chart/graph."""
-        try:
-            width, height = image.size
-            
-            # Basic size filter
-            if width < 150 or height < 100:
-                return False
-            
-            # Check for color variety (charts have multiple colors)
-            if image.mode in ['RGB', 'RGBA']:
-                colors = image.getcolors(maxcolors=100)
-                if colors and len(colors) < 3:
-                    return False  # Too few colors, likely text
-            
-            # Quick edge density check
-            try:
-                import numpy as np
-                from PIL import ImageFilter
-                
-                gray_image = image.convert('L')
-                edges = gray_image.filter(ImageFilter.FIND_EDGES)
-                edge_array = np.array(edges)
-                edge_pixels = np.sum(edge_array > 50)
-                total_pixels = width * height
-                edge_ratio = edge_pixels / total_pixels
-                
-                # Charts have moderate edge density
-                if edge_ratio < 0.02 or edge_ratio > 0.4:
-                    return False
-                    
-            except ImportError:
-                # numpy not available, use basic check
-                pass
-            
-            return True
-            
-        except Exception:
-            return False
-
     def chunk_text(self, text: str) -> List[str]:
         """Split text into overlapping chunks."""
-        if not text:
+        if not text.strip():
             return []
         
         chunks = []
@@ -683,37 +91,40 @@ Be specific about what you see and provide actionable insights."""
             
             chunks.append(text[start:end])
             start = end - self.overlap
+            
+            if start >= len(text):
+                break
         
         return chunks
 
     def prepare_documents(self, pdf_paths: List[str]) -> List[Dict]:
-        """Prepare documents for vector storage with enhanced image recognition."""
+        """Prepare documents for vector storage."""
         documents = []
         
         for pdf_path in pdf_paths:
             try:
-                # Extract text including image analysis
-                text = self.extract_text_from_pdf(pdf_path)
+                # Extract text from PDF
+                text_content = self.extract_text_from_pdf(pdf_path)
                 
-                if text.strip():
+                if text_content.strip():
                     # Split into chunks
-                    chunks = self.chunk_text(text)
+                    chunks = self.chunk_text(text_content)
                     
                     for i, chunk in enumerate(chunks):
                         if chunk.strip():
                             documents.append({
-                                'text': chunk,
+                                'text': chunk.strip(),
                                 'metadata': {
-                                    'source': os.path.basename(pdf_path),
-                                    'page': i + 1,
-                                    'chunk': i + 1,
-                                    'date': datetime.now().strftime('%Y-%m-%d'),
-                                    'type': 'pdf_with_images'
+                                    'source': pdf_path,
+                                    'chunk_id': i,
+                                    'total_chunks': len(chunks),
+                                    'date': datetime.now().strftime('%Y-%m-%d')
                                 }
                             })
                 
             except Exception as e:
                 print(f"Error processing {pdf_path}: {str(e)}")
+                continue
         
         return documents
 
