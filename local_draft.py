@@ -15,8 +15,14 @@ import numpy as np
 from config import OPENAI_API_KEY
 import base64
 from PIL import Image
-import pytesseract
-from pdf2image import convert_from_path
+
+# Optional imports with fallbacks
+try:
+    from pdf2image import convert_from_path
+    PDF2IMAGE_AVAILABLE = True
+except ImportError:
+    PDF2IMAGE_AVAILABLE = False
+    print("Warning: pdf2image not available. Some PDF processing features may be limited.")
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -217,6 +223,7 @@ class TextProcessor:
             
             # 1. OCR Text Extraction (optional - only if Tesseract is available)
             try:
+                import pytesseract
                 # Check if tesseract is available
                 import subprocess
                 result = subprocess.run(['tesseract', '--version'], capture_output=True, text=True)
@@ -230,12 +237,15 @@ class TextProcessor:
                         print("OCR found no text")
                 else:
                     print("Tesseract not available, skipping OCR")
+            except ImportError:
+                print("OCR skipped - pytesseract not available")
             except Exception as e:
                 print(f"OCR not available: {str(e)}")
                 # Don't add OCR error to analysis since it's optional
             
             # 2. Table Detection and Extraction (optional - only if Tesseract is available)
             try:
+                import pytesseract
                 # Check if tesseract is available
                 import subprocess
                 result = subprocess.run(['tesseract', '--version'], capture_output=True, text=True)
@@ -250,6 +260,8 @@ class TextProcessor:
                         print("No table detected via OCR")
                 else:
                     print("Tesseract not available, skipping table detection")
+            except ImportError:
+                print("Table detection skipped - pytesseract not available")
             except Exception as e:
                 print(f"Table detection not available: {str(e)}")
                 # Don't add table detection error to analysis since it's optional
