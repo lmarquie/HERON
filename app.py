@@ -847,33 +847,6 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
             st.session_state.main_answer = answer
             st.session_state.main_results = results
         
-        # If internet search is requested, do it in parallel
-        if use_internet:
-            internet_context = """You are a document analysis expert with access to the internet.
-            Provide a concise answer using your knowledge and internet access.
-            Cite sources for data. If no source exists, mention that.
-            Focus on accurate, up-to-date information."""
-            
-            internet_start = time.time()
-            status_text.text("🌐 Searching the internet...")
-            
-            # Use ThreadPoolExecutor for parallel processing
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                internet_future = executor.submit(
-                    st.session_state.rag_system.question_handler.llm.generate_answer,
-                    question,
-                    internet_context
-                )
-                internet_answer = internet_future.result()
-            
-            # Display internet results
-            st.markdown("\n\n### Internet Search Results\n" + internet_answer)
-            
-            if is_follow_up:
-                st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
-            else:
-                st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
-        
         progress_bar.progress(100)
         status_text.text("✅ Done!")
         
