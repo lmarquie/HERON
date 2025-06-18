@@ -974,25 +974,30 @@ def show_main_page():
 
             # Process follow-up question if entered
             if follow_up_question and follow_up_question.strip() and not st.session_state.processing:
-                try:
-                    st.session_state.processing = True
-                    
-                    # Show processing status
-                    with st.spinner("Processing your follow-up question..."):
-                        generate_answer(follow_up_question, is_follow_up=True)
-                    
-                    # Add to follow-up questions list
-                    if st.session_state.follow_up_answer:
-                        st.session_state.follow_up_questions.append((follow_up_question, st.session_state.follow_up_answer))
-                    
-                    # Clear the input and rerun to show the new follow-up
-                    st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"Error processing follow-up question: {str(e)}")
-                    st.info("Please try again or rephrase your question.")
-                finally:
-                    st.session_state.processing = False
+                # Check if this question was already processed
+                if 'last_processed_follow_up' not in st.session_state or st.session_state.last_processed_follow_up != follow_up_question:
+                    try:
+                        st.session_state.processing = True
+                        st.session_state.last_processed_follow_up = follow_up_question
+                        
+                        # Show processing status
+                        with st.spinner("Processing your follow-up question..."):
+                            generate_answer(follow_up_question, is_follow_up=True)
+                        
+                        # Add to follow-up questions list
+                        if st.session_state.follow_up_answer:
+                            st.session_state.follow_up_questions.append((follow_up_question, st.session_state.follow_up_answer))
+                        
+                        # Clear the last processed question and rerun
+                        st.session_state.last_processed_follow_up = ""
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"Error processing follow-up question: {str(e)}")
+                        st.info("Please try again or rephrase your question.")
+                        st.session_state.last_processed_follow_up = ""
+                    finally:
+                        st.session_state.processing = False
 
         # Only show reset and export buttons if there's an answer
         if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
