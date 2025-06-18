@@ -10,6 +10,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+import psutil
+import torch
+import gc
+import shutil
 
 # Create app data directory if it doesn't exist
 DATA_DIR = 'app_data'
@@ -28,7 +32,11 @@ def get_current_settings():
             'max_tokens': 1000,
             'top_p': 0.9,
             'speed': 0.5,
-            'accuracy': 0.5
+            'accuracy': 0.5,
+            'enable_image_recognition': True,
+            'enable_ocr': True,
+            'enable_vision_api': True,
+            'enable_chart_detection': True
         }
     return st.session_state.settings
 
@@ -104,6 +112,17 @@ with st.sidebar:
     st.progress(settings['max_tokens'] / 2000)  # Normalize to 0-1 range
     st.write("Top P")
     st.progress(settings['top_p'])  # Already 0-1 range
+    
+    # Image Recognition Settings
+    st.subheader("Image Recognition")
+    st.write("Image Recognition")
+    st.progress(1.0 if settings.get('enable_image_recognition', True) else 0.0)
+    st.write("OCR Processing")
+    st.progress(1.0 if settings.get('enable_ocr', True) else 0.0)
+    st.write("Vision API")
+    st.progress(1.0 if settings.get('enable_vision_api', True) else 0.0)
+    st.write("Chart Detection")
+    st.progress(1.0 if settings.get('enable_chart_detection', True) else 0.0)
 
 # Initialize session state
 if 'current_page' not in st.session_state:
@@ -656,36 +675,67 @@ def should_cleanup():
         return False
 
 def cleanup_resources():
-    """Clean up all resources when the session ends."""
+    """Clean up resources to free memory and disk space."""
     try:
-        # Clear Streamlit's cache
-        st.cache_data.clear()
+        # Clear Streamlit cache
         st.cache_resource.clear()
         
         # Clear PyTorch's cache only if CUDA is available
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         
-        # Clear temporary files
-        temp_dir = "temp"
-        if os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir)
-                os.makedirs(temp_dir)
-            except Exception as e:
-                st.warning(f"Could not clean temp directory: {str(e)}")
+        # Clean up old image files (keep only recent ones)
+        images_dir = os.path.join("app_data", "images")
+        if os.path.exists(images_dir):
+            current_time = time.time()
+            for filename in os.listdir(images_dir):
+                file_path = os.path.join(images_dir, filename)
+                # Remove files older than 1 hour
+                if os.path.isfile(file_path) and (current_time - os.path.getmtime(file_path)) > 3600:
+                    try:
+                        os.remove(file_path)
+                    except:
+                        pass
         
-        # Clear session state selectively
-        keys_to_keep = ['rag_system', 'documents_loaded', 'vector_store']
-        for key in list(st.session_state.keys()):
-            if key not in keys_to_keep:
-                del st.session_state[key]
-            
         # Force garbage collection
         gc.collect()
-            
+        
     except Exception as e:
         st.warning(f"Error during cleanup: {str(e)}")
+
+def display_answer_with_images(answer_text):
+    """Display answer text with embedded images."""
+    if not answer_text:
+        return
+    
+    # Split the answer into parts
+    parts = answer_text.split('\n')
+    current_text = []
+    
+    for part in parts:
+        if part.startswith('IMAGE_REF:'):
+            # Display accumulated text
+            if current_text:
+                st.markdown('\n'.join(current_text))
+                current_text = []
+            
+            # Display the image
+            image_filename = part.replace('IMAGE_REF:', '').strip()
+            image_path = os.path.join("app_data", "images", image_filename)
+            
+            if os.path.exists(image_path):
+                try:
+                    st.image(image_path, caption=f"Document Image: {image_filename}", use_column_width=True)
+                except Exception as e:
+                    st.error(f"Error displaying image {image_filename}: {str(e)}")
+            else:
+                st.warning(f"Image not found: {image_filename}")
+        else:
+            current_text.append(part)
+    
+    # Display any remaining text
+    if current_text:
+        st.markdown('\n'.join(current_text))
 
 def type_text(text, container, speed=0.01):
     """Type out text with a typing effect"""
@@ -1041,7 +1091,7 @@ def show_main_page():
                         
                 # Display the answer
                 if st.session_state.main_answer:
-                    st.markdown(st.session_state.main_answer)
+                    display_answer_with_images(st.session_state.main_answer)
 
             except Exception as e:
                 st.error(f"Error processing question: {str(e)}")
@@ -1070,7 +1120,7 @@ def show_main_page():
             # Display all previous follow-up questions and answers
             for i, (q, a) in enumerate(st.session_state.follow_up_questions):
                 st.markdown(f"**Follow-up {i+1}:** {q}")
-                st.markdown(a)
+                display_answer_with_images(a)
                 st.markdown("---")
             
             # Add a new follow-up question input
