@@ -18,6 +18,7 @@ import shutil
 # Create app data directory if it doesn't exist
 DATA_DIR = 'app_data'
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(os.path.join(DATA_DIR, 'images'), exist_ok=True)
 
 def get_current_settings():
     """Get the current settings from session state or defaults"""
@@ -708,6 +709,12 @@ def display_answer_with_images(answer_text):
     if not answer_text:
         return
     
+    # Debug: Check if there are any image references
+    if 'IMAGE_REF:' not in answer_text:
+        # No images, just display text normally
+        st.markdown(answer_text)
+        return
+    
     # Split the answer into parts
     parts = answer_text.split('\n')
     current_text = []
@@ -723,13 +730,26 @@ def display_answer_with_images(answer_text):
             image_filename = part.replace('IMAGE_REF:', '').strip()
             image_path = os.path.join("app_data", "images", image_filename)
             
+            # Debug information
+            st.info(f"Looking for image: {image_filename}")
+            st.info(f"Full path: {image_path}")
+            st.info(f"Path exists: {os.path.exists(image_path)}")
+            
             if os.path.exists(image_path):
                 try:
                     st.image(image_path, caption=f"Document Image: {image_filename}", use_column_width=True)
+                    st.success(f"Successfully displayed image: {image_filename}")
                 except Exception as e:
                     st.error(f"Error displaying image {image_filename}: {str(e)}")
             else:
                 st.warning(f"Image not found: {image_filename}")
+                # List available images for debugging
+                images_dir = os.path.join("app_data", "images")
+                if os.path.exists(images_dir):
+                    available_images = os.listdir(images_dir)
+                    st.info(f"Available images in directory: {available_images}")
+                else:
+                    st.error("Images directory does not exist!")
         else:
             current_text.append(part)
     
@@ -1034,6 +1054,37 @@ def generate_multi_analyst_answer(question, use_internet=False):
     finally:
         st.session_state.processing = False
 
+def test_image_processing():
+    """Test function to manually process images from documents."""
+    if not hasattr(st.session_state, 'rag_system') or not st.session_state.rag_system:
+        st.error("RAG system not initialized")
+        return
+    
+    if not st.session_state.documents_loaded:
+        st.error("No documents loaded")
+        return
+    
+    st.info("Testing image processing...")
+    
+    # Check if images directory exists
+    images_dir = os.path.join("app_data", "images")
+    if os.path.exists(images_dir):
+        images = os.listdir(images_dir)
+        st.success(f"Images directory exists. Found {len(images)} images: {images}")
+    else:
+        st.error("Images directory does not exist!")
+    
+    # Check if any documents contain image references
+    if hasattr(st.session_state, 'main_results') and st.session_state.main_results:
+        for result in st.session_state.main_results:
+            text = result.get('text', '')
+            if 'IMAGE_REF:' in text:
+                st.success("Found image references in document results!")
+                st.code(text)
+                break
+        else:
+            st.warning("No image references found in document results")
+
 def show_main_page():
     """Show the main page with file upload and question input."""
     try:
@@ -1248,15 +1299,15 @@ def show_main_page():
                 # Create a container for the buttons
                 button_container = st.container()
                 with button_container:
-                    # Create two equal columns for the buttons
-                    button_col1, button_col2 = st.columns(2)
+                    # Create three equal columns for the buttons
+                    button_col1, button_col2, button_col3 = st.columns(3)
                     
                     # Define a common button style
                     button_style = """
                     <style>
                     div[data-testid="stButton"] button {
                         width: 100%;
-                        min-width: 200px;
+                        min-width: 150px;
                     }
                     </style>
                     """
@@ -1296,6 +1347,10 @@ def show_main_page():
                                     os.remove(pdf_path)
                             except Exception as e:
                                 st.error(f"Error generating PDF: {str(e)}")
+                    
+                    with button_col3:
+                        if st.button("Test Images", type="secondary", use_container_width=True):
+                            test_image_processing()
         
         st.markdown("</div>", unsafe_allow_html=True)
         
