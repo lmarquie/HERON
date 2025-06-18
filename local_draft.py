@@ -61,22 +61,24 @@ class TextProcessor:
                             img_data = pix.tobytes("png")
                             img_pil = Image.open(io.BytesIO(img_data))
                             
-                            # Save image for display
-                            img_filename = f"page_{page_num + 1}_image_{img_index + 1}.png"
-                            img_path = os.path.join("images", img_filename)
-                            img_pil.save(img_path)
-                            
-                            # Store image info for retrieval
-                            self.extracted_images[f"page_{page_num + 1}_image_{img_index + 1}"] = {
-                                'path': img_path,
-                                'page': page_num + 1,
-                                'image_num': img_index + 1
-                            }
-                            
-                            # Simple image analysis using Vision API
-                            img_analysis = self.analyze_image_simple(img_pil)
-                            if img_analysis:
-                                image_content.append(f"Page {page_num + 1}, Image {img_index + 1}: {img_analysis}")
+                            # Check if image is not just blank/white space
+                            if not self.is_blank_image(img_pil):
+                                # Save image for display
+                                img_filename = f"page_{page_num + 1}_image_{img_index + 1}.png"
+                                img_path = os.path.join("images", img_filename)
+                                img_pil.save(img_path)
+                                
+                                # Store image info for retrieval
+                                self.extracted_images[f"page_{page_num + 1}_image_{img_index + 1}"] = {
+                                    'path': img_path,
+                                    'page': page_num + 1,
+                                    'image_num': img_index + 1
+                                }
+                                
+                                # Simple image analysis using Vision API
+                                img_analysis = self.analyze_image_simple(img_pil)
+                                if img_analysis:
+                                    image_content.append(f"Page {page_num + 1}, Image {img_index + 1}: {img_analysis}")
                         
                         pix = None
                     except Exception as e:
@@ -395,13 +397,23 @@ class VectorStore:
         self.documents = []
         self.embeddings = None
         self.index = None
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')
         self.chunk_size = 500
         self.chunk_overlap = 50
+        
+        # Simple error handling for model loading
+        try:
+            self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            self.model = None
 
     def add_documents(self, documents: List[Dict]):
         """Add documents to the vector store."""
         if not documents:
+            return
+            
+        if self.model is None:
+            print("Error: No embedding model available")
             return
             
         print(f"Adding {len(documents)} documents to vector store...")
@@ -411,7 +423,11 @@ class VectorStore:
         
         # Generate embeddings
         print("Converting text to vector embeddings...")
-        embeddings = self.model.encode(texts, show_progress_bar=True)
+        try:
+            embeddings = self.model.encode(texts, show_progress_bar=True)
+        except Exception as e:
+            print(f"Error generating embeddings: {e}")
+            return
         
         # Store documents and embeddings
         self.documents.extend(documents)
@@ -430,26 +446,30 @@ class VectorStore:
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
         """Search for similar documents."""
-        if not self.documents or self.index is None:
+        if not self.documents or self.index is None or self.model is None:
             return []
         
-        # Generate query embedding
-        query_embedding = self.model.encode([query])
-        
-        # Search
-        scores, indices = self.index.search(query_embedding.astype('float32'), k)
-        
-        # Return results
-        results = []
-        for i, idx in enumerate(indices[0]):
-            if idx < len(self.documents):
-                results.append({
-                    'text': self.documents[idx]['text'],
-                    'metadata': self.documents[idx].get('metadata', {}),
-                    'score': float(scores[0][i])
-                })
-        
-        return results
+        try:
+            # Generate query embedding
+            query_embedding = self.model.encode([query])
+            
+            # Search
+            scores, indices = self.index.search(query_embedding.astype('float32'), k)
+            
+            # Return results
+            results = []
+            for i, idx in enumerate(indices[0]):
+                if idx < len(self.documents):
+                    results.append({
+                        'text': self.documents[idx]['text'],
+                        'metadata': self.documents[idx].get('metadata', {}),
+                        'score': float(scores[0][i])
+                    })
+            
+            return results
+        except Exception as e:
+            print(f"Error during search: {e}")
+            return []
 
 ### =================== Claude Handler =================== ###
 class ClaudeHandler:
