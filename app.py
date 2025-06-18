@@ -128,7 +128,6 @@ if conversation_history:
 if not conversation_history:
     # First question
     question = st.text_input("Ask a question about your documents:")
-    
     if st.button("Get Answer", type="primary"):
         if st.session_state.documents_loaded:
             with st.spinner("Processing..."):
@@ -144,13 +143,12 @@ if not conversation_history:
                         st.write("No images were found in the uploaded documents.")
                 else:
                     st.write(answer)
-                st.rerun()  # Refresh to show follow-up input
+                    st.rerun()  # Only rerun for text answers, not images
         else:
             st.error("Please upload documents first")
 else:
     # Follow-up question
     follow_up_question = st.text_input("Ask a follow-up question:")
-    
     if st.button("Ask Follow-up", type="primary"):
         if st.session_state.documents_loaded:
             with st.spinner("Processing follow-up..."):
@@ -166,7 +164,7 @@ else:
                         st.write("No images were found in the uploaded documents.")
                 else:
                     st.write(follow_up_answer)
-                st.rerun()  # Refresh to show next follow-up input
+                    st.rerun()  # Only rerun for text answers, not images
         else:
             st.error("Please upload documents first")
 
