@@ -972,13 +972,11 @@ def show_main_page():
                 key="current_follow_up_input"
             )
 
-            # Process follow-up question if entered
-            if follow_up_question and follow_up_question.strip() and not st.session_state.processing:
-                # Check if this question was already processed
-                if 'last_processed_follow_up' not in st.session_state or st.session_state.last_processed_follow_up != follow_up_question:
+            # Add a button to process the follow-up question
+            if follow_up_question and follow_up_question.strip():
+                if st.button("Ask Follow-up", type="primary"):
                     try:
                         st.session_state.processing = True
-                        st.session_state.last_processed_follow_up = follow_up_question
                         
                         # Show processing status
                         with st.spinner("Processing your follow-up question..."):
@@ -988,14 +986,12 @@ def show_main_page():
                         if st.session_state.follow_up_answer:
                             st.session_state.follow_up_questions.append((follow_up_question, st.session_state.follow_up_answer))
                         
-                        # Clear the last processed question and rerun
-                        st.session_state.last_processed_follow_up = ""
+                        # Rerun to show the new follow-up
                         st.rerun()
                         
                     except Exception as e:
                         st.error(f"Error processing follow-up question: {str(e)}")
                         st.info("Please try again or rephrase your question.")
-                        st.session_state.last_processed_follow_up = ""
                     finally:
                         st.session_state.processing = False
 
