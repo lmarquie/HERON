@@ -1,964 +1,886 @@
-# Import necessary libraries
+import streamlit as st
 import os
-import faiss
-import fitz  # PyMuPDF
-import pickle
-import torch
+import json
 import time
-from typing import List, Dict, Optional, Tuple
 from datetime import datetime
-from sentence_transformers import SentenceTransformer, CrossEncoder
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import requests
-import io
-import numpy as np
+from concurrent.futures import ThreadPoolExecutor
+from local_draft import RAGSystem, WebFileHandler
 from config import OPENAI_API_KEY
-import base64
-from PIL import Image
-import pytesseract
-from pdf2image import convert_from_path
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+import psutil
+import torch
+import gc
+import shutil
 
-### =================== Input Interface =================== ###
-class InputInterface:
-    def __init__(self):
-        self.download_dir = "local_documents"
-        os.makedirs(self.download_dir, exist_ok=True)
+# Create app data directory if it doesn't exist
+DATA_DIR = 'app_data'
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(os.path.join(DATA_DIR, 'images'), exist_ok=True)
 
-    def get_user_question(self) -> str:
-        return input("\nEnter your question: ").strip()
-
-    def display_answer(self, answer: str):
-        print("\nAnswer:", answer)
-
-### =================== Document Loading =================== ###
-class LocalFileHandler:
-    def __init__(self):
-        self.text_processor = TextProcessor()
-
-    def select_folder_interactive(self):
-        """Allow user to select a folder interactively"""
-        print("\nPlease select a folder containing your documents:")
-        print("1. Enter folder path manually")
-        print("2. Browse current directory")
-        
-        choice = input("Enter your choice (1-2): ")
-        
-        if choice == "1":
-            folder_path = input("Enter the folder path: ").strip()
-            if os.path.exists(folder_path) and os.path.isdir(folder_path):
-                return {
-                    'name': os.path.basename(folder_path),
-                    'path': folder_path
-                }
-            else:
-                print("Invalid folder path. Please try again.")
-                return self.select_folder_interactive()
-        
-        elif choice == "2":
-            current_dir = os.getcwd()
-            print(f"\nCurrent directory: {current_dir}")
-            print("\nAvailable folders:")
-            
-            folders = [item for item in os.listdir(current_dir) 
-                      if os.path.isdir(os.path.join(current_dir, item))]
-            
-            if not folders:
-                print("No folders found in current directory.")
-                return self.select_folder_interactive()
-            
-            for i, folder in enumerate(folders, 1):
-                print(f"{i}. {folder}")
-            
-            try:
-                folder_choice = int(input(f"\nSelect folder (1-{len(folders)}): "))
-                if 1 <= folder_choice <= len(folders):
-                    selected_folder = folders[folder_choice - 1]
-                    folder_path = os.path.join(current_dir, selected_folder)
-                    return {
-                        'name': selected_folder,
-                        'path': folder_path
-                    }
-                else:
-                    print("Invalid choice. Please try again.")
-                    return self.select_folder_interactive()
-            except ValueError:
-                print("Invalid input. Please try again.")
-                return self.select_folder_interactive()
-        
-        else:
-            print("Invalid choice. Please try again.")
-            return self.select_folder_interactive()
-
-    def process_selected_folder(self, folder_path):
-        """Process all files in the selected folder using TextProcessor with image recognition"""
-        try:
-            print(f"\nScanning folder: {folder_path}")
-            files = []
-            for item in os.listdir(folder_path):
-                full_path = os.path.join(folder_path, item)
-                if os.path.isfile(full_path):
-                    files.append({
-                        'name': item,
-                        'path': full_path
-                    })
-
-            if not files:
-                print("No files found in the selected folder.")
-                return []
-
-            print(f"\nFound {len(files)} files. Processing with image recognition...")
-            documents = []
-            for file in files:
-                if file['name'].endswith(('.txt', '.pdf')):
-                    try:
-                        if file['name'].endswith('.pdf'):
-                            # Use TextProcessor for PDF processing with image recognition
-                            content = self.text_processor.extract_text_from_pdf(file['path'])
-                        else:
-                            # For text files, use simple text extraction
-                            with open(file['path'], 'r', encoding='utf-8') as f:
-                                content = f.read()
-
-                        documents.append({
-                            'text': content,
-                            'metadata': {
-                                'source': file['name'],
-                                'path': file['path'],
-                                'date': datetime.now().isoformat()
-                            }
-                        })
-                        print(f"✓ Processed: {file['name']}")
-                    except Exception as e:
-                        print(f" Error processing {file['name']}: {str(e)}")
-
-            return documents
-        except Exception as e:
-            print(f" Error processing folder: {str(e)}")
-            return []
-
-class WebFileHandler(LocalFileHandler):
-    def __init__(self):
-        super().__init__()
-        self.temp_dir = "temp"
-        os.makedirs(self.temp_dir, exist_ok=True)
-
-    def process_uploaded_files(self, uploaded_files):
-        """Process files uploaded through Streamlit's file uploader using TextProcessor with image recognition"""
-        if not uploaded_files:
-            return []
-
-        documents = []
-        for uploaded_file in uploaded_files:
-            try:
-                # Save the uploaded file to a temporary location
-                temp_path = os.path.join(self.temp_dir, uploaded_file.name)
-                with open(temp_path, 'wb') as f:
-                    f.write(uploaded_file.getbuffer())
-
-                # Process the file based on its type using TextProcessor
-                if uploaded_file.name.endswith('.pdf'):
-                    # Use TextProcessor for PDF processing with image recognition
-                    content = self.text_processor.extract_text_from_pdf(temp_path)
-                elif uploaded_file.name.endswith('.txt'):
-                    # For text files, use simple text extraction
-                    with open(temp_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                else:
-                    continue
-
-                documents.append({
-                    'text': content,
-                    'metadata': {
-                        'source': uploaded_file.name,
-                        'path': temp_path,
-                        'date': datetime.now().isoformat()
-                    }
-                })
-
-                # Clean up the temporary file
-                os.remove(temp_path)
-
-            except Exception as e:
-                print(f"Error processing {uploaded_file.name}: {str(e)}")
-                continue
-
-        return documents
-
-### =================== Text Processing =================== ###
-class TextProcessor:
-    def __init__(self, chunk_size: int = 500, overlap: int = 30):
-        self.chunk_size = chunk_size
-        self.overlap = overlap
-        self.image_analysis_cache = {}  # Cache for image analysis results
-
-    def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract text from PDF including images using OCR and vision analysis."""
-        try:
-            print(f"Processing PDF: {pdf_path}")
-            # Extract regular text
-            doc = fitz.open(pdf_path)
-            text_content = []
-            
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
-                
-                # Extract regular text
-                text = page.get_text()
-                text_content.append(f"Page {page_num + 1} Text:\n{text}\n")
-                
-                # Try multiple methods to extract images
-                images_found = 0
-                
-                # Method 1: get_images()
-                image_list = page.get_images()
-                print(f"Page {page_num + 1}: Found {len(image_list)} images via get_images()")
-                
-                if image_list:
-                    text_content.append(f"Page {page_num + 1} Images:\n")
-                    
-                    for img_index, img in enumerate(image_list):
-                        try:
-                            print(f"Processing image {img_index + 1} on page {page_num + 1}")
-                            # Get image data
-                            xref = img[0]
-                            pix = fitz.Pixmap(doc, xref)
-                            
-                            # Handle different image formats
-                            if pix.n - pix.alpha < 4:  # GRAY or RGB
-                                print(f"Image {img_index + 1}: RGB/Gray format")
-                                # Convert to PIL Image
-                                img_data = pix.tobytes("png")
-                                pil_image = Image.open(io.BytesIO(img_data))
-                                
-                                # Analyze image with OCR and vision
-                                image_analysis = self.analyze_image(pil_image, page_num + 1, img_index + 1)
-                                text_content.append(image_analysis)
-                                images_found += 1
-                            elif pix.n == 4:  # CMYK
-                                print(f"Image {img_index + 1}: CMYK format, converting to RGB")
-                                # Convert CMYK to RGB
-                                pix_rgb = fitz.Pixmap(fitz.csRGB, pix)
-                                img_data = pix_rgb.tobytes("png")
-                                pil_image = Image.open(io.BytesIO(img_data))
-                                
-                                # Analyze image with OCR and vision
-                                image_analysis = self.analyze_image(pil_image, page_num + 1, img_index + 1)
-                                text_content.append(image_analysis)
-                                images_found += 1
-                                
-                                pix_rgb = None  # Free memory
-                            else:
-                                print(f"Image {img_index + 1}: Skipped (format: {pix.n} channels)")
-                            
-                            pix = None  # Free memory
-                        except Exception as e:
-                            print(f"Error processing image {img_index + 1}: {str(e)}")
-                            text_content.append(f"Error processing image {img_index + 1}: {str(e)}\n")
-                
-                # Method 2: get_image_info()
-                try:
-                    image_blocks = page.get_image_info()
-                    print(f"Page {page_num + 1}: Found {len(image_blocks)} images via get_image_info()")
-                    if image_blocks:
-                        if not image_list:  # Only add header if we didn't already
-                            text_content.append(f"Page {page_num + 1} Images:\n")
-                        
-                        for block_index, block in enumerate(image_blocks):
-                            try:
-                                print(f"Processing image block {block_index + 1} on page {page_num + 1}")
-                                # Try to extract the image - check if xref exists
-                                if "xref" in block:
-                                    pix = fitz.Pixmap(doc, block["xref"])
-                                    if pix.n - pix.alpha < 4:  # GRAY or RGB
-                                        img_data = pix.tobytes("png")
-                                        pil_image = Image.open(io.BytesIO(img_data))
-                                        
-                                        # Analyze image
-                                        image_analysis = self.analyze_image(pil_image, page_num + 1, f"block_{block_index + 1}")
-                                        text_content.append(image_analysis)
-                                        images_found += 1
-                                    
-                                    pix = None  # Free memory
-                                else:
-                                    print(f"Image block {block_index + 1}: No xref found in block")
-                            except Exception as e:
-                                print(f"Error processing image block {block_index + 1}: {str(e)}")
-                                text_content.append(f"Error processing image block {block_index + 1}: {str(e)}\n")
-                except Exception as e:
-                    print(f"Error with get_image_info() on page {page_num + 1}: {str(e)}")
-                
-                # Method 3: get_drawings() - for vector graphics that might be charts
-                try:
-                    drawings = page.get_drawings()
-                    print(f"Page {page_num + 1}: Found {len(drawings)} drawings")
-                    if drawings and len(drawings) > 5:  # If there are many drawing elements, might be a chart
-                        text_content.append(f"Page {page_num + 1} Vector Graphics:\n")
-                        text_content.append(f"Vector graphics detected - possible chart or diagram with {len(drawings)} elements\n")
-                except Exception as e:
-                    print(f"Error with get_drawings() on page {page_num + 1}: {str(e)}")
-                
-                # Method 4: Convert page to image and analyze if no images found AND page has substantial content
-                if images_found == 0:
-                    # Only convert to image if page has substantial text content (likely to have charts/tables)
-                    page_text = page.get_text().strip()
-                    if len(page_text) > 100:  # Only process pages with substantial text
-                        print(f"Page {page_num + 1}: No images found but substantial text, converting page to image for analysis")
-                        try:
-                            # Convert page to image
-                            mat = fitz.Matrix(2, 2)  # 2x zoom for better quality
-                            pix = page.get_pixmap(matrix=mat)
-                            img_data = pix.tobytes("png")
-                            pil_image = Image.open(io.BytesIO(img_data))
-                            
-                            # Save the page image
-                            page_filename = f"page_{page_num + 1}_full.png"
-                            page_path = os.path.join("app_data", "images", page_filename)
-                            os.makedirs(os.path.dirname(page_path), exist_ok=True)
-                            pil_image.save(page_path)
-                            
-                            # Add page image reference
-                            text_content.append(f"Page {page_num + 1} Full Page Image:\n")
-                            text_content.append(f"IMAGE_REF:{page_filename}\n")
-                            
-                            # Analyze the page image for charts/tables
-                            page_analysis = self.analyze_image(pil_image, page_num + 1, "full_page")
-                            text_content.append(page_analysis)
-                            
-                            pix = None  # Free memory
-                        except Exception as e:
-                            print(f"Error converting page {page_num + 1} to image: {str(e)}")
-                    else:
-                        print(f"Page {page_num + 1}: No images found and minimal text, skipping page conversion")
-            
-            doc.close()
-            final_content = "\n".join(text_content)
-            print(f"PDF processing completed. Total content length: {len(final_content)}")
-            return final_content
-            
-        except Exception as e:
-            print(f"Error extracting text from PDF: {str(e)}")
-            return f"Error extracting text from PDF: {str(e)}"
-
-    def analyze_image(self, image: Image.Image, page_num: int, img_index) -> str:
-        """Analyze image using OCR and vision APIs for comprehensive understanding."""
-        analysis_parts = []
-        
-        try:
-            print(f"Starting analysis of image {img_index} on page {page_num}")
-            # Convert img_index to string for filename
-            img_index_str = str(img_index)
-            
-            # Create cache key based on image hash
-            import hashlib
-            img_hash = hashlib.md5(image.tobytes()).hexdigest()
-            cache_key = f"{img_hash}_{page_num}_{img_index_str}"
-            
-            # Check cache first
-            if cache_key in self.image_analysis_cache:
-                print(f"Using cached analysis for image {img_index_str}")
-                return self.image_analysis_cache[cache_key]
-            
-            # Save image for display in answers
-            image_filename = f"image_page_{page_num}_img_{img_index_str}.png"
-            image_path = os.path.join("app_data", "images", image_filename)
-            os.makedirs(os.path.dirname(image_path), exist_ok=True)
-            image.save(image_path)
-            print(f"Image saved to: {image_path}")
-            
-            # Add image reference for display
-            analysis_parts.append(f"IMAGE_REF:{image_filename}")
-            print(f"Added image reference: {image_filename}")
-            
-            # 1. OCR Text Extraction (optional - only if Tesseract is available)
-            try:
-                # Check if tesseract is available
-                import subprocess
-                result = subprocess.run(['tesseract', '--version'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    print("Running OCR...")
-                    ocr_text = pytesseract.image_to_string(image)
-                    if ocr_text.strip():
-                        analysis_parts.append(f"OCR Text: {ocr_text.strip()}")
-                        print(f"OCR found text: {len(ocr_text.strip())} characters")
-                    else:
-                        print("OCR found no text")
-                else:
-                    print("Tesseract not available, skipping OCR")
-            except Exception as e:
-                print(f"OCR not available: {str(e)}")
-                # Don't add OCR error to analysis since it's optional
-            
-            # 2. Table Detection and Extraction (optional - only if Tesseract is available)
-            try:
-                # Check if tesseract is available
-                import subprocess
-                result = subprocess.run(['tesseract', '--version'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    print("Running table detection...")
-                    table_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
-                    # Process table data if detected
-                    if any(float(conf) > 60 for conf in table_data['conf'] if conf != '-1'):
-                        analysis_parts.append("Table detected - data extracted via OCR")
-                        print("Table detected via OCR")
-                    else:
-                        print("No table detected via OCR")
-                else:
-                    print("Tesseract not available, skipping table detection")
-            except Exception as e:
-                print(f"Table detection not available: {str(e)}")
-                # Don't add table detection error to analysis since it's optional
-            
-            # 3. Vision API Analysis (OpenAI GPT-4 Vision) - This is the main analysis
-            try:
-                print("Running vision API analysis...")
-                vision_analysis = self.analyze_image_with_vision_api(image)
-                if vision_analysis:
-                    analysis_parts.append(f"Vision Analysis: {vision_analysis}")
-                    print(f"Vision API analysis completed: {len(vision_analysis)} characters")
-                else:
-                    print("Vision API analysis failed or returned no results")
-            except Exception as e:
-                print(f"Vision API failed: {str(e)}")
-                # If vision API fails, continue without it
-                analysis_parts.append(f"Vision Analysis: [Vision API failed: {str(e)}]")
-            
-            # 4. Chart/Graph Detection (with error handling)
-            try:
-                print("Running chart detection...")
-                chart_analysis = self.detect_charts_and_graphs(image)
-                if chart_analysis:
-                    analysis_parts.append(f"Chart Analysis: {chart_analysis}")
-                    print(f"Chart analysis completed: {len(chart_analysis)} characters")
-                else:
-                    print("Chart detection found no charts")
-            except Exception as e:
-                print(f"Chart detection failed: {str(e)}")
-                # If chart detection fails, continue without it
-                pass
-            
-            if analysis_parts:
-                result = f"Image {img_index_str} Analysis:\n" + "\n".join(analysis_parts) + "\n"
-                print(f"Image analysis completed successfully. Result length: {len(result)}")
-                
-                # Cache the result
-                self.image_analysis_cache[cache_key] = result
-                print(f"Cached analysis for image {img_index_str}")
-                
-                return result
-            else:
-                result = f"Image {img_index_str}: No text or significant content detected\n"
-                print("Image analysis completed but found no significant content")
-                
-                # Cache the result
-                self.image_analysis_cache[cache_key] = result
-                
-                return result
-                
-        except Exception as e:
-            error_msg = f"Image {img_index_str} Analysis Error: {str(e)}\n"
-            print(f"Image analysis error: {str(e)}")
-            return error_msg
-
-    def analyze_image_with_vision_api(self, image: Image.Image) -> str:
-        """Use OpenAI's GPT-4 Vision API for comprehensive image analysis."""
-        try:
-            print("Preparing image for Vision API...")
-            
-            # Validate and prepare image
-            if image.mode not in ['RGB', 'RGBA']:
-                image = image.convert('RGB')
-                print("Converted image to RGB mode")
-            
-            # Resize image if it's too large (Vision API has size limits)
-            max_size = 1024
-            if image.width > max_size or image.height > max_size:
-                image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                print(f"Resized image to {image.width}x{image.height}")
-            
-            # Convert image to base64
-            buffered = io.BytesIO()
-            image.save(buffered, format="PNG", optimize=True)
-            img_str = base64.b64encode(buffered.getvalue()).decode()
-            print(f"Image converted to base64, size: {len(img_str)} characters")
-            
-            # Check if image data is reasonable size
-            if len(img_str) > 20000000:  # ~20MB limit
-                print("Warning: Image data is very large, may cause API issues")
-            
-            # Check if API key is available
-            if not OPENAI_API_KEY:
-                return "Vision API Error: No API key configured"
-            
-            # Prepare the API request
-            headers = {
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            
-            payload = {
-                "model": "gpt-4o",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": """You are analyzing an image from a financial document. Please provide a detailed analysis of what you see in this specific image.
-
-IMPORTANT: Do NOT say you cannot see or analyze images. You CAN see this image and should analyze it.
-
-Please analyze:
-1. Any text, numbers, or data visible in the image
-2. If it's a chart, graph, or table - describe the type and key data points
-3. If it's a financial statement, report, or document - extract key information
-4. Any visual elements like logos, signatures, or formatting
-5. The overall content and purpose of this image
-
-Be specific about what you actually see in this image. If you see text, quote it. If you see numbers, state them. If you see a chart, describe its type and key trends."""
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{img_str}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                "max_tokens": 1000,
-                "temperature": 0.1
-            }
-            
-            print("Sending request to Vision API...")
-            response = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=60  # Increased timeout
-            )
-            
-            print(f"Vision API response status: {response.status_code}")
-            
-            if response.status_code == 200:
-                result = response.json()
-                content = result["choices"][0]["message"]["content"]
-                print(f"Vision API response received: {len(content)} characters")
-                
-                # Check if response is generic
-                if "unable to display or analyze images" in content.lower() or "cannot see" in content.lower():
-                    print("Warning: Vision API returned generic response")
-                    return "Vision API returned generic response - image may not have been processed correctly"
-                
-                return content
-            else:
-                error_msg = f"Vision API Error: {response.status_code}"
-                try:
-                    error_detail = response.json()
-                    error_msg += f" - {error_detail.get('error', {}).get('message', 'Unknown error')}"
-                except:
-                    error_msg += f" - {response.text[:200]}"
-                
-                print(f"Vision API error: {error_msg}")
-                return error_msg
-                
-        except Exception as e:
-            error_msg = f"Vision API Error: {str(e)}"
-            print(f"Vision API exception: {error_msg}")
-            return error_msg
-
-    def detect_charts_and_graphs(self, image: Image.Image) -> str:
-        """Detect and analyze charts, graphs, and visual data."""
-        try:
-            # Convert to grayscale for analysis
-            gray_image = image.convert('L')
-            width, height = image.size
-            
-            # Simple heuristics for chart detection
-            chart_indicators = []
-            
-            # Check image size - charts are usually larger than small icons
-            if width > 200 and height > 200:
-                chart_indicators.append("large image size")
-            
-            # Check for color variations (common in graphs)
-            if image.mode in ['RGB', 'RGBA']:
-                # Get color statistics
-                colors = image.getcolors(maxcolors=1000)
-                if colors and len(colors) > 10:  # Multiple colors suggest charts
-                    chart_indicators.append("multiple colors detected")
-            
-            # Basic pattern detection
-            if chart_indicators:
-                return f"Chart/Graph detected: {', '.join(chart_indicators)}"
-            else:
-                return "No specific chart patterns detected"
-                
-        except Exception as e:
-            return f"Chart detection error: {str(e)}"
-
-    def chunk_text(self, text: str) -> List[str]:
-        """Split text into overlapping chunks."""
-        if not text:
-            return []
-        
-        chunks = []
-        start = 0
-        
-        while start < len(text):
-            end = start + self.chunk_size
-            
-            if end >= len(text):
-                chunks.append(text[start:])
-                break
-            
-            # Try to break at a sentence boundary
-            last_period = text.rfind('.', start, end)
-            last_newline = text.rfind('\n', start, end)
-            
-            if last_period > start and last_period > last_newline:
-                end = last_period + 1
-            elif last_newline > start:
-                end = last_newline + 1
-            
-            chunks.append(text[start:end])
-            start = end - self.overlap
-        
-        return chunks
-
-    def prepare_documents(self, pdf_paths: List[str]) -> List[Dict]:
-        """Prepare documents for vector storage with enhanced image recognition."""
-        documents = []
-        
-        for pdf_path in pdf_paths:
-            try:
-                # Extract text including image analysis
-                text = self.extract_text_from_pdf(pdf_path)
-                
-                if text.strip():
-                    # Split into chunks
-                    chunks = self.chunk_text(text)
-                    
-                    for i, chunk in enumerate(chunks):
-                        if chunk.strip():
-                            documents.append({
-                                'text': chunk,
-                                'metadata': {
-                                    'source': os.path.basename(pdf_path),
-                                    'page': i + 1,
-                                    'chunk': i + 1,
-                                    'date': datetime.now().strftime('%Y-%m-%d'),
-                                    'type': 'pdf_with_images'
-                                }
-                            })
-                
-            except Exception as e:
-                print(f"Error processing {pdf_path}: {str(e)}")
-        
-        return documents
-
-### =================== Vector Store =================== ###
-class VectorStore:
-    def __init__(self, dimension: int = 768):
-        self.dimension = dimension
-        self.index = None
-        self.documents = []
-        
-        # Use a smaller, faster model with local caching
-        model_name = 'paraphrase-MiniLM-L3-v2'  # Smaller model than all-MiniLM-L6-v2
-        cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'sentence_transformers')
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        try:
-            # Try to load from cache first
-            self.bi_encoder = SentenceTransformer(model_name, cache_folder=cache_dir)
-            # Use a more powerful cross-encoder for better ranking
-            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2', cache_folder=cache_dir)
-        except Exception as e:
-            print(f"Error loading models: {str(e)}")
-            print("Falling back to smaller models...")
-            # Fallback to even smaller models if the main ones fail
-            self.bi_encoder = SentenceTransformer('paraphrase-MiniLM-L3-v2', cache_folder=cache_dir)
-            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-TinyBERT-L-2-v2', cache_folder=cache_dir)
-        
-        # Optimize model settings
-        self.bi_encoder.max_seq_length = 128  # Reduced from 64 for better context
-        self.cross_encoder.max_seq_length = 128
-        
-        if torch.cuda.is_available():
-            self.bi_encoder = self.bi_encoder.to('cuda')
-            self.cross_encoder = self.cross_encoder.to('cuda')
-            self.bi_encoder = self.bi_encoder.half()
-            self.cross_encoder = self.cross_encoder.half()
-        
-        self.embedding_cache = {}
-        self.similarity_cache = {}
-        self.metadata_index = {}
-        self.chunk_size = 500
-        self.chunk_overlap = 50
-        print(f"Initialized VectorStore with optimized models on {self.bi_encoder.device}")
-
-    def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store"""
-        print(f"Adding {len(documents)} documents to vector store...")
-        texts = []
-        metadata_list = []
-        for doc in documents:
-            metadata = {
-                'source': doc['metadata'].get('source', 'Unknown'),
-                'path': doc['metadata'].get('path', ''),
-                'date': doc['metadata'].get('date', datetime.now().isoformat())
-            }
-            texts.append(doc['text'])
-            metadata_list.append(metadata)
-
-        print("Converting text to vector embeddings...")
-        # Increased batch size for faster processing
-        embeddings = self.bi_encoder.encode(texts,
-                                          show_progress_bar=True,
-                                          batch_size=64,  # Increased from 32
-                                          convert_to_numpy=True,
-                                          normalize_embeddings=True)
-
-        if self.index is None:
-            # Use a more efficient index type
-            if torch.cuda.is_available():
-                res = faiss.StandardGpuResources()
-                quantizer = faiss.IndexFlatIP(embeddings.shape[1])
-                self.index = faiss.IndexIVFFlat(quantizer, embeddings.shape[1],
-                                              min(100, len(embeddings)),
-                                              faiss.METRIC_INNER_PRODUCT)
-                self.index = faiss.index_cpu_to_gpu(res, 0, self.index)
-                if not self.index.is_trained and len(embeddings) > 0:
-                    self.index.train(embeddings.astype('float32'))
-            else:
-                self.index = faiss.IndexFlatIP(embeddings.shape[1])
-            print(f"Created new FAISS index with dimension: {embeddings.shape[1]}")
-        self.index.add(embeddings.astype('float32'))
-
-        for i, (text, metadata) in enumerate(zip(texts, metadata_list)):
-            self.documents.append({
-                'text': text,
-                'metadata': metadata
-            })
-            for key, value in metadata.items():
-                if key not in self.metadata_index:
-                    self.metadata_index[key] = {}
-                if value not in self.metadata_index[key]:
-                    self.metadata_index[key][value] = set()
-                self.metadata_index[key][value].add(i)
-
-        print(f"Successfully added {len(documents)} documents. Total documents: {len(self.documents)}")
-
-    def save_local(self, path: str):
-        """Save the vector store to a local directory"""
-        if not os.path.exists(path):
-            os.makedirs(path)
-        
-        # Save the index
-        if self.index is not None:
-            faiss.write_index(self.index, os.path.join(path, 'index.faiss'))
-        
-        # Save the documents and metadata
-        with open(os.path.join(path, 'documents.pkl'), 'wb') as f:
-            pickle.dump({
-                'documents': self.documents,
-                'metadata_index': self.metadata_index,
-                'chunk_size': self.chunk_size,
-                'chunk_overlap': self.chunk_overlap
-            }, f)
-        
-        print(f"Vector store saved to {path}")
-
-    def load_local(self, path: str):
-        """Load the vector store from a local directory"""
-        # Load the index
-        index_path = os.path.join(path, 'index.faiss')
-        if os.path.exists(index_path):
-            self.index = faiss.read_index(index_path)
-        
-        # Load the documents and metadata
-        documents_path = os.path.join(path, 'documents.pkl')
-        if os.path.exists(documents_path):
-            with open(documents_path, 'rb') as f:
-                data = pickle.load(f)
-                self.documents = data['documents']
-                self.metadata_index = data['metadata_index']
-                self.chunk_size = data.get('chunk_size', 500)
-                self.chunk_overlap = data.get('chunk_overlap', 50)
-        
-        # Reinitialize models with proper device placement
-        self.bi_encoder = SentenceTransformer('paraphrase-MiniLM-L3-v2')
-        self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-        self.bi_encoder.max_seq_length = 128
-        self.cross_encoder.max_seq_length = 128
-        
-        if torch.cuda.is_available():
-            self.bi_encoder = self.bi_encoder.to('cuda')
-            self.cross_encoder = self.cross_encoder.to('cuda')
-            self.bi_encoder = self.bi_encoder.half()
-            self.cross_encoder = self.cross_encoder.half()
-        
-        print(f"Vector store loaded from {path}")
-
-    def preprocess_query(self, query: str) -> str:
-        """Preprocess the query to improve search relevance"""
-        # Convert to lowercase
-        query = query.lower()
-        
-        # Add financial context if query seems financial
-        financial_terms = ['revenue', 'profit', 'earnings', 'income', 'financial', 'numbers', 'quarterly', 'annual', 'report']
-        if any(term in query for term in financial_terms):
-            query = f"financial report {query}"
-        
-        return query
-
-    def search(self, query: str, k: int = 3) -> List[Dict]:
-        """Search for relevant documents with improved ranking"""
-        # Check cache first
-        cache_key = f"{query}:{k}"
-        if cache_key in self.similarity_cache:
-            return self.similarity_cache[cache_key]
-
-        # Preprocess query
-        processed_query = self.preprocess_query(query)
-        
-        # Get query embedding
-        query_embedding = self.get_embedding(processed_query)
-        
-        # Search in FAISS index
-        if self.index is not None:
-            # Use a larger initial search to get more candidates
-            initial_k = min(k * 4, len(self.documents))  # Increased from k*2 to k*4
-            scores, indices = self.index.search(query_embedding.reshape(1, -1).astype('float32'), initial_k)
-            
-            # Get documents and their scores
-            candidates = []
-            for score, idx in zip(scores[0], indices[0]):
-                if idx != -1:  # FAISS returns -1 for empty slots
-                    doc = self.documents[idx]
-                    candidates.append({
-                        'text': doc['text'],
-                        'metadata': doc['metadata'],
-                        'score': float(score)
-                    })
-            
-            # Re-rank using cross-encoder
-            if candidates:
-                # Prepare pairs for cross-encoder
-                pairs = [(processed_query, candidate['text']) for candidate in candidates]
-                
-                # Get cross-encoder scores
-                cross_scores = self.cross_encoder.predict(pairs)
-                
-                # Update scores with cross-encoder scores
-                for candidate, cross_score in zip(candidates, cross_scores):
-                    # Combine bi-encoder and cross-encoder scores
-                    candidate['score'] = 0.3 * candidate['score'] + 0.7 * float(cross_score)
-            
-            # Sort by combined score in descending order and take top k
-            candidates.sort(key=lambda x: x['score'], reverse=True)
-            results = candidates[:k]
-            
-            # Cache the results
-            self.similarity_cache[cache_key] = results
-            return results
-        
-        return []
-
-    def get_embedding(self, text: str):
-        if text in self.embedding_cache:
-            return self.embedding_cache[text]
-        else:
-            embedding = self.bi_encoder.encode([text],
-                                              batch_size=1,
-                                              convert_to_numpy=True,
-                                              normalize_embeddings=True)
-            self.embedding_cache[text] = embedding
-            return embedding
-
-### =================== Claude Handler =================== ###
-class ClaudeHandler:
-    def __init__(self, system_prompt=None):
-        self.api_key = OPENAI_API_KEY
-        self.api_url = "https://api.openai.com/v1/chat/completions"
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
+def get_current_settings():
+    """Get the current settings from session state or defaults"""
+    if not hasattr(st.session_state, 'settings'):
+        st.session_state.settings = {
+            'chunk_size': 500,
+            'chunk_overlap': 50,
+            'max_chunks': 10,
+            'search_depth': 3,
+            'relevance_threshold': 0.7,
+            'temperature': 0.3,
+            'max_tokens': 1000,
+            'top_p': 0.9,
+            'speed': 0.5,
+            'accuracy': 0.5,
+            'enable_image_recognition': True,
+            'enable_ocr': True,
+            'enable_vision_api': True,
+            'enable_chart_detection': True
         }
-        self.max_retries = 10
-        self.timeout = 600
-        self.response_cache = {}
-        self.session = requests.Session()
-        self.system_prompt = system_prompt or "Answer based on the context."
+    return st.session_state.settings
 
-    def generate_answer(self, question: str, context: str) -> str:
-        cache_key = f"{question}:{hash(context)}"
+# Set page config
+st.set_page_config(
+    page_title="HERON - Herbert Advisory",
+    page_icon="🦅",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-        if cache_key in self.response_cache:
-            return self.response_cache[cache_key]
+# Sidebar
+with st.sidebar:
+    st.markdown("""
+        <div style='text-align: center; padding: 1rem 0; margin-bottom: 1rem;'>
+            <h2 style='color: #1E3A8A; font-size: 1.2rem; font-weight: 600; margin: 0 0 0.5rem 0;'>Herbert Advisory</h2>
+            <p style='color: #4B5563; font-size: 0.9rem; line-height: 1.4;'>
+                HERON (Herbert Embedded Retrieval and Oracle Network) is an advanced document analysis platform that leverages artificial intelligence to facilitate comprehensive document interrogation through natural language processing capabilities.
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # File uploader
+    st.header("Upload Documents")
+    try:
+        uploaded_files = st.file_uploader(
+            label="Upload your documents to analyze",
+            type=['pdf', 'txt'],
+            accept_multiple_files=True,
+            help="Upload PDF or text files to analyze",
+            label_visibility="collapsed",
+            key="sidebar_file_uploader"
+        )
+        
+        if uploaded_files:
+            if st.session_state.rag_system.process_web_uploads(uploaded_files):
+                st.success(f"Successfully processed {len(uploaded_files)} file(s)")
+                st.session_state.documents_loaded = True
+            else:
+                st.error("Failed to process uploaded files")
+    except Exception as e:
+        st.error(f"Error with file uploader: {str(e)}")
+        st.info("If you're running this in a cloud environment, please ensure you have proper permissions.")
+    
+    st.divider()
+    
+    # Display current model settings
+    st.header("Model Settings")
+    
+    settings = get_current_settings()
+    
+    # Document Processing
+    st.subheader("Document Processing")
+    st.write("Chunk Size")
+    st.progress(settings['chunk_size'] / 1000)  # Normalize to 0-1 range
+    st.write("Chunk Overlap")
+    st.progress(settings['chunk_overlap'] / 100)  # Normalize to 0-1 range
+    st.write("Max Chunks")
+    st.progress(settings['max_chunks'] / 20)  # Normalize to 0-1 range
+    
+    # Search Settings
+    st.subheader("Search Settings")
+    st.write("Search Depth")
+    st.progress(settings['search_depth'] / 5)  # Normalize to 0-1 range
+    st.write("Relevance Threshold")
+    st.progress(settings['relevance_threshold'])  # Already 0-1 range
+    
+    # Model Parameters
+    st.subheader("Model Parameters")
+    st.write("Temperature")
+    st.progress(settings['temperature'])  # Already 0-1 range
+    st.write("Max Tokens")
+    st.progress(settings['max_tokens'] / 2000)  # Normalize to 0-1 range
+    st.write("Top P")
+    st.progress(settings['top_p'])  # Already 0-1 range
+    
+    # Image Recognition Settings
+    st.subheader("Image Recognition")
+    st.write("Image Recognition")
+    st.progress(1.0 if settings.get('enable_image_recognition', True) else 0.0)
+    st.write("OCR Processing")
+    st.progress(1.0 if settings.get('enable_ocr', True) else 0.0)
+    st.write("Vision API")
+    st.progress(1.0 if settings.get('enable_vision_api', True) else 0.0)
+    st.write("Chart Detection")
+    st.progress(1.0 if settings.get('enable_chart_detection', True) else 0.0)
 
-        for attempt in range(self.max_retries):
+# Initialize session state
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = "main"
+if 'question' not in st.session_state:
+    st.session_state.question = ""
+if 'answer' not in st.session_state:
+    st.session_state.answer = None
+if 'sources' not in st.session_state:
+    st.session_state.sources = []
+if 'conversation_history' not in st.session_state:
+    st.session_state.conversation_history = []
+if 'documents_loaded' not in st.session_state:
+    st.session_state.documents_loaded = False
+if 'vector_store' not in st.session_state:
+    st.session_state.vector_store = None
+if 'rag_system' not in st.session_state:
+    # Check if Vision API should be enabled
+    use_vision_api = st.session_state.get('use_vision_api', True)
+    st.session_state.rag_system = RAGSystem(is_web=True, use_vision_api=use_vision_api)
+    st.session_state.documents_loaded = False
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
+if 'current_theme' not in st.session_state:
+    st.session_state.current_theme = "System Default"
+if 'main_answer' not in st.session_state:
+    st.session_state.main_answer = None
+if 'main_results' not in st.session_state:
+    st.session_state.main_results = []
+if 'follow_up_answer' not in st.session_state:
+    st.session_state.follow_up_answer = None
+
+# Create data directory if it doesn't exist
+DATA_DIR = "app_data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Ensure images directory exists
+images_dir = os.path.join("app_data", "images")
+os.makedirs(images_dir, exist_ok=True)
+
+def save_conversation_history():
+    """Save conversation history to a file"""
+    if 'main_answer' in st.session_state:
+        data = {
+            'main_answer': st.session_state.main_answer,
+            'main_results': st.session_state.main_results if 'main_results' in st.session_state else [],
+            'question': st.session_state.question if 'question' in st.session_state else "",
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Save to file
+        with open(os.path.join(DATA_DIR, 'conversation_history.json'), 'w') as f:
+            json.dump(data, f)
+
+def load_conversation_history():
+    """Load conversation history from file"""
+    history_file = os.path.join(DATA_DIR, 'conversation_history.json')
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, 'r') as f:
+                data = json.load(f)
+                
+            if data['main_answer']:
+                st.session_state.main_answer = data['main_answer']
+            if 'main_results' in data:
+                st.session_state.main_results = data['main_results']
+            if 'question' in data:
+                st.session_state.question = data['question']
+        except Exception as e:
+            st.error(f"Error loading conversation history: {str(e)}")
+
+def save_settings(settings):
+    """Save settings to a file"""
+    try:
+        # Ensure app_data directory exists with proper permissions
+        app_data_dir = os.path.abspath('app_data')
+        if not os.path.exists(app_data_dir):
+            os.makedirs(app_data_dir, mode=0o755)
+        
+        # Ensure all required settings are present
+        default_settings = {
+            'num_results': 3,
+            'chunk_size': 500,
+            'chunk_overlap': 50,
+            'model_temperature': 0.3,
+            'sequence_length': 256,
+            'batch_size': 128,
+            'use_half_precision': True,
+            'doc_percentage': 15,
+            'speed_accuracy': 50
+        }
+        
+        # Update defaults with current settings
+        default_settings.update(settings)
+        
+        # Save to file with proper formatting
+        settings_path = os.path.join(app_data_dir, 'settings.json')
+        
+        # First, try to write to a temporary file
+        temp_path = settings_path + '.tmp'
+        try:
+            with open(temp_path, 'w') as f:
+                json.dump(default_settings, f, indent=4)
+            
+            # If successful, rename the temporary file to the actual file
+            if os.path.exists(settings_path):
+                os.remove(settings_path)
+            os.rename(temp_path, settings_path)
+            
+        except Exception as e:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            return False
+        
+        # Update the RAG system with new settings
+        if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
+            st.session_state.rag_system.apply_settings(default_settings)
+            
+            # Save the updated vector store
+            if hasattr(st.session_state.rag_system, 'vector_store') and st.session_state.rag_system.vector_store is not None:
+                vector_store_path = os.path.join(app_data_dir, 'vector_store')
+                st.session_state.rag_system.vector_store.save_local(vector_store_path)
+        
+        # Verify the file was created
+        if os.path.exists(settings_path):
+            st.success("Settings saved successfully!")
+            return True
+        else:
+            st.error("Settings file was not created successfully")
+            return False
+            
+    except Exception as e:
+        st.error(f"Error saving settings: {str(e)}")
+        return False
+
+def load_settings():
+    """Load settings from file"""
+    try:
+        app_data_dir = os.path.abspath('app_data')
+        settings_path = os.path.join(app_data_dir, 'settings.json')
+        
+        if os.path.exists(settings_path):
             try:
-                # Truncate context if it's too long
-                max_context_length = 20000  # Reduced from 40000 to ~5k tokens
-                if len(context) > max_context_length:
-                    context = context[:max_context_length] + "..."
-
-                messages = [
-                    {
-                        "role": "system",
-                        "content": self.system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Context: {context}\nQ: {question}"  # Simplified format
-                    }
-                ]
-
-                payload = {
-                    "model": "gpt-4-turbo-preview",
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": 1000  # Reduced from 2000
+                with open(settings_path, 'r') as f:
+                    saved_settings = json.load(f)
+                
+                # Ensure all required settings are present
+                default_settings = {
+                    'num_results': 3,
+                    'chunk_size': 500,
+                    'chunk_overlap': 50,
+                    'model_temperature': 0.3,
+                    'sequence_length': 256,
+                    'batch_size': 128,
+                    'use_half_precision': True,
+                    'doc_percentage': 15,
+                    'speed_accuracy': 50
                 }
-
-                response = self.session.post(
-                    self.api_url,
-                    headers=self.headers,
-                    json=payload,
-                    timeout=self.timeout
-                )
-
-                response.raise_for_status()
-                response_data = response.json()
-                answer = response_data["choices"][0]["message"]["content"]
-                self.response_cache[cache_key] = answer
-                return answer
-
-            except requests.exceptions.Timeout:
-                if attempt < self.max_retries - 1:
-                    print(f"Request timed out. Retrying... (Attempt {attempt + 1}/{self.max_retries})")
-                    time.sleep(2 ** attempt)
-                    continue
-                else:
-                    return "Error: Request timed out after multiple attempts. Please try again."
-
-            except requests.exceptions.RequestException as e:
-                error_msg = f"API Error: {str(e)}"
-                if hasattr(e, 'response') and e.response is not None:
-                    error_msg += f"\nResponse: {e.response.text}"
-                return f"Error generating answer: {error_msg}"
-
+                
+                # Update defaults with saved settings
+                default_settings.update(saved_settings)
+                
+                # Apply settings to RAG system if it exists
+                if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
+                    st.session_state.rag_system.apply_settings(default_settings)
+                
+                return default_settings
             except Exception as e:
-                return f"Error generating answer: {str(e)}"
+                st.error(f"Error reading settings file: {str(e)}")
+    except Exception as e:
+        st.error(f"Error loading settings: {str(e)}")
+    
+    # Return default settings if no file exists or error occurs
+    return {
+        'num_results': 3,
+        'chunk_size': 500,
+        'chunk_overlap': 50,
+        'model_temperature': 0.3,
+        'sequence_length': 256,
+        'batch_size': 128,
+        'use_half_precision': True,
+        'doc_percentage': 15,
+        'speed_accuracy': 50
+    }
 
-        return "Error: Maximum retry attempts reached. Please try again."
+def save_document_state():
+    """Save document state to a file"""
+    if not os.path.exists('app_data'):
+        os.makedirs('app_data')
+    
+    if st.session_state.rag_system and st.session_state.rag_system.vector_store:
+        # Save the vector store
+        st.session_state.rag_system.vector_store.save_local('app_data/vector_store')
+        # Save document state
+        with open('app_data/document_state.json', 'w') as f:
+            json.dump({
+                'documents_loaded': st.session_state.documents_loaded,
+                'last_updated': datetime.now().isoformat()
+            }, f)
 
-### =================== Question Handler =================== ###
-class QuestionHandler:
-    def __init__(self, vector_store: VectorStore):
-        self.vector_store = vector_store
-        financial_system_prompt = """You are a financial analysis expert. Your task is to analyze financial documents and provide detailed, accurate answers to questions about them.
+def load_document_state():
+    """Load document state from file"""
+    try:
+        if os.path.exists('app_data/document_state.json'):
+            with open('app_data/document_state.json', 'r') as f:
+                state = json.load(f)
+                st.session_state.documents_loaded = state['documents_loaded']
+                
+                # Load the vector store if it exists
+                if os.path.exists('app_data/vector_store'):
+                    st.session_state.rag_system = RAGSystem()
+                    st.session_state.rag_system.vector_store.load_local('app_data/vector_store')
+                    return True
+    except Exception as e:
+        st.error(f"Error loading document state: {str(e)}")
+    return False
+
+# Load saved data
+load_conversation_history()
+settings = load_settings()
+documents_restored = load_document_state()
+
+# Initialize RAG system with settings if it doesn't exist
+try:
+    if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
+        with st.spinner("Initializing RAG system..."):
+            try:
+                # Initialize with explicit device and model settings
+                st.session_state.rag_system = RAGSystem(
+                    settings={
+                        'device': 'cpu',  # Force CPU for web version
+                        'use_half_precision': False,  # Disable half precision for stability
+                        'model_temperature': 0.3,
+                        'chunk_size': 500,
+                        'chunk_overlap': 50,
+                        'num_results': 3
+                    },
+                    is_web=True
+                )
+                st.success("RAG system initialized successfully!")
+            except Exception as e:
+                st.error(f"Error initializing RAG system: {str(e)}")
+                st.info("Please refresh the page and try again.")
+except Exception as e:
+    st.error(f"Critical error initializing RAG system: {str(e)}")
+    st.info("Please refresh the page and try again.")
+
+def update_settings_from_main_slider():
+    """Update all settings based on the main speed/accuracy slider"""
+    try:
+        slider_value = st.session_state.speed_accuracy_slider
+        settings = get_current_settings()
+        
+        # Update all settings based on the main slider
+        settings.update({
+            'doc_percentage': int(5 + (slider_value / 100) * 25),  # Reduced range
+            'chunk_size': int(200 + (slider_value / 100) * 400),   # Reduced range
+            'chunk_overlap': int(20 + (slider_value / 100) * 40),  # Reduced range
+            'model_temperature': float(0.1 + (slider_value / 100) * 0.2),
+            'sequence_length': int(128 + (slider_value / 100) * 256),  # Reduced range
+            'batch_size': int(32 + (slider_value / 100) * 128),    # Reduced range
+            'use_half_precision': slider_value < 50,
+            'speed_accuracy': int(slider_value)
+        })
+        
+        # Apply settings to RAG system
+        if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
+            st.session_state.rag_system.apply_settings(settings)
+            save_settings(settings)
+            st.session_state.update_trigger = True
+    except Exception as e:
+        st.error(f"Error updating settings: {str(e)}")
+
+def update_settings_from_individual_sliders():
+    """Update settings based on individual slider changes"""
+    try:
+        settings = get_current_settings()
+        
+        # Update settings from individual sliders with explicit type conversion
+        settings.update({
+            'doc_percentage': int(st.session_state.doc_percentage_slider),
+            'chunk_size': int(st.session_state.chunk_size_slider),
+            'chunk_overlap': int(st.session_state.chunk_overlap_slider),
+            'model_temperature': float(st.session_state.model_temp_slider),
+            'sequence_length': int(st.session_state.seq_length_slider),
+            'batch_size': int(st.session_state.batch_size_slider),
+            'use_half_precision': bool(st.session_state.half_precision_toggle)
+        })
+        
+        # Calculate new speed_accuracy based on individual settings
+        new_speed_accuracy = int(calculate_speed_accuracy_from_settings(settings))
+        settings['speed_accuracy'] = new_speed_accuracy
+        
+        # Apply settings to RAG system
+        if hasattr(st.session_state, 'rag_system') and st.session_state.rag_system is not None:
+            st.session_state.rag_system.apply_settings(settings)
+            save_settings(settings)
+            st.session_state.update_trigger = True
+            st.rerun()
+    except Exception as e:
+        st.error(f"Error updating settings: {str(e)}")
+
+def calculate_speed_accuracy_from_settings(settings):
+    """Calculate speed-accuracy value from settings (0-100)"""
+    # Normalize values to 0-100 range
+    doc_percentage = settings['doc_percentage']  # Already 0-100
+    chunk_size = (settings['chunk_size'] - 100) / 9  # 100-1000 -> 0-100
+    chunk_overlap = settings['chunk_overlap']  # Already 0-100
+    temperature = settings['model_temperature'] * 100  # 0-1 -> 0-100
+    sequence_length = (settings['sequence_length'] - 64) / 4.48  # 64-512 -> 0-100
+    batch_size = (settings['batch_size'] - 32) / 2.24  # 32-256 -> 0-100
+    
+    # Weights for each setting (sum to 1.0)
+    weights = {
+        'doc_percentage': 0.2,  # Reduced weight
+        'chunk_size': 0.15,    # Reduced weight
+        'chunk_overlap': 0.15, # Reduced weight
+        'temperature': 0.1,    # Reduced weight
+        'sequence_length': 0.2, # Increased weight
+        'batch_size': 0.2      # Increased weight
+    }
+    
+    # Calculate weighted average
+    speed_accuracy = (
+        doc_percentage * weights['doc_percentage'] +
+        chunk_size * weights['chunk_size'] +
+        chunk_overlap * weights['chunk_overlap'] +
+        temperature * weights['temperature'] +
+        sequence_length * weights['sequence_length'] +
+        batch_size * weights['batch_size']
+    )
+    
+    # Adjust for half precision
+    if settings['use_half_precision']:
+        speed_accuracy *= 0.85  # Reduce by 15% when using half precision
+    
+    return speed_accuracy
+
+def show_settings_page():
+    # Ensure RAG system exists
+    if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
+        settings = load_settings()
+        st.session_state.rag_system = RAGSystem(settings)
+    rag = st.session_state.rag_system
+
+    # Get current settings from our central settings store
+    settings = get_current_settings()
+
+    col1, col2 = st.columns([4, 1])
+
+    with col1:
+        back = st.button("Back to Main", use_container_width=True)
+        if back:
+            st.session_state.current_page = "main"
+            st.rerun()
+
+    with col1:
+        # Speed vs Accuracy Slider with automatic application
+        speed_accuracy = st.slider(
+            "Speed vs Accuracy",
+            0, 100,
+            int(get_current_settings()['speed_accuracy']),
+            step=1,
+            help="Adjust the balance between processing speed and accuracy",
+            key="speed_accuracy_slider",
+            on_change=update_settings_from_main_slider
+        )
+        
+        # Advanced Settings Expander
+        with st.expander("Advanced Settings", expanded=False):
+            with st.form("sidebar_advanced_settings_form"):
+                st.markdown("### Document Processing")
+                doc_percentage = st.slider(
+                    "Document Coverage (%)",
+                    5, 100,
+                    settings['doc_percentage'],
+                    help="Percentage of documents to analyze",
+                    key="doc_percentage_slider"
+                )
+                chunk_size = st.slider(
+                    "Chunk Size (words)",
+                    100, 1000,
+                    settings['chunk_size'],
+                    help="Number of words per text chunk",
+                    key="chunk_size_slider"
+                )
+                chunk_overlap = st.slider(
+                    "Chunk Overlap (words)",
+                    10, 200,
+                    settings['chunk_overlap'],
+                    help="Number of overlapping words between chunks",
+                    key="chunk_overlap_slider"
+                )
+                
+                st.markdown("### Model Configuration")
+                model_temp = st.slider(
+                    "Model Temperature",
+                    0.0, 0.3,
+                    settings['model_temperature'],
+                    step=0.01,
+                    help="Lower values make responses more focused",
+                    key="model_temp_slider"
+                )
+                seq_length = st.slider(
+                    "Sequence Length",
+                    64, 512,
+                    settings['sequence_length'],
+                    help="Maximum number of tokens to process",
+                    key="seq_length_slider"
+                )
+                batch_size = st.slider(
+                    "Batch Size",
+                    32, 256,
+                    settings['batch_size'],
+                    help="Number of items to process at once",
+                    key="batch_size_slider"
+                )
+                half_precision = st.toggle(
+                    "Half Precision",
+                    settings['use_half_precision'],
+                    help="Enable for faster processing",
+                    key="half_precision_toggle"
+                )
+                
+                # Add submit button
+                submitted = st.form_submit_button("Apply Settings")
+                if submitted:
+                    update_settings_from_individual_sliders()
+
+    with col2:
+        pass
+
+def generate_pdf_summary():
+    """Generate a PDF summary of the current conversation"""
+    try:
+        # Create a temporary PDF file with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_path = os.path.join(DATA_DIR, f'conversation_summary_{timestamp}.pdf')
+        
+        # Create the PDF document
+        doc = SimpleDocTemplate(
+            pdf_path,
+            pagesize=letter,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
+        )
+        
+        # Create custom styles
+        styles = getSampleStyleSheet()
+        styles.add(ParagraphStyle(
+            name='BrandTitle',
+            parent=styles['Title'],
+            fontSize=24,
+            spaceAfter=30,
+            textColor=colors.HexColor('#1E3A8A')  # Dark blue
+        ))
+        styles.add(ParagraphStyle(
+            name='SubTitle',
+            parent=styles['Title'],
+            fontSize=16,
+            spaceAfter=20,
+            textColor=colors.HexColor('#4B5563')  # Gray
+        ))
+        styles.add(ParagraphStyle(
+            name='SectionHeader',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=12,
+            textColor=colors.HexColor('#1E3A8A')  # Dark blue
+        ))
+        styles.add(ParagraphStyle(
+            name='Question',
+            parent=styles['Normal'],
+            fontSize=12,
+            spaceAfter=6,
+            textColor=colors.HexColor('#1E3A8A')  # Dark blue
+        ))
+        styles.add(ParagraphStyle(
+            name='Answer',
+            parent=styles['Normal'],
+            fontSize=11,
+            spaceAfter=12,
+            leftIndent=20
+        ))
+        styles.add(ParagraphStyle(
+            name='Source',
+            parent=styles['Normal'],
+            fontSize=10,
+            spaceAfter=6,
+            textColor=colors.HexColor('#6B7280')  # Light gray
+        ))
+        
+        # Build the PDF content
+        story = []
+        
+        # Add header with logo and branding
+        story.append(Paragraph("HERON", styles['BrandTitle']))
+        story.append(Paragraph("Herbert Advisory", styles['SubTitle']))
+        story.append(Paragraph(f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        story.append(Spacer(1, 20))
+        
+        # Add main question and answer
+        story.append(Paragraph("Main Question", styles['SectionHeader']))
+        story.append(Paragraph(st.session_state.question, styles['Question']))
+        story.append(Spacer(1, 10))
+        
+        story.append(Paragraph("Answer", styles['SectionHeader']))
+        story.append(Paragraph(st.session_state.main_answer, styles['Answer']))
+        story.append(Spacer(1, 20))
+        
+        # Add sources if available
+        if st.session_state.main_results:
+            story.append(Paragraph("Sources", styles['SectionHeader']))
+            for result in st.session_state.main_results:
+                source = result.get('metadata', {}).get('source', 'Unknown source')
+                story.append(Paragraph(f"• {source}", styles['Source']))
+            story.append(Spacer(1, 20))
+        
+        # Add follow-up questions and answers
+        if hasattr(st.session_state, 'follow_up_questions') and st.session_state.follow_up_questions:
+            story.append(Paragraph("Follow-up Questions", styles['SectionHeader']))
+            for i, (question, answer) in enumerate(st.session_state.follow_up_questions, 1):
+                story.append(Paragraph(f"Follow-up {i}", styles['Question']))
+                story.append(Paragraph(question, styles['Question']))
+                story.append(Paragraph(answer, styles['Answer']))
+                story.append(Spacer(1, 10))
+        
+        # Add footer
+        story.append(Spacer(1, 30))
+        story.append(Paragraph("© 2024 Herbert Advisory. All rights reserved.", styles['Source']))
+        story.append(Paragraph("This document was generated by HERON (Herbert Embedded Retrieval and Oracle Network)", styles['Source']))
+        
+        # Build the PDF
+        doc.build(story)
+        
+        return pdf_path
+    except Exception as e:
+        st.error(f"Error generating PDF: {str(e)}")
+        return None
+
+def get_memory_usage():
+    """Get current memory usage in MB."""
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024  # Convert to MB
+
+def should_cleanup():
+    """Check if cleanup is needed based on memory usage."""
+    try:
+        memory_usage = get_memory_usage()
+        # Increase threshold for cloud environments
+        threshold = 2000 if os.environ.get('CLOUD_ENVIRONMENT') else 1000
+        return memory_usage > threshold  # Cleanup if memory usage exceeds threshold
+    except Exception as e:
+        st.warning(f"Error checking memory usage: {str(e)}")
+        return False
+
+def cleanup_resources():
+    """Clean up resources to free memory and disk space."""
+    try:
+        # Clear Streamlit cache
+        st.cache_resource.clear()
+        
+        # Clear PyTorch's cache only if CUDA is available
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # Clean up old image files (keep only recent ones)
+        images_dir = os.path.join("app_data", "images")
+        if os.path.exists(images_dir):
+            current_time = time.time()
+            for filename in os.listdir(images_dir):
+                file_path = os.path.join(images_dir, filename)
+                # Remove files older than 1 hour
+                if os.path.isfile(file_path) and (current_time - os.path.getmtime(file_path)) > 3600:
+                    try:
+                        os.remove(file_path)
+                    except:
+                        pass
+        
+        # Force garbage collection
+        gc.collect()
+        
+    except Exception as e:
+        st.warning(f"Error during cleanup: {str(e)}")
+
+def display_answer_with_images(answer_text):
+    """Display answer text with embedded images."""
+    if not answer_text:
+        return
+    
+    # Debug: Check if there are any image references
+    if 'IMAGE_REF:' not in answer_text:
+        # No images, just display text normally
+        st.markdown(answer_text)
+        return
+    
+    # Split the answer into parts
+    parts = answer_text.split('\n')
+    current_text = []
+    
+    for part in parts:
+        if part.startswith('IMAGE_REF:'):
+            # Display accumulated text
+            if current_text:
+                st.markdown('\n'.join(current_text))
+                current_text = []
+            
+            # Display the image
+            image_filename = part.replace('IMAGE_REF:', '').strip()
+            image_path = os.path.join("app_data", "images", image_filename)
+            
+            if os.path.exists(image_path):
+                try:
+                    st.image(image_path, caption=f"Document Image: {image_filename}", use_column_width=True)
+                except Exception as e:
+                    st.error(f"Error displaying image {image_filename}: {str(e)}")
+            else:
+                st.warning(f"Image not found: {image_filename}")
+                # List available images for debugging
+                images_dir = os.path.join("app_data", "images")
+                if os.path.exists(images_dir):
+                    available_images = os.listdir(images_dir)
+                    st.info(f"Available images: {available_images}")
+                else:
+                    st.error("Images directory does not exist!")
+        else:
+            current_text.append(part)
+    
+    # Display any remaining text
+    if current_text:
+        st.markdown('\n'.join(current_text))
+
+def type_text(text, container, speed=0.01):
+    """Type out text with a typing effect"""
+    full_text = ""
+    for char in text:
+        full_text += char
+        container.markdown(full_text)
+        time.sleep(speed)
+
+def generate_answer(question, use_internet=False, is_follow_up=False):
+    try:
+        st.session_state.processing = True
+        start_time = time.time()
+        
+        # Check if we can process the question
+        if not st.session_state.documents_loaded and not use_internet:
+            answer = "No documents have been uploaded. Please either upload documents using the file uploader in the sidebar or enable internet search to get answers."
+            st.session_state.main_answer = answer
+            st.session_state.processing = False
+            return
+        
+        # Check if RAG system is properly initialized
+        if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
+            answer = "RAG system not initialized. Please refresh the page."
+            st.session_state.main_answer = answer
+            st.session_state.processing = False
+            return
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        answer_container = st.empty()  # Container for the typing effect
+        
+        # Combine document search and processing
+        process_start = time.time()
+        progress_bar.progress(25)
+        status_text.text("🤔 Processing your question...")
+        
+        # Get document-based answer with reduced context
+        if is_follow_up and 'main_answer' in st.session_state:
+            # Limit the previous context to a shorter version
+            prev_context = f"Previous Q: {st.session_state.question[:100]}...\nA: {st.session_state.main_answer[:200]}...\nFollow-up: {question}"
+        else:
+            prev_context = question
+        
+        # Only search documents if they are loaded
+        results = []
+        if st.session_state.documents_loaded:
+            results = st.session_state.rag_system.vector_store.search(question, k=3)
+        
+        # Process and filter results
+        processed_results = []
+        seen_sources = set()
+        seen_texts = set()  # Track unique text content
+        
+        for result in results:
+            source = result.get('metadata', {}).get('source', 'Unknown source')
+            text = result.get('text', '')
+            
+            # Skip if we've seen this source or this exact text before
+            if source in seen_sources or text in seen_texts:
+                continue
+        
+            seen_sources.add(source)
+            seen_texts.add(text)
+            
+            # Calculate relevance score
+            raw_score = result.get('score', 0)
+            
+            # Normalize score to 0-1 range
+            normalized_score = (raw_score + 1) / 2  # Convert to 0-1 range
+            
+            # Boost score for exact matches in source name
+            question_terms = set(question.lower().split())
+            source_terms = set(source.lower().split())
+            
+            # Check for exact matches in source name
+            if any(term in source_terms for term in question_terms):
+                normalized_score = max(normalized_score, 0.9)  # Higher boost for exact matches
+            
+            # Additional boost for financial reports and official documents
+            if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
+                normalized_score = max(normalized_score, 0.85)
+            
+            # Additional boost for recent documents
+            if 'date' in result.get('metadata', {}):
+                doc_date = result['metadata']['date']
+                if doc_date:
+                    try:
+                        doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
+                        days_old = (datetime.now() - doc_date).days
+                        if days_old < 365:  # Boost for documents less than a year old
+                            normalized_score = max(normalized_score, 0.8)
+                    except:
+                        pass
+            
+            processed_results.append({
+                'metadata': result.get('metadata', {}),
+                'score': normalized_score,
+                'text': text
+            })
+        
+        # Sort by score and take top 5
+        processed_results.sort(key=lambda x: x['score'], reverse=True)
+        final_results = processed_results[:5]  # Increased to 5 sources
+        
+        # Generate answer with optimized parameters
+        if use_internet:
+            internet_context = f"""You are an AI assistant with access to the internet.
+            Provide a comprehensive answer using your knowledge and internet access.
+            Make sure to:
+            1. Cite sources for all factual information
+            2. Mention if you can't find a source for specific claims
+            3. Focus on accurate, up-to-date information
+            4. Be clear about what information comes from your training vs internet sources
+            
+            Question: {question}"""
+            answer = st.session_state.rag_system.question_handler.process_question(internet_context)
+        else:
+            if not st.session_state.documents_loaded:
+                answer = "I cannot answer this question as there are no documents loaded. Please either upload documents or enable internet search."
+            else:
+                # When not using internet, explicitly instruct to only use document information
+                doc_context = f"""You are a financial analysis expert. Your task is to analyze financial documents and provide detailed, accurate answers to questions about them.
+
 
 Key capabilities:
 - Analyze financial statements, reports, and documents
@@ -969,6 +891,7 @@ Key capabilities:
 - Provide context for financial decisions
 - Highlight important financial insights
 
+
 Guidelines:
 1. Base your answers primarily on the provided context
 2. Be precise with numbers and financial data
@@ -976,158 +899,470 @@ Guidelines:
 4. Highlight any uncertainties or missing information
 5. Provide relevant context for your analysis
 6. Be clear about assumptions made
-7. If the context doesn't contain enough information, say so clearly
+7. If the context doesn't contain enough information, say so clearly"""
 
-Answer based on the context provided."""
-        self.llm = ClaudeHandler(system_prompt=financial_system_prompt)
-
-    def process_question(self, question: str, query_type: str = "document", k: int = 5) -> str:
-        results = self.vector_store.search(question, k=k)
-
-        # Combine results into a single context with size limits
-        context_parts = []
-        total_length = 0
-        max_context_length = 40000  # Approximately 10k tokens
+                answer = st.session_state.rag_system.question_handler.process_question(question)
         
-        for chunk in results:
-            chunk_text = chunk['text']
-            # If adding this chunk would exceed the limit, truncate it
-            if total_length + len(chunk_text) > max_context_length:
-                remaining_length = max_context_length - total_length
-                if remaining_length > 100:  # Only add if we have at least 100 chars left
-                    chunk_text = chunk_text[:remaining_length] + "..."
-                else:
-                    break
-            context_parts.append(chunk_text)
-            total_length += len(chunk_text)
-            
-            if total_length >= max_context_length:
-                break
+        # Store the answer
+        if is_follow_up:
+            st.session_state.follow_up_answer = answer
+        else:
+            st.session_state.main_answer = answer
+            st.session_state.main_results = final_results
         
-        context = "\n".join(context_parts)
-        answer = self.llm.generate_answer(question, context)
-        return answer
-
-### =================== Main RAG System =================== ###
-class RAGSystem:
-    def __init__(self, settings=None, is_web=False):
-        self.file_handler = WebFileHandler() if is_web else LocalFileHandler()
-        self.vector_store = VectorStore()
-        self.question_handler = QuestionHandler(self.vector_store)
-        self.running = True
-        self.is_web = is_web
-        
-        # Initialize with default settings
-        default_settings = {
-            'chunk_size': 500,
-            'chunk_overlap': 50,
-            'model_temperature': 0.3,
-            'sequence_length': 256,
-            'batch_size': 128,
-            'use_half_precision': True,
-            'doc_percentage': 15,
-            'num_results': 3
-        }
-        
-        # Update defaults with provided settings
-        if settings:
-            default_settings.update(settings)
-        
-        # Apply settings
-        self.apply_settings(default_settings)
-    
-    def apply_settings(self, settings):
-        """Apply new settings to the RAG system components."""
-        if not settings:
-            return
+        # If internet search is requested, do it in parallel
+        if use_internet:
+            internet_context = """You are a document analysis expert with access to the internet.
+            Provide a concise answer using your knowledge and internet access.
+            Cite sources for data. If no source exists, mention that.
+            Focus on accurate, up-to-date information."""
             
-        print("\n=== Applying Settings ===")
-        print(f"Settings received: {settings}")
+            internet_start = time.time()
+            status_text.text("🌐 Searching the internet...")
             
-        # Update vector store settings
-        if hasattr(self, 'vector_store') and self.vector_store is not None:
-            old_chunk_size = self.vector_store.chunk_size
-            old_chunk_overlap = self.vector_store.chunk_overlap
+            # Use ThreadPoolExecutor for parallel processing
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                internet_future = executor.submit(
+                    st.session_state.rag_system.question_handler.llm.generate_answer,
+                    question,
+                    internet_context
+                )
+                internet_answer = internet_future.result()
             
-            self.vector_store.chunk_size = settings.get('chunk_size', self.vector_store.chunk_size)
-            self.vector_store.chunk_overlap = settings.get('chunk_overlap', self.vector_store.chunk_overlap)
+            # Display internet results
+            st.markdown("\n\n### Internet Search Results\n" + internet_answer)
             
-            print(f"Vector Store Settings Updated:")
-            print(f"  Chunk Size: {old_chunk_size} -> {self.vector_store.chunk_size}")
-            print(f"  Chunk Overlap: {old_chunk_overlap} -> {self.vector_store.chunk_overlap}")
-            
-        # Update question handler settings
-        if hasattr(self, 'question_handler') and self.question_handler is not None:
-            if hasattr(self.question_handler, 'llm') and self.question_handler.llm is not None:
-                # Store the temperature setting in the class for later use
-                self.question_handler.llm.temperature = settings.get('model_temperature', 0.3)
-                print(f"LLM Settings Updated:")
-                print(f"  Temperature: {self.question_handler.llm.temperature}")
-        print("=== Settings Applied ===\n")
-
-    def initialize(self):
-        print("\n=== Welcome to the Local RAG System ===")
-
-        selected_folder = self.file_handler.select_folder_interactive()
-        if not selected_folder:
-            print("No folder selected. Please try again.")
-            return self.initialize()
-
-        print(f"\nProcessing folder: {selected_folder['name']}")
-        documents = self.file_handler.process_selected_folder(selected_folder['path'])
-
-        if not documents:
-            print("No documents found to process. Please try again.")
-            return self.initialize()
-
-        print("\nIndexing documents...")
-        self.vector_store.add_documents(documents)
-        print("Documents indexed successfully!")
-        return True
-
-    def show_menu(self):
-        print("\n=== RAG System Menu ===")
-        print("1. Ask a question")
-        print("2. Select a different folder")
-        print("3. Exit")
-        return input("Enter your choice (1-3): ")
-
-    def run(self):
-        if not self.initialize():
-            return
-
-        while self.running:
-            choice = self.show_menu()
-
-            if choice == "1":
-                question = input("\nEnter your question: ")
-                answer = self.question_handler.process_question(question)
-                print("\nAnswer:", answer)
-
-            elif choice == "2":
-                if self.initialize():
-                    print("Successfully switched to new folder!")
-                else:
-                    print("Failed to switch folders.")
-
-            elif choice == "3":
-                print("\nThank you for using the RAG System. Goodbye!")
-                self.running = False
-
+            if is_follow_up:
+                st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
             else:
-                print("\nInvalid choice. Please try again.")
+                st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
+        
+        progress_bar.progress(100)
+        status_text.text("✅ Done!")
+        
+        # Clear status after a shorter delay
+        time.sleep(0.5)
+        status_text.empty()
+        progress_bar.empty()
 
-    def process_web_uploads(self, uploaded_files):
-        """Process files uploaded through the web interface"""
-        if not self.is_web:
-            return False
+    except Exception as e:
+        st.error(f"Error generating answer: {str(e)}")
+    finally:
+        st.session_state.processing = False
+
+def generate_multi_analyst_answer(question, use_internet=False):
+    """Generate an answer using multiple analysts in a formal debate format."""
+    try:
+        st.session_state.processing = True
+        start_time = time.time()
+        
+        # Create status container
+        status_text = st.empty()
+        
+        # Define the debate prompt
+        debate_prompt = f"""You are moderating a formal debate between four expert analysts. The question is: "{question}"
+
+        IMPORTANT: You must ONLY use information from the provided documents to inform your debate. Do not use any external knowledge or general information.
+        If the documents don't contain relevant information, acknowledge this limitation in your debate.
+        Do not make assumptions or use knowledge from outside the provided documents.
+
+        The debate will follow this structure:
+
+        ROUND 1: Opening Statements (2 minutes each)
+        - Technical Analyst: Data-driven, focuses on facts, metrics, and logical reasoning
+        - Creative Analyst: Innovative thinker, focuses on out-of-the-box solutions
+        - Critical Analyst: Identifies potential issues, risks, and challenges
+        - Strategic Analyst: Focuses on long-term implications and big-picture thinking
+
+        ROUND 2: Rebuttals (1 minute each)
+        Each analyst must:
+        - Address the strongest points from other analysts
+        - Challenge assumptions or data presented
+        - Strengthen their own position
+
+        ROUND 3: Cross-Examination (1 minute each)
+        Each analyst must:
+        - Ask one critical question to another analyst
+        - Respond to questions directed at them
+        - Use this to further their position
+
+        ROUND 4: Closing Arguments (1 minute each)
+        Each analyst must:
+        - Summarize their strongest points
+        - Address key challenges raised
+        - Present their final position
+
+        FINAL VERDICT:
+        As the moderator, you must:
+        1. Evaluate the strength of each position
+        2. Identify the most compelling arguments
+        3. Reach a decisive conclusion that isn't just a compromise
+        4. Provide specific, actionable recommendations
+
+        Format the debate as a formal transcript, clearly marking each round and speaker.
+        Make it passionate and engaging, but maintain professional discourse.
+        Each analyst should maintain their unique perspective while engaging meaningfully with others' arguments.
+        """
+        
+        # Generate the debate
+        status_text.text("💭 Analysts are debating...")
+        
+        # Store the question first
+        st.session_state.question = question
+        
+        # Generate and store the debate
+        debate = st.session_state.rag_system.question_handler.process_question(debate_prompt)
+        st.session_state.main_answer = debate
+        
+        # Display the debate
+        st.markdown("### Formal Analyst Debate")
+        st.markdown(debate)
+        
+        # If internet search is requested
+        if use_internet:
+            internet_context = """You are a debate moderator with access to the internet.
+            Please provide additional factual context to support or challenge the debate's conclusions.
+            Make sure to cite your sources for all data, and if you can't find a source, mention that it does not exist.
+            Focus on providing accurate, up-to-date information from reliable sources that could strengthen the debate's final verdict."""
             
-        documents = self.file_handler.process_uploaded_files(uploaded_files)
-        if documents:
-            self.vector_store.add_documents(documents)
-            return True
-        return False
+            internet_start = time.time()
+            status_text.text("🌐 Searching the internet for additional information...")
+            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
+            internet_time = time.time() - internet_start
+            
+            # Add internet results
+            st.markdown("### Additional Factual Context")
+            st.markdown(internet_answer)
+            
+            # Update the stored answer with internet results
+            st.session_state.main_answer += "\n\n### Additional Factual Context\n" + internet_answer
+        
+        status_text.text("✅ Debate concluded!")
+        total_time = time.time() - start_time
+        
+        # Display performance metrics
+        with st.expander("Performance Metrics"):
+            st.write(f"Total Processing Time: {total_time:.2f} seconds")
+            if use_internet:
+                st.write(f"Internet Search Time: {internet_time:.2f} seconds")
+        
+        # Clear the status after a short delay
+        time.sleep(1)
+        status_text.empty()
 
-if __name__ == "__main__": 
-    rag_system = RAGSystem()
-    rag_system.run() 
+    except Exception as e:
+        st.error(f"Error generating answer: {str(e)}")
+    finally:
+        st.session_state.processing = False
+
+def test_image_processing():
+    """Test function to manually process images from documents."""
+    if not hasattr(st.session_state, 'rag_system') or not st.session_state.rag_system:
+        st.error("RAG system not initialized")
+        return
+    
+    if not st.session_state.documents_loaded:
+        st.error("No documents loaded")
+        return
+    
+    st.info("Testing image processing...")
+    
+    # Check if images directory exists
+    images_dir = os.path.join("app_data", "images")
+    if os.path.exists(images_dir):
+        images = os.listdir(images_dir)
+        st.success(f"Images directory exists. Found {len(images)} images: {images}")
+    else:
+        st.error("Images directory does not exist!")
+    
+    # Check if any documents contain image references
+    if hasattr(st.session_state, 'main_results') and st.session_state.main_results:
+        for result in st.session_state.main_results:
+            text = result.get('text', '')
+            if 'IMAGE_REF:' in text:
+                st.success("Found image references in document results!")
+                st.code(text)
+                break
+        else:
+            st.warning("No image references found in document results")
+
+def show_main_page():
+    """Show the main page with file upload and question input."""
+    try:
+        # Initialize session state variables if they don't exist
+        if 'question' not in st.session_state:
+            st.session_state.question = ""
+        if 'follow_up_question' not in st.session_state:
+            st.session_state.follow_up_question = ""
+        if 'main_answer' not in st.session_state:
+            st.session_state.main_answer = None
+        if 'follow_up_answer' not in st.session_state:
+            st.session_state.follow_up_answer = None
+        if 'processing' not in st.session_state:
+            st.session_state.processing = False
+        
+        # Check if RAG system is properly initialized
+        if not hasattr(st.session_state, 'rag_system') or st.session_state.rag_system is None:
+            st.error("RAG system not initialized. Please refresh the page.")
+            return
+        
+        # Main content
+        st.markdown("""
+            <div style='text-align: center; padding: 2rem 0; display: flex; flex-direction: column; align-items: center;'>
+                <h1 style='color: #1E3A8A; font-size: 3.5rem; font-weight: 700; margin: 0; text-shadow: 0 0 10px rgba(30, 58, 138, 0.3);'>HERON</h1>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Question input
+        question = st.text_input(
+            label="Ask a question",
+            value=st.session_state.question,
+            label_visibility="collapsed",
+            placeholder="Ask a question...",
+            key="question_input"
+        )
+
+        # Process question if enter is pressed
+        if question and question != st.session_state.question and not st.session_state.processing:
+            try:
+                st.session_state.question = question
+                st.session_state.processing = True
+                
+                # Initialize variables
+                answer_container = st.empty()  # Container for the typing effect
+                is_follow_up = False  # Flag for follow-up questions
+                use_internet = st.session_state.get('use_internet', False)  # Get internet toggle state
+                use_analysts = st.session_state.get('use_analysts', False)  # Get multi-analyst toggle state
+                
+                # Show processing status
+                with st.spinner("Processing your question..."):
+                    if use_analysts:
+                        generate_multi_analyst_answer(question, use_internet)
+                    else:
+                        generate_answer(question, use_internet, is_follow_up)
+                        
+                # Display the answer
+                if st.session_state.main_answer:
+                    display_answer_with_images(st.session_state.main_answer)
+
+            except Exception as e:
+                st.error(f"Error processing question: {str(e)}")
+                st.info("Please try again or rephrase your question.")
+            finally:
+                st.session_state.processing = False
+
+        # Display sources if they exist (but not the answer since it's already shown)
+        if hasattr(st.session_state, 'main_results') and st.session_state.main_results:
+            st.markdown("### Sources")
+            for i, result in enumerate(st.session_state.main_results, 1):
+                source = result.get('metadata', {}).get('source', 'Unknown source')
+                score = result.get('score', 0)
+                relevance_percentage = round(score * 100, 2)
+                st.markdown(f"{i}. **{source}** (Relevance: {relevance_percentage}%)")
+
+        # Add follow-up question section if we have a main answer
+        if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
+            st.markdown("---")
+            st.markdown("### Follow-up Question")
+            
+            # Initialize follow-up questions list if it doesn't exist
+            if 'follow_up_questions' not in st.session_state:
+                st.session_state.follow_up_questions = []
+            
+            # Display all previous follow-up questions and answers
+            for i, (q, a) in enumerate(st.session_state.follow_up_questions):
+                st.markdown(f"**Follow-up {i+1}:** {q}")
+                display_answer_with_images(a)
+                st.markdown("---")
+            
+            # Add a new follow-up question input
+            follow_up_question = st.text_input(
+                label="Ask a follow-up question",
+                value="",
+                label_visibility="collapsed",
+                placeholder="Ask a follow-up question...",
+                key=f"follow_up_input_{len(st.session_state.follow_up_questions)}"
+            )
+
+            # Process follow-up question if enter is pressed
+            if follow_up_question and not st.session_state.processing:
+                try:
+                    st.session_state.processing = True
+                    
+                    # Initialize variables
+                    follow_up_container = st.empty()  # Container for the typing effect
+                    use_internet = st.session_state.get('use_internet', False)
+                    use_analysts = st.session_state.get('use_analysts', False)
+                    
+                    # Show processing status
+                    with st.spinner("Processing your follow-up question..."):
+                        if use_analysts:
+                            generate_multi_analyst_answer(follow_up_question, use_internet)
+                        else:
+                            # Get search results
+                            results = st.session_state.rag_system.vector_store.search(follow_up_question, k=3)
+                            
+                            # Process and filter results
+                            processed_results = []
+                            seen_sources = set()
+                            seen_texts = set()
+                            
+                            for result in results:
+                                source = result.get('metadata', {}).get('source', 'Unknown source')
+                                text = result.get('text', '')
+                                
+                                if source in seen_sources or text in seen_texts:
+                                    continue
+                                    
+                                seen_sources.add(source)
+                                seen_texts.add(text)
+                                
+                                raw_score = result.get('score', 0)
+                                normalized_score = (raw_score + 1) / 2
+                                
+                                question_terms = set(follow_up_question.lower().split())
+                                source_terms = set(source.lower().split())
+                                
+                                if any(term in source_terms for term in question_terms):
+                                    normalized_score = max(normalized_score, 0.9)
+                                
+                                if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
+                                    normalized_score = max(normalized_score, 0.85)
+                                
+                                if 'date' in result.get('metadata', {}):
+                                    doc_date = result['metadata']['date']
+                                    if doc_date:
+                                        try:
+                                            doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
+                                            days_old = (datetime.now() - doc_date).days
+                                            if days_old < 365:
+                                                normalized_score = max(normalized_score, 0.8)
+                                        except:
+                                            pass
+                                
+                                processed_results.append({
+                                    'metadata': result.get('metadata', {}),
+                                    'score': normalized_score,
+                                    'text': text
+                                })
+                            
+                            processed_results.sort(key=lambda x: x['score'], reverse=True)
+                            results = processed_results[:5]
+                            
+                            # Build context from all previous questions and answers
+                            context = f"Original question: {st.session_state.question}\nOriginal answer: {st.session_state.main_answer}\n"
+                            for prev_q, prev_a in st.session_state.follow_up_questions:
+                                context += f"\nPrevious follow-up: {prev_q}\nPrevious answer: {prev_a}\n"
+                            context += f"\nNew follow-up question: {follow_up_question}"
+                            
+                            # Generate answer with previous context
+                            follow_up_answer = st.session_state.rag_system.question_handler.process_question(context)
+                            
+                            # Type out the answer
+                            type_text(follow_up_answer, follow_up_container)
+                            
+                            # Add to follow-up questions list
+                            st.session_state.follow_up_questions.append((follow_up_question, follow_up_answer))
+                            
+                            # If internet search is enabled, do it in parallel
+                            if use_internet:
+                                internet_context = """You are a document analysis expert with access to the internet.
+                                Provide a concise answer using your knowledge and internet access.
+                                Cite sources for data. If no source exists, mention that.
+                                Focus on accurate, up-to-date information."""
+                                
+                                # Use ThreadPoolExecutor for parallel processing
+                                with ThreadPoolExecutor(max_workers=2) as executor:
+                                    internet_future = executor.submit(
+                                        st.session_state.rag_system.question_handler.llm.generate_answer,
+                                        follow_up_question,
+                                        internet_context
+                                    )
+                                    internet_answer = internet_future.result()
+                                
+                                # Type out the internet results
+                                type_text("\n\n### Internet Search Results\n" + internet_answer, follow_up_container)
+                                st.session_state.follow_up_questions[-1] = (follow_up_question, follow_up_answer + "\n\n### Internet Search Results\n" + internet_answer)
+                
+                except Exception as e:
+                    st.error(f"Error processing follow-up question: {str(e)}")
+                    st.info("Please try again or rephrase your follow-up question.")
+                finally:
+                    st.session_state.processing = False
+                    st.rerun()  # Rerun to show the new follow-up input
+
+        # Only show reset and export buttons if there's an answer
+        if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
+            st.markdown("---")
+            # Center the buttons with equal width
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                # Create a container for the buttons
+                button_container = st.container()
+                with button_container:
+                    # Create three equal columns for the buttons
+                    button_col1, button_col2, button_col3 = st.columns(3)
+                    
+                    # Define a common button style
+                    button_style = """
+                    <style>
+                    div[data-testid="stButton"] button {
+                        width: 100%;
+                        min-width: 150px;
+                    }
+                    </style>
+                    """
+                    st.markdown(button_style, unsafe_allow_html=True)
+                    
+                    with button_col1:
+                        if st.button("Reset Conversation", type="secondary", use_container_width=True):
+                            # Clear all conversation-related session state
+                            if 'main_answer' in st.session_state:
+                                del st.session_state.main_answer
+                            if 'main_results' in st.session_state:
+                                del st.session_state.main_results
+                            if 'question' in st.session_state:
+                                st.session_state.question = ""
+                            if 'follow_up_question' in st.session_state:
+                                st.session_state.follow_up_question = ""
+                            if 'follow_up_answer' in st.session_state:
+                                del st.session_state.follow_up_answer
+                            if 'follow_up_questions' in st.session_state:
+                                del st.session_state.follow_up_questions
+                            st.rerun()
+                    
+                    with button_col2:
+                        if st.button("Export PDF", type="secondary", use_container_width=True):
+                            try:
+                                pdf_path = generate_pdf_summary()
+                                if pdf_path:
+                                    with open(pdf_path, "rb") as file:
+                                        st.download_button(
+                                            label="Download PDF",
+                                            data=file,
+                                            file_name=os.path.basename(pdf_path),
+                                            mime="application/pdf",
+                                            use_container_width=True
+                                        )
+                                    # Clean up the temporary file
+                                    os.remove(pdf_path)
+                            except Exception as e:
+                                st.error(f"Error generating PDF: {str(e)}")
+                    
+                    with button_col3:
+                        if st.button("Test Images", type="secondary", use_container_width=True):
+                            test_image_processing()
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        st.info("Please refresh the page and try again.")
+
+# Main app logic
+if st.session_state.current_page == "settings":
+    show_settings_page()
+else:
+    show_main_page()
+
+# streamlit run app.py --server.maxUploadSize=200 --server.maxMessageSize=200 --server.enableCORS=false --server.enableXsrfProtection=false  --server.enableWebsocketCompression=false
