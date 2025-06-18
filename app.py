@@ -4,7 +4,7 @@ from local_draft import RAGSystem, WebFileHandler
 
 # Set page config
 st.set_page_config(
-    page_title="HERON - Fast Mode",
+    page_title="HERON",
     page_icon="🦅",
     layout="wide"
 )
@@ -36,6 +36,19 @@ def generate_answer(question):
         
         # Generate answer
         answer = st.session_state.rag_system.question_handler.process_question(context)
+        return answer
+        
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# Follow-up question generation
+def generate_follow_up(follow_up_question):
+    try:
+        if not st.session_state.documents_loaded:
+            return "No documents loaded. Please upload documents first."
+        
+        # Use the logic from local_draft
+        answer = st.session_state.rag_system.question_handler.process_follow_up(follow_up_question)
         return answer
         
     except Exception as e:
@@ -83,4 +96,18 @@ if st.button("Reset"):
     # Clear session state
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    st.rerun() 
+    st.rerun()
+
+# Follow-up question section
+st.markdown("---")
+st.subheader("Follow-up Questions")
+
+follow_up_question = st.text_input("Ask a follow-up question:")
+
+if st.button("Ask Follow-up"):
+    if st.session_state.documents_loaded:
+        with st.spinner("Processing follow-up..."):
+            follow_up_answer = generate_follow_up(follow_up_question)
+            st.write(follow_up_answer)
+    else:
+        st.error("Please upload documents first") 
