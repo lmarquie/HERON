@@ -49,6 +49,20 @@ def generate_follow_up(follow_up_question):
     except Exception as e:
         return f"Error: {str(e)}"
 
+# Image display function
+def display_image(page_num, image_num=None):
+    """Display an image from the processed documents."""
+    try:
+        image_path = st.session_state.rag_system.get_image_path(page_num, image_num)
+        if image_path and os.path.exists(image_path):
+            st.image(image_path, caption=f"Page {page_num}" + (f", Image {image_num}" if image_num else ""))
+            return True
+        else:
+            return False
+    except Exception as e:
+        st.error(f"Error displaying image: {e}")
+        return False
+
 # Main app
 initialize_rag_system()
 
