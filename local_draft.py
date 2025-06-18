@@ -9,6 +9,9 @@ from sentence_transformers import SentenceTransformer
 import requests
 import numpy as np
 from config import OPENAI_API_KEY
+from PIL import Image
+import io
+import base64
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -27,27 +30,149 @@ class TextProcessor:
     def __init__(self, chunk_size: int = 500, overlap: int = 30):
         self.chunk_size = chunk_size
         self.overlap = overlap
+        self.extracted_images = {}  # Store images for display
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract text from PDF - text only, no image processing."""
+        """Extract text and images from PDF - simple and fast."""
         try:
             print(f"Processing PDF: {pdf_path}")
             doc = fitz.open(pdf_path)
             text_content = []
+            image_content = []
+            
+            # Create images directory
+            os.makedirs("images", exist_ok=True)
             
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
+                
+                # Extract text
                 text = page.get_text()
                 text_content.append(f"Page {page_num + 1}: {text}")
+                
+                # Extract images (simple approach)
+                image_list = page.get_images()
+                for img_index, img in enumerate(image_list):
+                    try:
+                        xref = img[0]
+                        pix = fitz.Pixmap(doc, xref)
+                        
+                        if pix.n - pix.alpha < 4:  # GRAY or RGB
+                            img_data = pix.tobytes("png")
+                            img_pil = Image.open(io.BytesIO(img_data))
+                            
+                            # Save image for display
+                            img_filename = f"page_{page_num + 1}_image_{img_index + 1}.png"
+                            img_path = os.path.join("images", img_filename)
+                            img_pil.save(img_path)
+                            
+                            # Store image info for retrieval
+                            self.extracted_images[f"page_{page_num + 1}_image_{img_index + 1}"] = {
+                                'path': img_path,
+                                'page': page_num + 1,
+                                'image_num': img_index + 1
+                            }
+                            
+                            # Simple image analysis using Vision API
+                            img_analysis = self.analyze_image_simple(img_pil)
+                            if img_analysis:
+                                image_content.append(f"Page {page_num + 1}, Image {img_index + 1}: {img_analysis}")
+                        
+                        pix = None
+                    except Exception as e:
+                        print(f"Error processing image on page {page_num + 1}: {e}")
+                        continue
             
             doc.close()
+            
+            # Combine text and image content
             final_content = "\n".join(text_content)
+            if image_content:
+                final_content += "\n\nImage Analysis:\n" + "\n".join(image_content)
+            
             print(f"PDF processing completed. Total content length: {len(final_content)}")
             return final_content
             
         except Exception as e:
             print(f"Error extracting text from PDF: {str(e)}")
             return f"Error extracting text from PDF: {str(e)}"
+
+    def analyze_image_simple(self, img_pil):
+        """Simple image analysis using Vision API - minimal and fast."""
+        try:
+            # Resize image to reduce API costs and speed
+            max_size = 512
+            img_pil.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            
+            # Convert to base64
+            buffer = io.BytesIO()
+            img_pil.save(buffer, format='PNG')
+            img_base64 = base64.b64encode(buffer.getvalue()).decode()
+            
+            # Simple Vision API call
+            headers = {
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "gpt-4o",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Describe this image briefly in one sentence. Focus on charts, tables, graphs, or key visual elements."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{img_base64}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 100
+            }
+            
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                return None
+                
+        except Exception as e:
+            print(f"Error analyzing image: {e}")
+            return None
+
+    def get_image_path(self, page_num, image_num=None):
+        """Get the path to a specific image for display."""
+        if image_num:
+            key = f"page_{page_num}_image_{image_num}"
+        else:
+            # Find first image on the page
+            key = None
+            for k in self.extracted_images.keys():
+                if k.startswith(f"page_{page_num}_"):
+                    key = k
+                    break
+        
+        if key and key in self.extracted_images:
+            return self.extracted_images[key]['path']
+        return None
+
+    def get_all_images(self):
+        """Get all extracted images info."""
+        return self.extracted_images
 
     def chunk_text(self, text: str) -> List[str]:
         """Split text into overlapping chunks."""
@@ -448,6 +573,18 @@ class RAGSystem:
             self.vector_store.add_documents(documents)
             return True
         return False
+
+    def get_image_path(self, page_num, image_num=None):
+        """Get image path for display - delegates to TextProcessor."""
+        if hasattr(self.file_handler, 'text_processor'):
+            return self.file_handler.text_processor.get_image_path(page_num, image_num)
+        return None
+
+    def get_all_images(self):
+        """Get all extracted images info."""
+        if hasattr(self.file_handler, 'text_processor'):
+            return self.file_handler.text_processor.get_all_images()
+        return {}
 
     def add_to_conversation_history(self, question, answer, question_type="initial"):
         """Add a Q&A pair to conversation history"""
