@@ -710,10 +710,13 @@ def type_text(text, container, speed=0.01):
         container.markdown(full_text)
         time.sleep(speed)
 
-def generate_answer(question, use_internet=False, is_follow_up=False):
+def generate_answer(question, is_follow_up=False):
     try:
         st.session_state.processing = True
         start_time = time.time()
+        
+        # Get the global internet setting
+        use_internet = st.session_state.get('use_internet', False)
         
         # Check if we can process the question
         if not st.session_state.documents_loaded and not use_internet:
@@ -907,11 +910,10 @@ def show_main_page():
                 # Initialize variables
                 answer_container = st.empty()  # Container for the typing effect
                 is_follow_up = False  # Flag for follow-up questions
-                use_internet = st.session_state.get('use_internet', False)  # Get internet toggle state
                 
                 # Show processing status
                 with st.spinner("Processing your question..."):
-                    generate_answer(question, use_internet, is_follow_up)
+                    generate_answer(question, is_follow_up)
                         
                 # Display the answer
                 if st.session_state.main_answer:
@@ -960,11 +962,10 @@ def show_main_page():
             if follow_up_question and follow_up_question != st.session_state.get('current_follow_up_input', '') and not st.session_state.processing:
                 try:
                     st.session_state.processing = True
-                    use_internet = st.session_state.get('use_internet', False)  # Use global internet setting
                     
                     # Show processing status
                     with st.spinner("Processing your follow-up question..."):
-                        generate_answer(follow_up_question, use_internet, is_follow_up=True)
+                        generate_answer(follow_up_question, is_follow_up=True)
                     
                     # Add to follow-up questions list
                     if st.session_state.follow_up_answer:
@@ -980,8 +981,8 @@ def show_main_page():
                 finally:
                     st.session_state.processing = False
 
-        # Options
-        st.session_state.use_internet = st.toggle("Internet")
+        # Internet toggle (global setting)
+        st.session_state.use_internet = st.toggle("Internet Search", help="Enable internet search for all questions in this session")
         
         # Only show reset and export buttons if there's an answer
         if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
