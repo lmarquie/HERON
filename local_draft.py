@@ -2,27 +2,13 @@
 import os
 import faiss
 import fitz  # PyMuPDF
-import pickle
-import torch
 import time
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict
 from datetime import datetime
-from sentence_transformers import SentenceTransformer, CrossEncoder
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from sentence_transformers import SentenceTransformer
 import requests
-import io
 import numpy as np
 from config import OPENAI_API_KEY
-import base64
-from PIL import Image
-
-# Optional imports with fallbacks
-try:
-    from pdf2image import convert_from_path
-    PDF2IMAGE_AVAILABLE = True
-except ImportError:
-    PDF2IMAGE_AVAILABLE = False
-    print("Warning: pdf2image not available. Some PDF processing features may be limited.")
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -281,7 +267,6 @@ class WebFileHandler(LocalFileHandler):
 ### =================== Vector Store =================== ###
 class VectorStore:
     def __init__(self, dimension: int = 768):
-        self.dimension = dimension
         self.documents = []
         self.embeddings = None
         self.index = None
@@ -311,8 +296,9 @@ class VectorStore:
         else:
             self.embeddings = np.vstack([self.embeddings, embeddings])
         
-        # Create FAISS index
-        self.index = faiss.IndexFlatIP(self.dimension)
+        # Create FAISS index with correct dimension
+        embedding_dim = self.embeddings.shape[1]
+        self.index = faiss.IndexFlatIP(embedding_dim)
         self.index.add(self.embeddings.astype('float32'))
         
         print(f"Successfully added {len(documents)} documents. Total documents: {len(self.documents)}")
