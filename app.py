@@ -2,8 +2,6 @@ import streamlit as st
 import os
 import json
 import time
-import gc
-import shutil
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from local_draft import RAGSystem, WebFileHandler
@@ -12,17 +10,6 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-
-# Try to import optional dependencies
-try:
-    import psutil
-except ImportError:
-    psutil = None
-
-try:
-    import torch
-except ImportError:
-    torch = None
 
 # Create app data directory if it doesn't exist
 DATA_DIR = 'app_data'
@@ -654,8 +641,6 @@ def generate_pdf_summary():
 
 def get_memory_usage():
     """Get current memory usage in MB."""
-    if psutil is None:
-        return 0  # Return 0 if psutil is not available
     process = psutil.Process(os.getpid())
     return process.memory_info().rss / 1024 / 1024  # Convert to MB
 
@@ -677,8 +662,8 @@ def cleanup_resources():
         st.cache_data.clear()
         st.cache_resource.clear()
         
-        # Clear PyTorch's cache only if CUDA is available and torch is imported
-        if torch is not None and torch.cuda.is_available():
+        # Clear PyTorch's cache only if CUDA is available
+        if torch.cuda.is_available():
             torch.cuda.empty_cache()
         
         # Clear temporary files
@@ -710,13 +695,10 @@ def type_text(text, container, speed=0.01):
         container.markdown(full_text)
         time.sleep(speed)
 
-def generate_answer(question, is_follow_up=False):
+def generate_answer(question, use_internet=False, is_follow_up=False):
     try:
         st.session_state.processing = True
         start_time = time.time()
-        
-        # Get the global internet setting
-        use_internet = st.session_state.get('use_internet', False)
         
         # Check if we can process the question
         if not st.session_state.documents_loaded and not use_internet:
@@ -811,7 +793,7 @@ def generate_answer(question, is_follow_up=False):
         
         # Generate answer with optimized parameters
         if use_internet:
-            internet_context = f"""You are an AI assistant with access to the internet.
+            internet_context = """You are an AI assistant with access to the internet.
             Provide a comprehensive answer using your knowledge and internet access.
             Make sure to:
             1. Cite sources for all factual information
@@ -820,33 +802,13 @@ def generate_answer(question, is_follow_up=False):
             4. Be clear about what information comes from your training vs internet sources
             
             Question: {question}"""
-            
-            try:
-                # Use direct LLM call for internet search
-                answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
-            except Exception as e:
-                st.error(f"Internet search failed: {str(e)}")
-                answer = "I'm sorry, I encountered an error while trying to search the internet. Please try again or disable internet search."
+            answer = st.session_state.rag_system.question_handler.process_question(internet_context)
         else:
             if not st.session_state.documents_loaded:
                 answer = "I cannot answer this question as there are no documents loaded. Please either upload documents or enable internet search."
             else:
-                # Build context from document results
-                doc_context = "You are an investment banking analyst. Use ONLY the following document information to answer the question. If the documents don't contain relevant information, say so clearly.\n\n"
-                doc_context += f"Question: {question}\n\n"
-                doc_context += "Document Information:\n"
-                
-                if results:
-                    for i, result in enumerate(results, 1):
-                        source = result.get('metadata', {}).get('source', 'Unknown source')
-                        text = result.get('text', '')
-                        doc_context += f"Source {i}: {source}\n"
-                        doc_context += f"Content: {text}\n\n"
-                else:
-                    doc_context += "No relevant documents found.\n\n"
-                
-                doc_context += "Please provide a comprehensive answer based on the document information above. If you cannot answer the question with the provided documents, clearly state this limitation."
-                
+                # When not using internet, explicitly instruct to only use document information
+                doc_context = f"""you are an investment banking analyst. you are only allowed to use the information in the loaded documents to answer the questions."""
                 answer = st.session_state.rag_system.question_handler.process_question(doc_context)
         
         # Store the answer
@@ -855,6 +817,36 @@ def generate_answer(question, is_follow_up=False):
         else:
             st.session_state.main_answer = answer
             st.session_state.main_results = results
+        
+        # Display the answer
+        st.markdown(answer)
+        
+        # If internet search is requested, do it in parallel
+        if use_internet:
+            internet_context = """You are a document analysis expert with access to the internet.
+            Provide a concise answer using your knowledge and internet access.
+            Cite sources for data. If no source exists, mention that.
+            Focus on accurate, up-to-date information."""
+            
+            internet_start = time.time()
+            status_text.text("🌐 Searching the internet...")
+            
+            # Use ThreadPoolExecutor for parallel processing
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                internet_future = executor.submit(
+                    st.session_state.rag_system.question_handler.llm.generate_answer,
+                    question,
+                    internet_context
+                )
+                internet_answer = internet_future.result()
+            
+            # Display internet results
+            st.markdown("\n\n### Internet Search Results\n" + internet_answer)
+            
+            if is_follow_up:
+                st.session_state.follow_up_answer += "\n\n### Internet Search Results\n" + internet_answer
+            else:
+                st.session_state.main_answer += "\n\n### Internet Search Results\n" + internet_answer
         
         progress_bar.progress(100)
         status_text.text("✅ Done!")
@@ -866,11 +858,111 @@ def generate_answer(question, is_follow_up=False):
 
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
-        # Provide a fallback answer
-        if is_follow_up:
-            st.session_state.follow_up_answer = "I'm sorry, I encountered an error while processing your question. Please try again."
-        else:
-            st.session_state.main_answer = "I'm sorry, I encountered an error while processing your question. Please try again."
+    finally:
+        st.session_state.processing = False
+
+def generate_multi_analyst_answer(question, use_internet=False):
+    """Generate an answer using multiple analysts in a formal debate format."""
+    try:
+        st.session_state.processing = True
+        start_time = time.time()
+        
+        # Create status container
+        status_text = st.empty()
+        
+        # Define the debate prompt
+        debate_prompt = f"""You are moderating a formal debate between four expert analysts. The question is: "{question}"
+
+        IMPORTANT: You must ONLY use information from the provided documents to inform your debate. Do not use any external knowledge or general information.
+        If the documents don't contain relevant information, acknowledge this limitation in your debate.
+        Do not make assumptions or use knowledge from outside the provided documents.
+
+        The debate will follow this structure:
+
+        ROUND 1: Opening Statements (2 minutes each)
+        - Technical Analyst: Data-driven, focuses on facts, metrics, and logical reasoning
+        - Creative Analyst: Innovative thinker, focuses on out-of-the-box solutions
+        - Critical Analyst: Identifies potential issues, risks, and challenges
+        - Strategic Analyst: Focuses on long-term implications and big-picture thinking
+
+        ROUND 2: Rebuttals (1 minute each)
+        Each analyst must:
+        - Address the strongest points from other analysts
+        - Challenge assumptions or data presented
+        - Strengthen their own position
+
+        ROUND 3: Cross-Examination (1 minute each)
+        Each analyst must:
+        - Ask one critical question to another analyst
+        - Respond to questions directed at them
+        - Use this to further their position
+
+        ROUND 4: Closing Arguments (1 minute each)
+        Each analyst must:
+        - Summarize their strongest points
+        - Address key challenges raised
+        - Present their final position
+
+        FINAL VERDICT:
+        As the moderator, you must:
+        1. Evaluate the strength of each position
+        2. Identify the most compelling arguments
+        3. Reach a decisive conclusion that isn't just a compromise
+        4. Provide specific, actionable recommendations
+
+        Format the debate as a formal transcript, clearly marking each round and speaker.
+        Make it passionate and engaging, but maintain professional discourse.
+        Each analyst should maintain their unique perspective while engaging meaningfully with others' arguments.
+        """
+        
+        # Generate the debate
+        status_text.text("💭 Analysts are debating...")
+        
+        # Store the question first
+        st.session_state.question = question
+        
+        # Generate and store the debate
+        debate = st.session_state.rag_system.question_handler.process_question(debate_prompt)
+        st.session_state.main_answer = debate
+        
+        # Display the debate
+        st.markdown("### Formal Analyst Debate")
+        st.markdown(debate)
+        
+        # If internet search is requested
+        if use_internet:
+            internet_context = """You are a debate moderator with access to the internet.
+            Please provide additional factual context to support or challenge the debate's conclusions.
+            Make sure to cite your sources for all data, and if you can't find a source, mention that it does not exist.
+            Focus on providing accurate, up-to-date information from reliable sources that could strengthen the debate's final verdict."""
+            
+            internet_start = time.time()
+            status_text.text("🌐 Searching the internet for additional information...")
+            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
+            internet_time = time.time() - internet_start
+            
+            # Add internet results
+            st.markdown("### Additional Factual Context")
+            st.markdown(internet_answer)
+            
+            # Update the stored answer with internet results
+            st.session_state.main_answer += "\n\n### Additional Factual Context\n" + internet_answer
+        
+        status_text.text("✅ Debate concluded!")
+        total_time = time.time() - start_time
+        
+        # Display performance metrics
+        with st.expander("Performance Metrics"):
+            st.write(f"Total Processing Time: {total_time:.2f} seconds")
+            if use_internet:
+                st.write(f"Internet Search Time: {internet_time:.2f} seconds")
+        
+        # Clear the status after a short delay
+        time.sleep(1)
+        status_text.empty()
+
+    except Exception as e:
+        st.error(f"Error generating answer: {str(e)}")
     finally:
         st.session_state.processing = False
 
@@ -882,8 +974,6 @@ def show_main_page():
             st.session_state.question = ""
         if 'follow_up_question' not in st.session_state:
             st.session_state.follow_up_question = ""
-        if 'current_follow_up_input' not in st.session_state:
-            st.session_state.current_follow_up_input = ""
         if 'main_answer' not in st.session_state:
             st.session_state.main_answer = None
         if 'follow_up_answer' not in st.session_state:
@@ -912,9 +1002,6 @@ def show_main_page():
             key="question_input"
         )
 
-        # Internet toggle (global setting) - positioned right after question input
-        st.session_state.use_internet = st.toggle("Internet Search", help="Enable internet search for all questions in this session")
-
         # Process question if enter is pressed
         if question and question != st.session_state.question and not st.session_state.processing:
             try:
@@ -924,10 +1011,15 @@ def show_main_page():
                 # Initialize variables
                 answer_container = st.empty()  # Container for the typing effect
                 is_follow_up = False  # Flag for follow-up questions
+                use_internet = st.session_state.get('use_internet', False)  # Get internet toggle state
+                use_analysts = st.session_state.get('use_analysts', False)  # Get multi-analyst toggle state
                 
                 # Show processing status
                 with st.spinner("Processing your question..."):
-                    generate_answer(question, is_follow_up)
+                    if use_analysts:
+                        generate_multi_analyst_answer(question, use_internet)
+                    else:
+                        generate_answer(question, use_internet, is_follow_up)
                         
                 # Display the answer
                 if st.session_state.main_answer:
@@ -963,38 +1055,126 @@ def show_main_page():
                 st.markdown(a)
                 st.markdown("---")
             
-            # Create the follow-up question widget
+            # Add a new follow-up question input
             follow_up_question = st.text_input(
                 label="Ask a follow-up question",
                 value="",
                 label_visibility="collapsed",
                 placeholder="Ask a follow-up question...",
-                key="current_follow_up_input"
+                key=f"follow_up_input_{len(st.session_state.follow_up_questions)}"
             )
 
-            # Add a button to process the follow-up question
-            if follow_up_question and follow_up_question.strip():
-                if st.button("Ask Follow-up", type="primary"):
-                    try:
-                        st.session_state.processing = True
-                        
-                        # Show processing status
-                        with st.spinner("Processing your follow-up question..."):
-                            generate_answer(follow_up_question, is_follow_up=True)
-                        
-                        # Add to follow-up questions list
-                        if st.session_state.follow_up_answer:
-                            st.session_state.follow_up_questions.append((follow_up_question, st.session_state.follow_up_answer))
-                        
-                        # Rerun to show the new follow-up
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"Error processing follow-up question: {str(e)}")
-                        st.info("Please try again or rephrase your question.")
-                    finally:
-                        st.session_state.processing = False
+            # Process follow-up question if enter is pressed
+            if follow_up_question and not st.session_state.processing:
+                try:
+                    st.session_state.processing = True
+                    
+                    # Initialize variables
+                    follow_up_container = st.empty()  # Container for the typing effect
+                    use_internet = st.session_state.get('use_internet', False)
+                    use_analysts = st.session_state.get('use_analysts', False)
+                    
+                    # Show processing status
+                    with st.spinner("Processing your follow-up question..."):
+                        if use_analysts:
+                            generate_multi_analyst_answer(follow_up_question, use_internet)
+                        else:
+                            # Get search results
+                            results = st.session_state.rag_system.vector_store.search(follow_up_question, k=3)
+                            
+                            # Process and filter results
+                            processed_results = []
+                            seen_sources = set()
+                            seen_texts = set()
+                            
+                            for result in results:
+                                source = result.get('metadata', {}).get('source', 'Unknown source')
+                                text = result.get('text', '')
+                                
+                                if source in seen_sources or text in seen_texts:
+                                    continue
+                                    
+                                seen_sources.add(source)
+                                seen_texts.add(text)
+                                
+                                raw_score = result.get('score', 0)
+                                normalized_score = (raw_score + 1) / 2
+                                
+                                question_terms = set(follow_up_question.lower().split())
+                                source_terms = set(source.lower().split())
+                                
+                                if any(term in source_terms for term in question_terms):
+                                    normalized_score = max(normalized_score, 0.9)
+                                
+                                if any(keyword in source.lower() for keyword in ['financial', 'report', 'filing', 'sec', 'annual', 'quarterly']):
+                                    normalized_score = max(normalized_score, 0.85)
+                                
+                                if 'date' in result.get('metadata', {}):
+                                    doc_date = result['metadata']['date']
+                                    if doc_date:
+                                        try:
+                                            doc_date = datetime.strptime(doc_date, '%Y-%m-%d')
+                                            days_old = (datetime.now() - doc_date).days
+                                            if days_old < 365:
+                                                normalized_score = max(normalized_score, 0.8)
+                                        except:
+                                            pass
+                                
+                                processed_results.append({
+                                    'metadata': result.get('metadata', {}),
+                                    'score': normalized_score,
+                                    'text': text
+                                })
+                            
+                            processed_results.sort(key=lambda x: x['score'], reverse=True)
+                            results = processed_results[:5]
+                            
+                            # Build context from all previous questions and answers
+                            context = f"Original question: {st.session_state.question}\nOriginal answer: {st.session_state.main_answer}\n"
+                            for prev_q, prev_a in st.session_state.follow_up_questions:
+                                context += f"\nPrevious follow-up: {prev_q}\nPrevious answer: {prev_a}\n"
+                            context += f"\nNew follow-up question: {follow_up_question}"
+                            
+                            # Generate answer with previous context
+                            follow_up_answer = st.session_state.rag_system.question_handler.process_question(context)
+                            
+                            # Type out the answer
+                            type_text(follow_up_answer, follow_up_container)
+                            
+                            # Add to follow-up questions list
+                            st.session_state.follow_up_questions.append((follow_up_question, follow_up_answer))
+                            
+                            # If internet search is enabled, do it in parallel
+                            if use_internet:
+                                internet_context = """You are a document analysis expert with access to the internet.
+                                Provide a concise answer using your knowledge and internet access.
+                                Cite sources for data. If no source exists, mention that.
+                                Focus on accurate, up-to-date information."""
+                                
+                                # Use ThreadPoolExecutor for parallel processing
+                                with ThreadPoolExecutor(max_workers=2) as executor:
+                                    internet_future = executor.submit(
+                                        st.session_state.rag_system.question_handler.llm.generate_answer,
+                                        follow_up_question,
+                                        internet_context
+                                    )
+                                    internet_answer = internet_future.result()
+                                
+                                # Type out the internet results
+                                type_text("\n\n### Internet Search Results\n" + internet_answer, follow_up_container)
+                                st.session_state.follow_up_questions[-1] = (follow_up_question, follow_up_answer + "\n\n### Internet Search Results\n" + internet_answer)
+                
+                except Exception as e:
+                    st.error(f"Error processing follow-up question: {str(e)}")
+                    st.info("Please try again or rephrase your follow-up question.")
+                finally:
+                    st.session_state.processing = False
+                    st.rerun()  # Rerun to show the new follow-up input
 
+        # Options
+        st.session_state.use_internet = st.toggle("Internet")
+        st.session_state.use_analysts = st.toggle("Multi-Analyst")
+        
         # Only show reset and export buttons if there's an answer
         if hasattr(st.session_state, 'main_answer') and st.session_state.main_answer:
             st.markdown("---")
