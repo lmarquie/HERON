@@ -14,11 +14,39 @@ import psutil
 import torch
 import gc
 import shutil
+from PIL import Image
+
+# Set fast mode by default for better performance
+os.environ['FAST_MODE'] = 'true'
 
 # Create app data directory if it doesn't exist
 DATA_DIR = 'app_data'
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(os.path.join(DATA_DIR, 'images'), exist_ok=True)
+
+# Add caching for expensive operations
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def cached_generate_answer(question, context, use_internet=False):
+    """Cached version of answer generation to avoid repeated API calls."""
+    if 'rag_system' in st.session_state:
+        return st.session_state.rag_system.question_handler.process_question(question)
+    return "RAG system not initialized"
+
+@st.cache_data(ttl=1800)  # Cache for 30 minutes
+def cached_search_results(query, k=5):
+    """Cached search results to avoid repeated vector searches."""
+    if 'rag_system' in st.session_state:
+        return st.session_state.rag_system.vector_store.search(query, k=k)
+    return []
+
+# Initialize RAG system with Vision API setting
+def initialize_rag_system():
+    """Initialize the RAG system if it doesn't exist."""
+    if 'rag_system' not in st.session_state:
+        # Check if Vision API should be enabled
+        use_vision_api = st.session_state.get('use_vision_api', True)
+        st.session_state.rag_system = RAGSystem(is_web=True, use_vision_api=use_vision_api)
+        st.session_state.documents_loaded = False
 
 def get_current_settings():
     """Get the current settings from session state or defaults"""
@@ -62,6 +90,12 @@ with st.sidebar:
     
     # File uploader
     st.header("Upload Documents")
+    
+    # Document processing options
+    st.subheader("Processing Options")
+    max_pages = st.slider("Max Pages to Process", 1, 50, 10, help="Limit pages to process for faster loading")
+    skip_images = st.checkbox("Skip Image Processing", value=True, help="Skip all image extraction for maximum speed")
+    
     try:
         uploaded_files = st.file_uploader(
             label="Upload your documents to analyze",
@@ -73,6 +107,10 @@ with st.sidebar:
         )
         
         if uploaded_files:
+            # Set processing options in session state
+            st.session_state.max_pages = max_pages
+            st.session_state.skip_images = skip_images
+            
             if st.session_state.rag_system.process_web_uploads(uploaded_files):
                 st.success(f"Successfully processed {len(uploaded_files)} file(s)")
                 st.session_state.documents_loaded = True
@@ -151,6 +189,35 @@ with st.sidebar:
     
     if not vision_api_enabled:
         st.info("Vision API is disabled. Images will still be extracted and saved, but AI analysis will be skipped.")
+    
+    # Fast Mode Toggle
+    st.divider()
+    st.subheader("Performance Settings")
+    
+    # Initialize fast_mode in session state if not exists
+    if 'fast_mode' not in st.session_state:
+        st.session_state.fast_mode = True  # Set to True by default
+    
+    # Create toggle for Fast Mode
+    fast_mode_enabled = st.toggle(
+        "Enable Fast Mode",
+        value=st.session_state.fast_mode,
+        help="Skip expensive image analysis for faster processing. Only extracts and displays images without AI analysis."
+    )
+    
+    # Update session state and environment variable if setting changed
+    if fast_mode_enabled != st.session_state.fast_mode:
+        st.session_state.fast_mode = fast_mode_enabled
+        # Set environment variable for the TextProcessor
+        os.environ['FAST_MODE'] = 'true' if fast_mode_enabled else 'false'
+        st.success(f"Fast mode {'enabled' if fast_mode_enabled else 'disabled'}")
+    
+    # Always set the environment variable to match the current state
+    os.environ['FAST_MODE'] = 'true' if st.session_state.fast_mode else 'false'
+    
+    if st.session_state.fast_mode:
+        st.info("Fast mode is enabled. Image analysis will be skipped for faster processing.")
+        st.warning("Only charts and graphs will be extracted and displayed without AI analysis.")
 
 # Initialize session state
 if 'current_page' not in st.session_state:
@@ -181,15 +248,6 @@ if 'follow_up_answer' not in st.session_state:
 # Create data directory if it doesn't exist
 DATA_DIR = "app_data"
 os.makedirs(DATA_DIR, exist_ok=True)
-
-# Initialize RAG system with Vision API setting
-def initialize_rag_system():
-    """Initialize the RAG system if it doesn't exist."""
-    if 'rag_system' not in st.session_state:
-        # Check if Vision API should be enabled
-        use_vision_api = st.session_state.get('use_vision_api', True)
-        st.session_state.rag_system = RAGSystem(is_web=True, use_vision_api=use_vision_api)
-        st.session_state.documents_loaded = False
 
 # Ensure images directory exists
 images_dir = os.path.join("app_data", "images")
@@ -698,49 +756,56 @@ def generate_pdf_summary():
         return None
 
 def get_memory_usage():
-    """Get current memory usage in MB."""
-    process = psutil.Process(os.getpid())
-    return process.memory_info().rss / 1024 / 1024  # Convert to MB
+    """Get current memory usage"""
+    process = psutil.Process()
+    return process.memory_info().rss / 1024 / 1024  # MB
 
 def should_cleanup():
-    """Check if cleanup is needed based on memory usage."""
-    try:
-        memory_usage = get_memory_usage()
-        # Increase threshold for cloud environments
-        threshold = 2000 if os.environ.get('CLOUD_ENVIRONMENT') else 1000
-        return memory_usage > threshold  # Cleanup if memory usage exceeds threshold
-    except Exception as e:
-        st.warning(f"Error checking memory usage: {str(e)}")
-        return False
+    """Check if cleanup is needed based on memory usage"""
+    memory_mb = get_memory_usage()
+    return memory_mb > 1000  # Cleanup if over 1GB
 
 def cleanup_resources():
-    """Clean up resources to free memory and disk space."""
+    """Clean up resources to free memory"""
     try:
         # Clear Streamlit cache
-        st.cache_resource.clear()
-        
-        # Clear PyTorch's cache only if CUDA is available
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        
-        # Clean up old image files (keep only recent ones)
-        images_dir = os.path.join("app_data", "images")
-        if os.path.exists(images_dir):
-            current_time = time.time()
-            for filename in os.listdir(images_dir):
-                file_path = os.path.join(images_dir, filename)
-                # Remove files older than 1 hour
-                if os.path.isfile(file_path) and (current_time - os.path.getmtime(file_path)) > 3600:
-                    try:
-                        os.remove(file_path)
-                    except:
-                        pass
+        st.cache_data.clear()
         
         # Force garbage collection
         gc.collect()
         
+        # Clear torch cache if available
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        st.success("Resources cleaned up successfully")
     except Exception as e:
-        st.warning(f"Error during cleanup: {str(e)}")
+        st.error(f"Error during cleanup: {str(e)}")
+
+def monitor_performance():
+    """Monitor and display performance metrics"""
+    memory_mb = get_memory_usage()
+    
+    with st.expander("Performance Monitor"):
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Memory Usage", f"{memory_mb:.1f} MB")
+        
+        with col2:
+            if 'rag_system' in st.session_state and st.session_state.rag_system:
+                doc_count = len(st.session_state.rag_system.vector_store.documents) if hasattr(st.session_state.rag_system, 'vector_store') else 0
+                st.metric("Documents Loaded", doc_count)
+            else:
+                st.metric("Documents Loaded", 0)
+        
+        with col3:
+            if should_cleanup():
+                st.warning("High memory usage")
+                if st.button("Cleanup Resources"):
+                    cleanup_resources()
+            else:
+                st.success("Memory OK")
 
 def display_answer_with_images(answer_text):
     """Display answer text with embedded images."""
@@ -1113,6 +1178,13 @@ def test_image_processing():
         images = os.listdir(images_dir)
         st.success(f"Images directory exists. Found {len(images)} images")
         
+        # Check fast mode status
+        fast_mode = st.session_state.get('fast_mode', False)
+        if fast_mode:
+            st.warning("⚠️ Fast mode is enabled - only basic image extraction is active")
+        else:
+            st.info("✅ Full image analysis mode is active")
+        
         # Display a few sample images
         if images:
             st.markdown("### Sample Images")
@@ -1131,6 +1203,23 @@ def test_image_processing():
                     # Show image info
                     file_size = os.path.getsize(image_path)
                     st.write(f"Size: {file_size:,} bytes")
+                    
+                    # Try to determine if this is likely a chart
+                    try:
+                        img = Image.open(image_path)
+                        width, height = img.size
+                        st.write(f"Dimensions: {width}x{height}")
+                        
+                        # Basic chart detection
+                        if width > 300 and height > 200:
+                            st.success("✅ Likely a chart/graph (substantial size)")
+                        elif width < 150 or height < 100:
+                            st.warning("⚠️ Small image - may be decorative")
+                        else:
+                            st.info("ℹ️ Medium size - could be chart or text")
+                            
+                    except Exception as e:
+                        st.error(f"Error analyzing image: {str(e)}")
                     
                 except Exception as e:
                     st.error(f"Error loading {image_name}: {str(e)}")
@@ -1171,6 +1260,31 @@ def test_image_processing():
                 break
         if not found_refs:
             st.warning("No image references found in document results")
+    
+    # Show filtering information
+    st.markdown("### Image Filtering Information")
+    st.info("""
+    **Chart Detection Criteria:**
+    - Minimum size: 150x100 pixels
+    - Multiple colors (3+ colors)
+    - Moderate edge density (not too text-heavy)
+    - Appropriate aspect ratio (0.5-2.0)
+    
+    **Images that are filtered out:**
+    - Small decorative elements
+    - Text-heavy images
+    - Single-color images
+    - Very large photos with too many colors
+    """)
+    
+    if st.session_state.fast_mode:
+        st.warning("""
+        **Fast Mode Active:**
+        - All image analysis is skipped
+        - Images are still extracted and saved
+        - No AI analysis is performed
+        - Much faster processing
+        """)
 
 def show_main_page():
     """Show the main page with file upload and question input."""
@@ -1441,6 +1555,9 @@ def show_main_page():
                     with button_col3:
                         if st.button("Test Images", type="secondary", use_container_width=True):
                             test_image_processing()
+        
+        # Add performance monitor at the bottom
+        monitor_performance()
         
         st.markdown("</div>", unsafe_allow_html=True)
         
