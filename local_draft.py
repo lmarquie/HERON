@@ -46,15 +46,13 @@ class TextProcessor:
         """Extract text from PDF - text only, no image processing."""
         try:
             print(f"Processing PDF: {pdf_path}")
-            # Extract regular text only
             doc = fitz.open(pdf_path)
             text_content = []
             
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
                 text = page.get_text()
-                text_content.append(f"Page {page_num + 1} Text:\n{text}\n")
-                print(f"Page {page_num + 1}: Text extracted")
+                text_content.append(f"Page {page_num + 1}: {text}")
             
             doc.close()
             final_content = "\n".join(text_content)
@@ -584,53 +582,16 @@ class ClaudeHandler:
 class QuestionHandler:
     def __init__(self, vector_store: VectorStore):
         self.vector_store = vector_store
-        financial_system_prompt = """You are a financial analysis expert. Your task is to analyze financial documents and provide detailed, accurate answers to questions about them.
-
-Key capabilities:
-- Analyze financial statements, reports, and documents
-- Extract and interpret financial metrics and data
-- Identify trends, risks, and opportunities
-- Compare financial performance across periods
-- Explain financial concepts and terminology
-- Provide context for financial decisions
-- Highlight important financial insights
-
-Guidelines:
-1. Base your answers primarily on the provided context
-2. Be precise with numbers and financial data
-3. Explain financial terms when used
-4. Highlight any uncertainties or missing information
-5. Provide relevant context for your analysis
-6. Be clear about assumptions made
-7. If the context doesn't contain enough information, say so clearly
-
-Answer based on the context provided."""
-        self.llm = ClaudeHandler(system_prompt=financial_system_prompt)
+        self.llm = ClaudeHandler()
 
     def process_question(self, question: str, query_type: str = "document", k: int = 5) -> str:
         results = self.vector_store.search(question, k=k)
-
-        # Combine results into a single context with size limits
-        context_parts = []
-        total_length = 0
-        max_context_length = 40000  # Approximately 10k tokens
         
-        for chunk in results:
-            chunk_text = chunk['text']
-            # If adding this chunk would exceed the limit, truncate it
-            if total_length + len(chunk_text) > max_context_length:
-                remaining_length = max_context_length - total_length
-                if remaining_length > 100:  # Only add if we have at least 100 chars left
-                    chunk_text = chunk_text[:remaining_length] + "..."
-                else:
-                    break
-            context_parts.append(chunk_text)
-            total_length += len(chunk_text)
-            
-            if total_length >= max_context_length:
-                break
+        if not results:
+            return "No relevant information found in the documents."
         
-        context = "\n".join(context_parts)
+        # Simple context building
+        context = "\n".join([chunk['text'] for chunk in results])
         answer = self.llm.generate_answer(question, context)
         return answer
 
@@ -640,118 +601,7 @@ class RAGSystem:
         self.file_handler = WebFileHandler() if is_web else LocalFileHandler()
         self.vector_store = VectorStore()
         self.question_handler = QuestionHandler(self.vector_store)
-        self.running = True
         self.is_web = is_web
-        self.use_vision_api = use_vision_api
-        
-        # Set environment variable for TextProcessor
-        if not use_vision_api:
-            os.environ['SKIP_VISION_API'] = 'true'
-            print("Vision API disabled for this session")
-        else:
-            # Remove the environment variable if it exists
-            os.environ.pop('SKIP_VISION_API', None)
-            print("Vision API enabled for this session")
-        
-        # Initialize with default settings
-        default_settings = {
-            'chunk_size': 500,
-            'chunk_overlap': 50,
-            'model_temperature': 0.3,
-            'sequence_length': 256,
-            'batch_size': 128,
-            'use_half_precision': True,
-            'doc_percentage': 15,
-            'num_results': 3
-        }
-        
-        # Update defaults with provided settings
-        if settings:
-            default_settings.update(settings)
-        
-        # Apply settings
-        self.apply_settings(default_settings)
-    
-    def apply_settings(self, settings):
-        """Apply new settings to the RAG system components."""
-        if not settings:
-            return
-            
-        print("\n=== Applying Settings ===")
-        print(f"Settings received: {settings}")
-            
-        # Update vector store settings
-        if hasattr(self, 'vector_store') and self.vector_store is not None:
-            old_chunk_size = self.vector_store.chunk_size
-            old_chunk_overlap = self.vector_store.chunk_overlap
-            
-            self.vector_store.chunk_size = settings.get('chunk_size', self.vector_store.chunk_size)
-            self.vector_store.chunk_overlap = settings.get('chunk_overlap', self.vector_store.chunk_overlap)
-            
-            print(f"Vector Store Settings Updated:")
-            print(f"  Chunk Size: {old_chunk_size} -> {self.vector_store.chunk_size}")
-            print(f"  Chunk Overlap: {old_chunk_overlap} -> {self.vector_store.chunk_overlap}")
-            
-        # Update question handler settings
-        if hasattr(self, 'question_handler') and self.question_handler is not None:
-            if hasattr(self.question_handler, 'llm') and self.question_handler.llm is not None:
-                # Store the temperature setting in the class for later use
-                self.question_handler.llm.temperature = settings.get('model_temperature', 0.3)
-                print(f"LLM Settings Updated:")
-                print(f"  Temperature: {self.question_handler.llm.temperature}")
-        print("=== Settings Applied ===\n")
-
-    def initialize(self):
-        print("\n=== Welcome to the Local RAG System ===")
-
-        selected_folder = self.file_handler.select_folder_interactive()
-        if not selected_folder:
-            print("No folder selected. Please try again.")
-            return self.initialize()
-
-        print(f"\nProcessing folder: {selected_folder['name']}")
-        documents = self.file_handler.process_selected_folder(selected_folder['path'])
-
-        if not documents:
-            print("No documents found to process. Please try again.")
-            return self.initialize()
-
-        print("\nIndexing documents...")
-        self.vector_store.add_documents(documents)
-        print("Documents indexed successfully!")
-        return True
-
-    def show_menu(self):
-        print("\n=== RAG System Menu ===")
-        print("1. Ask a question")
-        print("2. Select a different folder")
-        print("3. Exit")
-        return input("Enter your choice (1-3): ")
-
-    def run(self):
-        if not self.initialize():
-            return
-
-        while self.running:
-            choice = self.show_menu()
-
-            if choice == "1":
-                question = input("\nEnter your question: ")
-                answer = self.question_handler.process_question(question)
-                print("\nAnswer:", answer)
-
-            elif choice == "2":
-                if self.initialize():
-                    print("Successfully switched to new folder!")
-                else:
-                    print("Failed to switch folders.")
-
-            elif choice == "3":
-                print("\nThank you for using the RAG System. Goodbye!")
-                self.running = False
-
-            else:
-                print("\nInvalid choice. Please try again.")
 
     def process_web_uploads(self, uploaded_files):
         """Process files uploaded through the web interface"""
