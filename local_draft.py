@@ -189,6 +189,7 @@ class TextProcessor:
     def __init__(self, chunk_size: int = 500, overlap: int = 30):
         self.chunk_size = chunk_size
         self.overlap = overlap
+        self.image_analysis_cache = {}  # Cache for image analysis results
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extract text from PDF including images using OCR and vision analysis."""
@@ -243,6 +244,7 @@ class TextProcessor:
                                 # Analyze image with OCR and vision
                                 image_analysis = self.analyze_image(pil_image, page_num + 1, img_index + 1)
                                 text_content.append(image_analysis)
+                                images_found += 1
                                 
                                 pix_rgb = None  # Free memory
                             else:
@@ -264,18 +266,21 @@ class TextProcessor:
                         for block_index, block in enumerate(image_blocks):
                             try:
                                 print(f"Processing image block {block_index + 1} on page {page_num + 1}")
-                                # Try to extract the image
-                                pix = fitz.Pixmap(doc, block["xref"])
-                                if pix.n - pix.alpha < 4:  # GRAY or RGB
-                                    img_data = pix.tobytes("png")
-                                    pil_image = Image.open(io.BytesIO(img_data))
+                                # Try to extract the image - check if xref exists
+                                if "xref" in block:
+                                    pix = fitz.Pixmap(doc, block["xref"])
+                                    if pix.n - pix.alpha < 4:  # GRAY or RGB
+                                        img_data = pix.tobytes("png")
+                                        pil_image = Image.open(io.BytesIO(img_data))
+                                        
+                                        # Analyze image
+                                        image_analysis = self.analyze_image(pil_image, page_num + 1, f"block_{block_index + 1}")
+                                        text_content.append(image_analysis)
+                                        images_found += 1
                                     
-                                    # Analyze image
-                                    image_analysis = self.analyze_image(pil_image, page_num + 1, f"block_{block_index + 1}")
-                                    text_content.append(image_analysis)
-                                    images_found += 1
-                                
-                                pix = None  # Free memory
+                                    pix = None  # Free memory
+                                else:
+                                    print(f"Image block {block_index + 1}: No xref found in block")
                             except Exception as e:
                                 print(f"Error processing image block {block_index + 1}: {str(e)}")
                                 text_content.append(f"Error processing image block {block_index + 1}: {str(e)}\n")
@@ -292,33 +297,38 @@ class TextProcessor:
                 except Exception as e:
                     print(f"Error with get_drawings() on page {page_num + 1}: {str(e)}")
                 
-                # Method 4: Convert page to image and analyze if no images found
+                # Method 4: Convert page to image and analyze if no images found AND page has substantial content
                 if images_found == 0:
-                    print(f"Page {page_num + 1}: No images found, converting page to image for analysis")
-                    try:
-                        # Convert page to image
-                        mat = fitz.Matrix(2, 2)  # 2x zoom for better quality
-                        pix = page.get_pixmap(matrix=mat)
-                        img_data = pix.tobytes("png")
-                        pil_image = Image.open(io.BytesIO(img_data))
-                        
-                        # Save the page image
-                        page_filename = f"page_{page_num + 1}_full.png"
-                        page_path = os.path.join("app_data", "images", page_filename)
-                        os.makedirs(os.path.dirname(page_path), exist_ok=True)
-                        pil_image.save(page_path)
-                        
-                        # Add page image reference
-                        text_content.append(f"Page {page_num + 1} Full Page Image:\n")
-                        text_content.append(f"IMAGE_REF:{page_filename}\n")
-                        
-                        # Analyze the page image for charts/tables
-                        page_analysis = self.analyze_image(pil_image, page_num + 1, "full_page")
-                        text_content.append(page_analysis)
-                        
-                        pix = None  # Free memory
-                    except Exception as e:
-                        print(f"Error converting page {page_num + 1} to image: {str(e)}")
+                    # Only convert to image if page has substantial text content (likely to have charts/tables)
+                    page_text = page.get_text().strip()
+                    if len(page_text) > 100:  # Only process pages with substantial text
+                        print(f"Page {page_num + 1}: No images found but substantial text, converting page to image for analysis")
+                        try:
+                            # Convert page to image
+                            mat = fitz.Matrix(2, 2)  # 2x zoom for better quality
+                            pix = page.get_pixmap(matrix=mat)
+                            img_data = pix.tobytes("png")
+                            pil_image = Image.open(io.BytesIO(img_data))
+                            
+                            # Save the page image
+                            page_filename = f"page_{page_num + 1}_full.png"
+                            page_path = os.path.join("app_data", "images", page_filename)
+                            os.makedirs(os.path.dirname(page_path), exist_ok=True)
+                            pil_image.save(page_path)
+                            
+                            # Add page image reference
+                            text_content.append(f"Page {page_num + 1} Full Page Image:\n")
+                            text_content.append(f"IMAGE_REF:{page_filename}\n")
+                            
+                            # Analyze the page image for charts/tables
+                            page_analysis = self.analyze_image(pil_image, page_num + 1, "full_page")
+                            text_content.append(page_analysis)
+                            
+                            pix = None  # Free memory
+                        except Exception as e:
+                            print(f"Error converting page {page_num + 1} to image: {str(e)}")
+                    else:
+                        print(f"Page {page_num + 1}: No images found and minimal text, skipping page conversion")
             
             doc.close()
             final_content = "\n".join(text_content)
@@ -337,6 +347,16 @@ class TextProcessor:
             print(f"Starting analysis of image {img_index} on page {page_num}")
             # Convert img_index to string for filename
             img_index_str = str(img_index)
+            
+            # Create cache key based on image hash
+            import hashlib
+            img_hash = hashlib.md5(image.tobytes()).hexdigest()
+            cache_key = f"{img_hash}_{page_num}_{img_index_str}"
+            
+            # Check cache first
+            if cache_key in self.image_analysis_cache:
+                print(f"Using cached analysis for image {img_index_str}")
+                return self.image_analysis_cache[cache_key]
             
             # Save image for display in answers
             image_filename = f"image_page_{page_num}_img_{img_index_str}.png"
@@ -419,10 +439,19 @@ class TextProcessor:
             if analysis_parts:
                 result = f"Image {img_index_str} Analysis:\n" + "\n".join(analysis_parts) + "\n"
                 print(f"Image analysis completed successfully. Result length: {len(result)}")
+                
+                # Cache the result
+                self.image_analysis_cache[cache_key] = result
+                print(f"Cached analysis for image {img_index_str}")
+                
                 return result
             else:
                 result = f"Image {img_index_str}: No text or significant content detected\n"
                 print("Image analysis completed but found no significant content")
+                
+                # Cache the result
+                self.image_analysis_cache[cache_key] = result
+                
                 return result
                 
         except Exception as e:
