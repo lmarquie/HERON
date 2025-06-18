@@ -1034,6 +1034,124 @@ def generate_multi_analyst_answer(question, use_internet=False):
     finally:
         st.session_state.processing = False
 
+def generate_multi_analyst_follow_up(question, use_internet=False):
+    """Generate a follow-up answer using multiple analysts in a formal debate format."""
+    try:
+        # Get document results first
+        results = []
+        if st.session_state.documents_loaded:
+            results = st.session_state.rag_system.vector_store.search(question, k=5)
+        
+        # Process and filter results
+        processed_results = []
+        seen_sources = set()
+        seen_texts = set()
+        
+        for result in results:
+            source = result.get('metadata', {}).get('source', 'Unknown source')
+            text = result.get('text', '')
+            
+            if source in seen_sources or text in seen_texts:
+                continue
+                
+            seen_sources.add(source)
+            seen_texts.add(text)
+            
+            raw_score = result.get('score', 0)
+            normalized_score = (raw_score + 1) / 2
+            
+            processed_results.append({
+                'metadata': result.get('metadata', {}),
+                'score': normalized_score,
+                'text': text
+            })
+        
+        processed_results.sort(key=lambda x: x['score'], reverse=True)
+        results = processed_results[:5]
+        
+        # Build document context
+        doc_context = ""
+        if results:
+            doc_context = "\n\nDocument Information:\n"
+            for i, result in enumerate(results, 1):
+                source = result.get('metadata', {}).get('source', 'Unknown source')
+                text = result.get('text', '')
+                doc_context += f"Source {i}: {source}\n"
+                doc_context += f"Content: {text}\n\n"
+        else:
+            doc_context = "\n\nNo relevant documents found.\n\n"
+        
+        # Build context from all previous questions and answers
+        context = f"Original question: {st.session_state.question}\nOriginal answer: {st.session_state.main_answer}\n"
+        for prev_q, prev_a in st.session_state.follow_up_questions:
+            context += f"\nPrevious follow-up: {prev_q}\nPrevious answer: {prev_a}\n"
+        context += f"\nNew follow-up question: {question}"
+        
+        # Define the debate prompt
+        debate_prompt = f"""You are moderating a formal debate between four expert analysts. The question is: "{question}"
+
+        IMPORTANT: You must ONLY use information from the provided documents to inform your debate. Do not use any external knowledge or general information.
+        If the documents don't contain relevant information, acknowledge this limitation in your debate.
+        Do not make assumptions or use knowledge from outside the provided documents.{doc_context}
+
+        Previous conversation context: {context}
+
+        The debate will follow this structure:
+
+        ROUND 1: Opening Statements (2 minutes each)
+        - Technical Analyst: Data-driven, focuses on facts, metrics, and logical reasoning
+        - Creative Analyst: Innovative thinker, focuses on out-of-the-box solutions
+        - Critical Analyst: Identifies potential issues, risks, and challenges
+        - Strategic Analyst: Focuses on long-term implications and big-picture thinking
+
+        ROUND 2: Rebuttals (1 minute each)
+        Each analyst must:
+        - Address the strongest points from other analysts
+        - Challenge assumptions or data presented
+        - Strengthen their own position
+
+        ROUND 3: Cross-Examination (1 minute each)
+        Each analyst must:
+        - Ask one critical question to another analyst
+        - Respond to questions directed at them
+        - Use this to further their position
+
+        ROUND 4: Closing Arguments (1 minute each)
+        Each analyst must:
+        - Summarize their strongest points
+        - Address key challenges raised
+        - Present their final position
+
+        FINAL VERDICT:
+        As the moderator, you must:
+        1. Evaluate the strength of each position
+        2. Identify the most compelling arguments
+        3. Reach a decisive conclusion that isn't just a compromise
+        4. Provide specific, actionable recommendations
+
+        Format the debate as a formal transcript, clearly marking each round and speaker.
+        Make it passionate and engaging, but maintain professional discourse.
+        Each analyst should maintain their unique perspective while engaging meaningfully with others' arguments.
+        """
+        
+        # Generate the debate
+        debate = st.session_state.rag_system.question_handler.llm.generate_answer(question, debate_prompt)
+        
+        # If internet search is requested
+        if use_internet:
+            internet_context = """You are a debate moderator with access to the internet.
+            Please provide additional factual context to support or challenge the debate's conclusions.
+            Make sure to cite your sources for all data, and if you can't find a source, mention that it does not exist.
+            Focus on providing accurate, up-to-date information from reliable sources that could strengthen the debate's final verdict."""
+            
+            internet_answer = st.session_state.rag_system.question_handler.llm.generate_answer(question, internet_context)
+            debate += "\n\n### Additional Factual Context\n" + internet_answer
+        
+        return debate
+
+    except Exception as e:
+        return f"Error generating follow-up answer: {str(e)}"
+
 def show_main_page():
     """Show the main page with file upload and question input."""
     try:
@@ -1126,10 +1244,10 @@ def show_main_page():
             # Add a new follow-up question input
             follow_up_question = st.text_input(
                 label="Ask a follow-up question",
-                value="",
+                value=st.session_state.get('current_follow_up_input', ''),
                 label_visibility="collapsed",
                 placeholder="Ask a follow-up question...",
-                key=f"follow_up_input_{len(st.session_state.follow_up_questions)}"
+                key="current_follow_up_input"
             )
 
             # Process follow-up question if enter is pressed
@@ -1145,7 +1263,12 @@ def show_main_page():
                     # Show processing status
                     with st.spinner("Processing your follow-up question..."):
                         if use_analysts:
-                            generate_multi_analyst_answer(follow_up_question, use_internet)
+                            # For multi-analyst follow-up, we need to handle it differently
+                            follow_up_answer = generate_multi_analyst_follow_up(follow_up_question, use_internet)
+                            # Type out the answer
+                            type_text(follow_up_answer, follow_up_container)
+                            # Add to follow-up questions list
+                            st.session_state.follow_up_questions.append((follow_up_question, follow_up_answer))
                         else:
                             # Get search results
                             results = st.session_state.rag_system.vector_store.search(follow_up_question, k=3)
@@ -1250,6 +1373,8 @@ def show_main_page():
                     st.info("Please try again or rephrase your follow-up question.")
                 finally:
                     st.session_state.processing = False
+                    # Clear the follow-up question to prevent loop
+                    st.session_state.current_follow_up_input = ""
                     st.rerun()  # Rerun to show the new follow-up input
 
         # Options
