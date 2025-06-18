@@ -992,11 +992,12 @@ def generate_multi_analyst_answer(question, use_internet=False):
         st.session_state.question = question
         
         # Generate and store the debate
-        debate = st.session_state.rag_system.question_handler.process_question(debate_prompt)
+        debate = st.session_state.rag_system.question_handler.llm.generate_answer(question, debate_prompt)
         st.session_state.main_answer = debate
         st.session_state.main_results = results
         
         # If internet search is requested
+        internet_time = None  # Initialize variable
         if use_internet:
             internet_context = """You are a debate moderator with access to the internet.
             Please provide additional factual context to support or challenge the debate's conclusions.
@@ -1021,7 +1022,7 @@ def generate_multi_analyst_answer(question, use_internet=False):
         # Display performance metrics
         with st.expander("Performance Metrics"):
             st.write(f"Total Processing Time: {total_time:.2f} seconds")
-            if use_internet:
+            if use_internet and internet_time is not None:
                 st.write(f"Internet Search Time: {internet_time:.2f} seconds")
         
         # Clear the status after a short delay
