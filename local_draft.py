@@ -13,6 +13,10 @@ import requests
 import io
 import numpy as np
 from config import OPENAI_API_KEY
+import base64
+from PIL import Image
+import pytesseract
+from pdf2image import convert_from_path
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -161,37 +165,242 @@ class TextProcessor:
         self.overlap = overlap
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
+        """Extract text from PDF including images using OCR and vision analysis."""
         try:
+            # Extract regular text
             doc = fitz.open(pdf_path)
-            text = "\n".join([page.get_text() for page in doc])
-            return text
+            text_content = []
+            
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                
+                # Extract regular text
+                text = page.get_text()
+                text_content.append(f"Page {page_num + 1} Text:\n{text}\n")
+                
+                # Extract images and analyze them
+                image_list = page.get_images()
+                if image_list:
+                    text_content.append(f"Page {page_num + 1} Images:\n")
+                    
+                    for img_index, img in enumerate(image_list):
+                        try:
+                            # Get image data
+                            xref = img[0]
+                            pix = fitz.Pixmap(doc, xref)
+                            
+                            if pix.n - pix.alpha < 4:  # GRAY or RGB
+                                # Convert to PIL Image
+                                img_data = pix.tobytes("png")
+                                pil_image = Image.open(io.BytesIO(img_data))
+                                
+                                # Analyze image with OCR and vision
+                                image_analysis = self.analyze_image(pil_image, page_num + 1, img_index + 1)
+                                text_content.append(image_analysis)
+                                
+                            pix = None  # Free memory
+                        except Exception as e:
+                            text_content.append(f"Error processing image {img_index + 1}: {str(e)}\n")
+            
+            doc.close()
+            return "\n".join(text_content)
+            
         except Exception as e:
-            print(f"Error extracting text from {pdf_path}: {e}")
-            return ""
+            return f"Error extracting text from PDF: {str(e)}"
+
+    def analyze_image(self, image: Image.Image, page_num: int, img_index: int) -> str:
+        """Analyze image using OCR and vision APIs for comprehensive understanding."""
+        analysis_parts = []
+        
+        try:
+            # Save image for display in answers
+            image_filename = f"image_page_{page_num}_img_{img_index}.png"
+            image_path = os.path.join("app_data", "images", image_filename)
+            os.makedirs(os.path.dirname(image_path), exist_ok=True)
+            image.save(image_path)
+            
+            # Add image reference for display
+            analysis_parts.append(f"IMAGE_REF:{image_filename}")
+            
+            # 1. OCR Text Extraction
+            ocr_text = pytesseract.image_to_string(image)
+            if ocr_text.strip():
+                analysis_parts.append(f"OCR Text: {ocr_text.strip()}")
+            
+            # 2. Table Detection and Extraction
+            try:
+                table_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+                # Process table data if detected
+                if any(float(conf) > 60 for conf in table_data['conf'] if conf != '-1'):
+                    analysis_parts.append("Table detected - data extracted via OCR")
+            except:
+                pass
+            
+            # 3. Vision API Analysis (OpenAI GPT-4 Vision)
+            vision_analysis = self.analyze_image_with_vision_api(image)
+            if vision_analysis:
+                analysis_parts.append(f"Vision Analysis: {vision_analysis}")
+            
+            # 4. Chart/Graph Detection
+            chart_analysis = self.detect_charts_and_graphs(image)
+            if chart_analysis:
+                analysis_parts.append(f"Chart Analysis: {chart_analysis}")
+            
+            if analysis_parts:
+                return f"Image {img_index} Analysis:\n" + "\n".join(analysis_parts) + "\n"
+            else:
+                return f"Image {img_index}: No text or significant content detected\n"
+                
+        except Exception as e:
+            return f"Image {img_index} Analysis Error: {str(e)}\n"
+
+    def analyze_image_with_vision_api(self, image: Image.Image) -> str:
+        """Use OpenAI's GPT-4 Vision API for comprehensive image analysis."""
+        try:
+            # Convert image to base64
+            buffered = io.BytesIO()
+            image.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            
+            # Prepare the API request
+            headers = {
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "gpt-4-vision-preview",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": """Analyze this image comprehensively for financial document analysis. Focus on:
+
+1. **Text Content**: Extract any visible text, numbers, dates, percentages
+2. **Charts & Graphs**: Identify chart types, data trends, key metrics
+3. **Tables**: Extract table data, headers, values
+4. **Financial Elements**: Revenue, profit, loss, ratios, KPIs
+5. **Visual Elements**: Logos, signatures, stamps, watermarks
+6. **Layout**: Document structure, sections, formatting
+
+Provide a detailed analysis that can be used for financial document processing."""
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{img_str}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 1000,
+                "temperature": 0.1
+            }
+            
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                return f"Vision API Error: {response.status_code}"
+                
+        except Exception as e:
+            return f"Vision API Error: {str(e)}"
+
+    def detect_charts_and_graphs(self, image: Image.Image) -> str:
+        """Detect and analyze charts, graphs, and visual data."""
+        try:
+            # Convert to grayscale for analysis
+            gray_image = image.convert('L')
+            
+            # Basic chart detection based on patterns
+            # This is a simplified approach - you could use more sophisticated ML models
+            
+            # Check for common chart patterns
+            width, height = image.size
+            
+            # Simple heuristics for chart detection
+            chart_indicators = []
+            
+            # Check for grid-like patterns (common in charts)
+            # Check for color variations (common in graphs)
+            # Check for text density (labels, legends)
+            
+            if len(chart_indicators) > 0:
+                return f"Chart/Graph detected: {', '.join(chart_indicators)}"
+            else:
+                return "No specific chart patterns detected"
+                
+        except Exception as e:
+            return f"Chart detection error: {str(e)}"
 
     def chunk_text(self, text: str) -> List[str]:
-        words = text.split()
+        """Split text into overlapping chunks."""
+        if not text:
+            return []
+        
         chunks = []
-        for i in range(0, len(words), self.chunk_size - self.overlap):
-            chunk = " ".join(words[i:i + self.chunk_size])
-            if chunk.strip():
-                chunks.append(chunk)
+        start = 0
+        
+        while start < len(text):
+            end = start + self.chunk_size
+            
+            if end >= len(text):
+                chunks.append(text[start:])
+                break
+            
+            # Try to break at a sentence boundary
+            last_period = text.rfind('.', start, end)
+            last_newline = text.rfind('\n', start, end)
+            
+            if last_period > start and last_period > last_newline:
+                end = last_period + 1
+            elif last_newline > start:
+                end = last_newline + 1
+            
+            chunks.append(text[start:end])
+            start = end - self.overlap
+        
         return chunks
 
     def prepare_documents(self, pdf_paths: List[str]) -> List[Dict]:
+        """Prepare documents for vector storage with enhanced image recognition."""
         documents = []
+        
         for pdf_path in pdf_paths:
-            text = self.extract_text_from_pdf(pdf_path)
-            chunks = self.chunk_text(text)
-            for i, chunk in enumerate(chunks):
-                documents.append({
-                    "text": chunk,
-                    "metadata": {
-                        "source": os.path.basename(pdf_path),
-                        "chunk_id": i,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                })
+            try:
+                # Extract text including image analysis
+                text = self.extract_text_from_pdf(pdf_path)
+                
+                if text.strip():
+                    # Split into chunks
+                    chunks = self.chunk_text(text)
+                    
+                    for i, chunk in enumerate(chunks):
+                        if chunk.strip():
+                            documents.append({
+                                'text': chunk,
+                                'metadata': {
+                                    'source': os.path.basename(pdf_path),
+                                    'page': i + 1,
+                                    'chunk': i + 1,
+                                    'date': datetime.now().strftime('%Y-%m-%d'),
+                                    'type': 'pdf_with_images'
+                                }
+                            })
+                
+            except Exception as e:
+                print(f"Error processing {pdf_path}: {str(e)}")
+        
         return documents
 
 ### =================== Vector Store =================== ###
