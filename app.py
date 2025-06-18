@@ -807,8 +807,22 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
             if not st.session_state.documents_loaded:
                 answer = "I cannot answer this question as there are no documents loaded. Please either upload documents or enable internet search."
             else:
-                # When not using internet, explicitly instruct to only use document information
-                doc_context = f"""you are an investment banking analyst. you are only allowed to use the information in the loaded documents to answer the questions."""
+                # Build context from document results
+                doc_context = "You are an investment banking analyst. Use ONLY the following document information to answer the question. If the documents don't contain relevant information, say so clearly.\n\n"
+                doc_context += f"Question: {question}\n\n"
+                doc_context += "Document Information:\n"
+                
+                if results:
+                    for i, result in enumerate(results, 1):
+                        source = result.get('metadata', {}).get('source', 'Unknown source')
+                        text = result.get('text', '')
+                        doc_context += f"Source {i}: {source}\n"
+                        doc_context += f"Content: {text}\n\n"
+                else:
+                    doc_context += "No relevant documents found.\n\n"
+                
+                doc_context += "Please provide a comprehensive answer based on the document information above. If you cannot answer the question with the provided documents, clearly state this limitation."
+                
                 answer = st.session_state.rag_system.question_handler.process_question(doc_context)
         
         # Store the answer
