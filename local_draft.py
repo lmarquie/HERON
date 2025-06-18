@@ -51,6 +51,11 @@ class TextProcessor:
             doc = fitz.open(pdf_path)
             text_content = []
             
+            # Check if we should use fast mode (skip expensive processing)
+            fast_mode = os.getenv('FAST_MODE', 'false').lower() == 'true'
+            if fast_mode:
+                print("Using FAST MODE - skipping expensive image analysis")
+            
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
                 
@@ -58,6 +63,12 @@ class TextProcessor:
                 text = page.get_text()
                 text_content.append(f"Page {page_num + 1} Text:\n{text}\n")
                 
+                # Skip expensive image processing in fast mode
+                if fast_mode:
+                    print(f"Page {page_num + 1}: Fast mode - skipping all image processing")
+                    continue
+                
+                # Original slow processing (only if not in fast mode)
                 # Try multiple methods to extract images
                 images_found = 0
                 
@@ -107,80 +118,86 @@ class TextProcessor:
                             print(f"Error processing image {img_index + 1}: {str(e)}")
                             text_content.append(f"Error processing image {img_index + 1}: {str(e)}\n")
                 
-                # Method 2: get_image_info()
-                try:
-                    image_blocks = page.get_image_info()
-                    print(f"Page {page_num + 1}: Found {len(image_blocks)} images via get_image_info()")
-                    if image_blocks:
-                        if not image_list:  # Only add header if we didn't already
-                            text_content.append(f"Page {page_num + 1} Images:\n")
-                        
-                        for block_index, block in enumerate(image_blocks):
-                            try:
-                                print(f"Processing image block {block_index + 1} on page {page_num + 1}")
-                                # Try to extract the image - check if xref exists
-                                if "xref" in block:
-                                    pix = fitz.Pixmap(doc, block["xref"])
-                                    if pix.n - pix.alpha < 4:  # GRAY or RGB
-                                        img_data = pix.tobytes("png")
-                                        pil_image = Image.open(io.BytesIO(img_data))
+                # Skip expensive methods in fast mode
+                if not fast_mode:
+                    # Method 2: get_image_info()
+                    try:
+                        image_blocks = page.get_image_info()
+                        print(f"Page {page_num + 1}: Found {len(image_blocks)} images via get_image_info()")
+                        if image_blocks:
+                            if not image_list:  # Only add header if we didn't already
+                                text_content.append(f"Page {page_num + 1} Images:\n")
+                            
+                            for block_index, block in enumerate(image_blocks):
+                                try:
+                                    print(f"Processing image block {block_index + 1} on page {page_num + 1}")
+                                    # Try to extract the image - check if xref exists
+                                    if "xref" in block:
+                                        pix = fitz.Pixmap(doc, block["xref"])
+                                        if pix.n - pix.alpha < 4:  # GRAY or RGB
+                                            img_data = pix.tobytes("png")
+                                            pil_image = Image.open(io.BytesIO(img_data))
+                                            
+                                            # Analyze image
+                                            image_analysis = self.analyze_image(pil_image, page_num + 1, f"block_{block_index + 1}")
+                                            text_content.append(image_analysis)
+                                            images_found += 1
                                         
-                                        # Analyze image
-                                        image_analysis = self.analyze_image(pil_image, page_num + 1, f"block_{block_index + 1}")
-                                        text_content.append(image_analysis)
-                                        images_found += 1
+                                        pix = None  # Free memory
+                                    else:
+                                        print(f"Image block {block_index + 1}: No xref found in block")
+                                except Exception as e:
+                                    print(f"Error processing image block {block_index + 1}: {str(e)}")
+                                    text_content.append(f"Error processing image block {block_index + 1}: {str(e)}\n")
+                    except Exception as e:
+                        print(f"Error with get_image_info() on page {page_num + 1}: {str(e)}")
+                    
+                    # Method 3: get_drawings() - for vector graphics that might be charts
+                    try:
+                        drawings = page.get_drawings()
+                        print(f"Page {page_num + 1}: Found {len(drawings)} drawings")
+                        if drawings and len(drawings) > 5:  # If there are many drawing elements, might be a chart
+                            text_content.append(f"Page {page_num + 1} Vector Graphics:\n")
+                            text_content.append(f"Vector graphics detected - possible chart or diagram with {len(drawings)} elements\n")
+                    except Exception as e:
+                        print(f"Error with get_drawings() on page {page_num + 1}: {str(e)}")
+                    
+                    # Method 4: Convert page to image and analyze if no images found AND page has substantial content
+                    if images_found == 0:
+                        # Only convert to image if page has substantial text content (likely to have charts/tables)
+                        page_text = page.get_text().strip()
+                        if len(page_text) > 100:  # Only process pages with substantial text
+                            print(f"Page {page_num + 1}: No images found but substantial text, converting page to image for analysis")
+                            try:
+                                # Convert page to image
+                                mat = fitz.Matrix(2, 2)  # 2x zoom for better quality
+                                pix = page.get_pixmap(matrix=mat)
+                                img_data = pix.tobytes("png")
+                                pil_image = Image.open(io.BytesIO(img_data))
+                                
+                                # Check if the page image is likely to contain charts before processing
+                                if self.is_likely_chart(pil_image):
+                                    # Save the page image
+                                    page_filename = f"page_{page_num + 1}_full.png"
+                                    page_path = os.path.join("app_data", "images", page_filename)
+                                    os.makedirs(os.path.dirname(page_path), exist_ok=True)
+                                    pil_image.save(page_path)
                                     
-                                    pix = None  # Free memory
+                                    # Add page image reference
+                                    text_content.append(f"Page {page_num + 1} Full Page Image:\n")
+                                    text_content.append(f"IMAGE_REF:{page_filename}\n")
+                                    
+                                    # Analyze the page image for charts/tables
+                                    page_analysis = self.analyze_image(pil_image, page_num + 1, "full_page")
+                                    text_content.append(page_analysis)
                                 else:
-                                    print(f"Image block {block_index + 1}: No xref found in block")
+                                    print(f"Page {page_num + 1}: Converted page image appears to be text-heavy, skipping analysis")
+                                
+                                pix = None  # Free memory
                             except Exception as e:
-                                print(f"Error processing image block {block_index + 1}: {str(e)}")
-                                text_content.append(f"Error processing image block {block_index + 1}: {str(e)}\n")
-                except Exception as e:
-                    print(f"Error with get_image_info() on page {page_num + 1}: {str(e)}")
-                
-                # Method 3: get_drawings() - for vector graphics that might be charts
-                try:
-                    drawings = page.get_drawings()
-                    print(f"Page {page_num + 1}: Found {len(drawings)} drawings")
-                    if drawings and len(drawings) > 5:  # If there are many drawing elements, might be a chart
-                        text_content.append(f"Page {page_num + 1} Vector Graphics:\n")
-                        text_content.append(f"Vector graphics detected - possible chart or diagram with {len(drawings)} elements\n")
-                except Exception as e:
-                    print(f"Error with get_drawings() on page {page_num + 1}: {str(e)}")
-                
-                # Method 4: Convert page to image and analyze if no images found AND page has substantial content
-                if images_found == 0:
-                    # Only convert to image if page has substantial text content (likely to have charts/tables)
-                    page_text = page.get_text().strip()
-                    if len(page_text) > 100:  # Only process pages with substantial text
-                        print(f"Page {page_num + 1}: No images found but substantial text, converting page to image for analysis")
-                        try:
-                            # Convert page to image
-                            mat = fitz.Matrix(2, 2)  # 2x zoom for better quality
-                            pix = page.get_pixmap(matrix=mat)
-                            img_data = pix.tobytes("png")
-                            pil_image = Image.open(io.BytesIO(img_data))
-                            
-                            # Save the page image
-                            page_filename = f"page_{page_num + 1}_full.png"
-                            page_path = os.path.join("app_data", "images", page_filename)
-                            os.makedirs(os.path.dirname(page_path), exist_ok=True)
-                            pil_image.save(page_path)
-                            
-                            # Add page image reference
-                            text_content.append(f"Page {page_num + 1} Full Page Image:\n")
-                            text_content.append(f"IMAGE_REF:{page_filename}\n")
-                            
-                            # Analyze the page image for charts/tables
-                            page_analysis = self.analyze_image(pil_image, page_num + 1, "full_page")
-                            text_content.append(page_analysis)
-                            
-                            pix = None  # Free memory
-                        except Exception as e:
-                            print(f"Error converting page {page_num + 1} to image: {str(e)}")
-                    else:
-                        print(f"Page {page_num + 1}: No images found and minimal text, skipping page conversion")
+                                print(f"Error converting page {page_num + 1} to image: {str(e)}")
+                        else:
+                            print(f"Page {page_num + 1}: No images found and minimal text, skipping page conversion")
             
             doc.close()
             final_content = "\n".join(text_content)
@@ -197,6 +214,24 @@ class TextProcessor:
         
         try:
             print(f"Starting analysis of image {img_index} on page {page_num}")
+            
+            # Check for fast mode - skip all analysis if enabled
+            fast_mode = os.getenv('FAST_MODE', 'false').lower() == 'true'
+            if fast_mode:
+                print(f"Fast mode enabled - skipping detailed analysis of image {img_index}")
+                # Still save the image for display
+                img_index_str = str(img_index)
+                image_filename = f"image_page_{page_num}_img_{img_index_str}.png"
+                image_path = os.path.join("app_data", "images", image_filename)
+                os.makedirs(os.path.dirname(image_path), exist_ok=True)
+                image.save(image_path)
+                return f"Image {img_index}: Fast mode - image saved for display\n"
+            
+            # First, check if this image is likely a chart/graph
+            if not self.is_likely_chart(image):
+                print(f"Image {img_index} on page {page_num}: Skipped - likely text or decorative element")
+                return f"Image {img_index}: Skipped - not a chart/graph (text or decorative element)\n"
+            
             # Convert img_index to string for filename
             img_index_str = str(img_index)
             
@@ -485,34 +520,142 @@ Be specific about what you see and provide actionable insights."""
             return error_msg
 
     def detect_charts_and_graphs(self, image: Image.Image) -> str:
-        """Detect and analyze charts, graphs, and visual data."""
+        """Detect and analyze charts, graphs, and visual data with improved filtering."""
         try:
             # Convert to grayscale for analysis
             gray_image = image.convert('L')
             width, height = image.size
             
-            # Simple heuristics for chart detection
+            # More sophisticated chart detection heuristics
+            chart_score = 0
             chart_indicators = []
             
-            # Check image size - charts are usually larger than small icons
-            if width > 200 and height > 200:
-                chart_indicators.append("large image size")
+            # 1. Size check - charts are usually substantial
+            if width > 300 and height > 200:
+                chart_score += 2
+                chart_indicators.append("substantial size")
+            elif width < 100 or height < 100:
+                # Too small, likely decorative
+                return "Image too small - likely decorative element"
             
-            # Check for color variations (common in graphs)
+            # 2. Color analysis for graphs
             if image.mode in ['RGB', 'RGBA']:
-                # Get color statistics
                 colors = image.getcolors(maxcolors=1000)
-                if colors and len(colors) > 10:  # Multiple colors suggest charts
-                    chart_indicators.append("multiple colors detected")
+                if colors:
+                    unique_colors = len(colors)
+                    # Charts typically have multiple colors but not too many
+                    if 5 <= unique_colors <= 50:
+                        chart_score += 2
+                        chart_indicators.append(f"appropriate color count ({unique_colors})")
+                    elif unique_colors > 100:
+                        # Too many colors, might be a photo or complex image
+                        chart_score -= 1
+                        chart_indicators.append("too many colors")
             
-            # Basic pattern detection
-            if chart_indicators:
-                return f"Chart/Graph detected: {', '.join(chart_indicators)}"
+            # 3. Edge detection for chart elements
+            try:
+                import numpy as np
+                from PIL import ImageFilter
+                
+                # Apply edge detection
+                edges = gray_image.filter(ImageFilter.FIND_EDGES)
+                edge_array = np.array(edges)
+                
+                # Count edge pixels
+                edge_pixels = np.sum(edge_array > 50)
+                total_pixels = width * height
+                edge_ratio = edge_pixels / total_pixels
+                
+                # Charts typically have moderate edge density
+                if 0.05 <= edge_ratio <= 0.3:
+                    chart_score += 2
+                    chart_indicators.append("appropriate edge density")
+                elif edge_ratio < 0.02:
+                    # Very few edges, might be plain text
+                    chart_score -= 2
+                    chart_indicators.append("low edge density - likely text")
+                    
+            except ImportError:
+                # numpy not available, skip edge detection
+                pass
+            
+            # 4. Text density check (if OCR is available)
+            try:
+                import pytesseract
+                import subprocess
+                result = subprocess.run(['tesseract', '--version'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    ocr_text = pytesseract.image_to_string(image)
+                    text_length = len(ocr_text.strip())
+                    
+                    # If image is mostly text, it's not a chart
+                    if text_length > (width * height * 0.01):  # High text density
+                        chart_score -= 3
+                        chart_indicators.append("high text density - likely text image")
+                    elif text_length < 10:  # Very little text
+                        chart_score += 1
+                        chart_indicators.append("low text density")
+                        
+            except (ImportError, Exception):
+                # OCR not available, skip text analysis
+                pass
+            
+            # 5. Aspect ratio check
+            aspect_ratio = width / height
+            if 0.5 <= aspect_ratio <= 2.0:  # Typical chart aspect ratios
+                chart_score += 1
+                chart_indicators.append("appropriate aspect ratio")
+            
+            # Determine if this is likely a chart
+            if chart_score >= 3:
+                return f"Chart/Graph detected (score: {chart_score}): {', '.join(chart_indicators)}"
+            elif chart_score >= 1:
+                return f"Possible chart (score: {chart_score}): {', '.join(chart_indicators)}"
             else:
-                return "No specific chart patterns detected"
+                return "Not a chart - likely text or decorative element"
                 
         except Exception as e:
             return f"Chart detection error: {str(e)}"
+
+    def is_likely_chart(self, image: Image.Image) -> bool:
+        """Quick check to determine if image is likely a chart/graph."""
+        try:
+            width, height = image.size
+            
+            # Basic size filter
+            if width < 150 or height < 100:
+                return False
+            
+            # Check for color variety (charts have multiple colors)
+            if image.mode in ['RGB', 'RGBA']:
+                colors = image.getcolors(maxcolors=100)
+                if colors and len(colors) < 3:
+                    return False  # Too few colors, likely text
+            
+            # Quick edge density check
+            try:
+                import numpy as np
+                from PIL import ImageFilter
+                
+                gray_image = image.convert('L')
+                edges = gray_image.filter(ImageFilter.FIND_EDGES)
+                edge_array = np.array(edges)
+                edge_pixels = np.sum(edge_array > 50)
+                total_pixels = width * height
+                edge_ratio = edge_pixels / total_pixels
+                
+                # Charts have moderate edge density
+                if edge_ratio < 0.02 or edge_ratio > 0.4:
+                    return False
+                    
+            except ImportError:
+                # numpy not available, use basic check
+                pass
+            
+            return True
+            
+        except Exception:
+            return False
 
     def chunk_text(self, text: str) -> List[str]:
         """Split text into overlapping chunks."""
