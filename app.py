@@ -21,6 +21,10 @@ def generate_answer(question):
         if not st.session_state.documents_loaded:
             return "No documents loaded. Please upload documents first."
         
+        # Check if user is asking to see images
+        if any(word in question.lower() for word in ['show', 'display', 'image', 'picture', 'chart', 'graph']):
+            return handle_image_request(question)
+        
         # Use the logic from local_draft
         answer = st.session_state.rag_system.question_handler.process_question(question)
         
@@ -31,6 +35,47 @@ def generate_answer(question):
         
     except Exception as e:
         return f"Error: {str(e)}"
+
+# Handle image display requests
+def handle_image_request(question):
+    """Handle requests to show images."""
+    try:
+        all_images = st.session_state.rag_system.get_all_images()
+        
+        if not all_images:
+            return "No images were found in the uploaded documents."
+        
+        # Extract page number if mentioned
+        import re
+        page_match = re.search(r'page\s+(\d+)', question.lower())
+        
+        if page_match:
+            page_num = int(page_match.group(1))
+            # Show images from specific page
+            page_images = {k: v for k, v in all_images.items() if v['page'] == page_num}
+            
+            if page_images:
+                result = f"Found {len(page_images)} image(s) on page {page_num}:\n\n"
+                # Display images inline
+                for img_key, img_info in page_images.items():
+                    result += f"• {img_key}\n"
+                    if os.path.exists(img_info['path']):
+                        st.image(img_info['path'], caption=img_key, use_column_width=True)
+                return result
+            else:
+                return f"No images found on page {page_num}."
+        else:
+            # Show all images
+            result = f"Found {len(all_images)} image(s) in the documents:\n\n"
+            # Display images inline
+            for img_key, img_info in all_images.items():
+                result += f"• {img_key}\n"
+                if os.path.exists(img_info['path']):
+                    st.image(img_info['path'], caption=img_key, use_column_width=True)
+            return result
+            
+    except Exception as e:
+        return f"Error handling image request: {str(e)}"
 
 # Follow-up question generation
 def generate_follow_up(follow_up_question):
