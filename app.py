@@ -764,13 +764,22 @@ def display_answer_with_images(answer_text):
                 st.markdown('\n'.join(current_text))
                 current_text = []
             
-            # Display the image
+            # Display the image with enhanced styling
             image_filename = part.replace('IMAGE_REF:', '').strip()
             image_path = os.path.join("app_data", "images", image_filename)
             
             if os.path.exists(image_path):
                 try:
-                    st.image(image_path, caption=f"Document Image: {image_filename}", use_column_width=True)
+                    # Add a visual separator and header for the image
+                    st.markdown("---")
+                    st.markdown(f"**📊 Document Image: {image_filename}**")
+                    
+                    # Display the image with better styling
+                    st.image(image_path, caption=f"From document: {image_filename}", width=500)
+                    
+                    # Add some spacing after the image
+                    st.markdown("")
+                    
                 except Exception as e:
                     st.error(f"Error displaying image {image_filename}: {str(e)}")
             else:
@@ -1102,19 +1111,65 @@ def test_image_processing():
     images_dir = os.path.join("app_data", "images")
     if os.path.exists(images_dir):
         images = os.listdir(images_dir)
-        st.success(f"Images directory exists. Found {len(images)} images: {images}")
+        st.success(f"Images directory exists. Found {len(images)} images")
+        
+        # Display a few sample images
+        if images:
+            st.markdown("### Sample Images")
+            
+            # Show first 6 images in a simple vertical layout
+            sample_images = images[:6]
+            
+            for i, image_name in enumerate(sample_images):
+                st.markdown(f"**Image {i+1}:** {image_name}")
+                image_path = os.path.join(images_dir, image_name)
+                
+                try:
+                    # Display the image
+                    st.image(image_path, caption=image_name, width=400)
+                    
+                    # Show image info
+                    file_size = os.path.getsize(image_path)
+                    st.write(f"Size: {file_size:,} bytes")
+                    
+                except Exception as e:
+                    st.error(f"Error loading {image_name}: {str(e)}")
+                
+                st.markdown("---")
+            
+            # Show remaining image count
+            if len(images) > 6:
+                st.info(f"... and {len(images) - 6} more images")
+                
     else:
         st.error("Images directory does not exist!")
     
     # Check if any documents contain image references
     if hasattr(st.session_state, 'main_results') and st.session_state.main_results:
+        st.markdown("### Image References in Documents")
+        found_refs = False
         for result in st.session_state.main_results:
             text = result.get('text', '')
             if 'IMAGE_REF:' in text:
+                found_refs = True
                 st.success("Found image references in document results!")
-                st.code(text)
+                
+                # Extract and display image references
+                import re
+                image_refs = re.findall(r'IMAGE_REF:([^\n]+)', text)
+                if image_refs:
+                    st.write("Image references found:")
+                    for ref in image_refs:
+                        st.write(f"- {ref.strip()}")
+                        
+                        # Try to display the referenced image
+                        image_path = os.path.join(images_dir, ref.strip())
+                        if os.path.exists(image_path):
+                            st.image(image_path, caption=f"Referenced: {ref.strip()}", width=300)
+                        else:
+                            st.warning(f"Image file not found: {ref.strip()}")
                 break
-        else:
+        if not found_refs:
             st.warning("No image references found in document results")
 
 def show_main_page():
