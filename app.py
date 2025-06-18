@@ -807,22 +807,29 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
             if not st.session_state.documents_loaded:
                 answer = "I cannot answer this question as there are no documents loaded. Please either upload documents or enable internet search."
             else:
-                # Build context from document results
-                doc_context = "You are an investment banking analyst. Use ONLY the following document information to answer the question. If the documents don't contain relevant information, say so clearly.\n\n"
-                doc_context += f"Question: {question}\n\n"
-                doc_context += "Document Information:\n"
-                
-                if final_results:
-                    for i, result in enumerate(final_results, 1):
-                        source = result.get('metadata', {}).get('source', 'Unknown source')
-                        text = result.get('text', '')
-                        doc_context += f"Source {i}: {source}\n"
-                        doc_context += f"Content: {text}\n\n"
-                else:
-                    doc_context += "No relevant documents found.\n\n"
-                
-                doc_context += "Please provide a comprehensive answer based on the document information above. If you cannot answer the question with the provided documents, clearly state this limitation."
-                
+                # When not using internet, explicitly instruct to only use document information
+                doc_context = f"""You are a financial analysis expert. Your task is to analyze financial documents and provide detailed, accurate answers to questions about them.
+
+
+Key capabilities:
+- Analyze financial statements, reports, and documents
+- Extract and interpret financial metrics and data
+- Identify trends, risks, and opportunities
+- Compare financial performance across periods
+- Explain financial concepts and terminology
+- Provide context for financial decisions
+- Highlight important financial insights
+
+
+Guidelines:
+1. Base your answers primarily on the provided context
+2. Be precise with numbers and financial data
+3. Explain financial terms when used
+4. Highlight any uncertainties or missing information
+5. Provide relevant context for your analysis
+6. Be clear about assumptions made
+7. If the context doesn't contain enough information, say so clearly"""
+
                 answer = st.session_state.rag_system.question_handler.process_question(doc_context)
         
         # Store the answer
