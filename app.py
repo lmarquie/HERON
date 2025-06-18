@@ -124,6 +124,33 @@ with st.sidebar:
     st.progress(1.0 if settings.get('enable_vision_api', True) else 0.0)
     st.write("Chart Detection")
     st.progress(1.0 if settings.get('enable_chart_detection', True) else 0.0)
+    
+    # Vision API Toggle
+    st.divider()
+    st.subheader("Vision API Control")
+    
+    # Initialize use_vision_api in session state if not exists
+    if 'use_vision_api' not in st.session_state:
+        st.session_state.use_vision_api = True
+    
+    # Create toggle for Vision API
+    vision_api_enabled = st.toggle(
+        "Enable Vision API Analysis",
+        value=st.session_state.use_vision_api,
+        help="Toggle Vision API for image analysis. Disable if experiencing timeouts or to save costs."
+    )
+    
+    # Update session state and reinitialize RAG system if setting changed
+    if vision_api_enabled != st.session_state.use_vision_api:
+        st.session_state.use_vision_api = vision_api_enabled
+        # Reinitialize RAG system with new setting
+        if 'rag_system' in st.session_state:
+            del st.session_state.rag_system
+        initialize_rag_system()
+        st.success(f"Vision API {'enabled' if vision_api_enabled else 'disabled'}")
+    
+    if not vision_api_enabled:
+        st.info("Vision API is disabled. Images will still be extracted and saved, but AI analysis will be skipped.")
 
 # Initialize session state
 if 'current_page' not in st.session_state:
