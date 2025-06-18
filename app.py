@@ -21,21 +21,12 @@ def generate_answer(question):
         if not st.session_state.documents_loaded:
             return "No documents loaded. Please upload documents first."
         
-        # Simple document search
-        results = st.session_state.rag_system.vector_store.search(question, k=3)
+        # Use the logic from local_draft
+        answer = st.session_state.rag_system.question_handler.process_question(question)
         
-        if not results:
-            return "No relevant information found in the documents."
+        # Store in conversation history using logic layer
+        st.session_state.rag_system.add_to_conversation_history(question, answer, "initial")
         
-        # Build simple context
-        context = f"Question: {question}\n\nContext:\n"
-        for i, result in enumerate(results[:3]):
-            context += f"Source {i+1}: {result.get('text', '')}\n\n"
-        
-        context += "Answer the question based on the provided context."
-        
-        # Generate answer
-        answer = st.session_state.rag_system.question_handler.process_question(context)
         return answer
         
     except Exception as e:
@@ -49,6 +40,10 @@ def generate_follow_up(follow_up_question):
         
         # Use the logic from local_draft
         answer = st.session_state.rag_system.question_handler.process_follow_up(follow_up_question)
+        
+        # Store in conversation history using logic layer
+        st.session_state.rag_system.add_to_conversation_history(follow_up_question, answer, "follow_up")
+        
         return answer
         
     except Exception as e:
@@ -77,37 +72,53 @@ with st.sidebar:
 # Main content
 st.title("HERON")
 
-# Question input
-question = st.text_input("Ask a question about your documents:")
+# Display conversation history using logic layer
+conversation_history = st.session_state.rag_system.get_conversation_history()
+if conversation_history:
+    st.subheader("Conversation History")
+    for i, conv in enumerate(conversation_history):
+        with st.expander(f"Q{i+1}: {conv['question'][:50]}..."):
+            st.write(f"**Question:** {conv['question']}")
+            st.write(f"**Answer:** {conv['answer']}")
 
-# Always show all three buttons vertically
-if st.button("Get Answer", type="primary"):
-    if st.session_state.documents_loaded:
-        with st.spinner("Processing..."):
-            answer = generate_answer(question)
-            st.write(answer)
-    else:
-        st.error("Please upload documents first")
+# Current question input
+if not conversation_history:
+    # First question
+    question = st.text_input("Ask a question about your documents:")
+    
+    if st.button("Get Answer", type="primary"):
+        if st.session_state.documents_loaded:
+            with st.spinner("Processing..."):
+                answer = generate_answer(question)
+                st.write(answer)
+                st.rerun()  # Refresh to show follow-up input
+        else:
+            st.error("Please upload documents first")
+else:
+    # Follow-up question
+    follow_up_question = st.text_input("Ask a follow-up question:")
+    
+    if st.button("Ask Follow-up", type="primary"):
+        if st.session_state.documents_loaded:
+            with st.spinner("Processing follow-up..."):
+                follow_up_answer = generate_follow_up(follow_up_question)
+                st.write(follow_up_answer)
+                st.rerun()  # Refresh to show next follow-up input
+        else:
+            st.error("Please upload documents first")
 
-if st.button("Clear"):
-    st.rerun()
-
-if st.button("Reset"):
-    # Clear session state
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    st.rerun()
-
-# Follow-up question section
+# Control buttons
 st.markdown("---")
-st.subheader("Follow-up Questions")
+col1, col2 = st.columns(2)
 
-follow_up_question = st.text_input("Ask a follow-up question:")
+with col1:
+    if st.button("Clear"):
+        st.rerun()
 
-if st.button("Ask Follow-up"):
-    if st.session_state.documents_loaded:
-        with st.spinner("Processing follow-up..."):
-            follow_up_answer = generate_follow_up(follow_up_question)
-            st.write(follow_up_answer)
-    else:
-        st.error("Please upload documents first") 
+with col2:
+    if st.button("Reset"):
+        # Clear session state and conversation history
+        st.session_state.rag_system.clear_conversation_history()
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun() 
