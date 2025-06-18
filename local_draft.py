@@ -235,348 +235,154 @@ class LocalFileHandler:
 class WebFileHandler(LocalFileHandler):
     def __init__(self):
         super().__init__()
-        self.temp_dir = "temp"
-        os.makedirs(self.temp_dir, exist_ok=True)
+        self.text_processor = TextProcessor()
 
     def process_uploaded_files(self, uploaded_files):
-        """Process files uploaded through Streamlit's file uploader using TextProcessor with image recognition"""
-        if not uploaded_files:
-            return []
-
+        """Process files uploaded through Streamlit."""
         documents = []
+        
         for uploaded_file in uploaded_files:
             try:
-                # Save the uploaded file to a temporary location
-                temp_path = os.path.join(self.temp_dir, uploaded_file.name)
-                with open(temp_path, 'wb') as f:
+                # Save uploaded file temporarily
+                temp_path = f"temp/{uploaded_file.name}"
+                os.makedirs("temp", exist_ok=True)
+                
+                with open(temp_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
-
-                # Process the file based on its type using TextProcessor
-                if uploaded_file.name.endswith('.pdf'):
-                    # Use TextProcessor for PDF processing with image recognition
-                    content = self.text_processor.extract_text_from_pdf(temp_path)
-                elif uploaded_file.name.endswith('.txt'):
-                    # For text files, use simple text extraction
-                    with open(temp_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                else:
-                    continue
-
-                documents.append({
-                    'text': content,
-                    'metadata': {
-                        'source': uploaded_file.name,
-                        'path': temp_path,
-                        'date': datetime.now().isoformat()
-                    }
-                })
-
-                # Clean up the temporary file
+                
+                # Extract text from PDF
+                text_content = self.text_processor.extract_text_from_pdf(temp_path)
+                
+                if text_content.strip():
+                    # Split into chunks
+                    chunks = self.text_processor.chunk_text(text_content)
+                    
+                    for i, chunk in enumerate(chunks):
+                        if chunk.strip():
+                            documents.append({
+                                'text': chunk.strip(),
+                                'metadata': {
+                                    'source': uploaded_file.name,
+                                    'chunk_id': i,
+                                    'total_chunks': len(chunks),
+                                    'date': datetime.now().strftime('%Y-%m-%d')
+                                }
+                            })
+                
+                # Clean up temp file
                 os.remove(temp_path)
-
+                
             except Exception as e:
                 print(f"Error processing {uploaded_file.name}: {str(e)}")
                 continue
-
+        
         return documents
 
 ### =================== Vector Store =================== ###
 class VectorStore:
     def __init__(self, dimension: int = 768):
         self.dimension = dimension
-        self.index = None
         self.documents = []
-        
-        # Use a smaller, faster model with local caching
-        model_name = 'paraphrase-MiniLM-L3-v2'  # Smaller model than all-MiniLM-L6-v2
-        cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'sentence_transformers')
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        try:
-            # Try to load from cache first
-            self.bi_encoder = SentenceTransformer(model_name, cache_folder=cache_dir)
-            # Use a more powerful cross-encoder for better ranking
-            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2', cache_folder=cache_dir)
-        except Exception as e:
-            print(f"Error loading models: {str(e)}")
-            print("Falling back to smaller models...")
-            # Fallback to even smaller models if the main ones fail
-            self.bi_encoder = SentenceTransformer('paraphrase-MiniLM-L3-v2', cache_folder=cache_dir)
-            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-TinyBERT-L-2-v2', cache_folder=cache_dir)
-        
-        # Optimize model settings
-        self.bi_encoder.max_seq_length = 128  # Reduced from 64 for better context
-        self.cross_encoder.max_seq_length = 128
-        
-        if torch.cuda.is_available():
-            self.bi_encoder = self.bi_encoder.to('cuda')
-            self.cross_encoder = self.cross_encoder.to('cuda')
-            self.bi_encoder = self.bi_encoder.half()
-            self.cross_encoder = self.cross_encoder.half()
-        
-        self.embedding_cache = {}
-        self.similarity_cache = {}
-        self.metadata_index = {}
+        self.embeddings = None
+        self.index = None
+        self.model = SentenceTransformer('all-MiniLM-L6-v2')
         self.chunk_size = 500
         self.chunk_overlap = 50
-        print(f"Initialized VectorStore with optimized models on {self.bi_encoder.device}")
 
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store"""
+        """Add documents to the vector store."""
+        if not documents:
+            return
+            
         print(f"Adding {len(documents)} documents to vector store...")
-        texts = []
-        metadata_list = []
-        for doc in documents:
-            metadata = {
-                'source': doc['metadata'].get('source', 'Unknown'),
-                'path': doc['metadata'].get('path', ''),
-                'date': doc['metadata'].get('date', datetime.now().isoformat())
-            }
-            texts.append(doc['text'])
-            metadata_list.append(metadata)
-
+        
+        # Extract text from documents
+        texts = [doc['text'] for doc in documents]
+        
+        # Generate embeddings
         print("Converting text to vector embeddings...")
-        # Increased batch size for faster processing
-        embeddings = self.bi_encoder.encode(texts,
-                                          show_progress_bar=True,
-                                          batch_size=64,  # Increased from 32
-                                          convert_to_numpy=True,
-                                          normalize_embeddings=True)
-
-        if self.index is None:
-            # Use a more efficient index type
-            if torch.cuda.is_available():
-                res = faiss.StandardGpuResources()
-                quantizer = faiss.IndexFlatIP(embeddings.shape[1])
-                self.index = faiss.IndexIVFFlat(quantizer, embeddings.shape[1],
-                                              min(100, len(embeddings)),
-                                              faiss.METRIC_INNER_PRODUCT)
-                self.index = faiss.index_cpu_to_gpu(res, 0, self.index)
-                if not self.index.is_trained and len(embeddings) > 0:
-                    self.index.train(embeddings.astype('float32'))
-            else:
-                self.index = faiss.IndexFlatIP(embeddings.shape[1])
-            print(f"Created new FAISS index with dimension: {embeddings.shape[1]}")
-        self.index.add(embeddings.astype('float32'))
-
-        for i, (text, metadata) in enumerate(zip(texts, metadata_list)):
-            self.documents.append({
-                'text': text,
-                'metadata': metadata
-            })
-            for key, value in metadata.items():
-                if key not in self.metadata_index:
-                    self.metadata_index[key] = {}
-                if value not in self.metadata_index[key]:
-                    self.metadata_index[key][value] = set()
-                self.metadata_index[key][value].add(i)
-
+        embeddings = self.model.encode(texts, show_progress_bar=True)
+        
+        # Store documents and embeddings
+        self.documents.extend(documents)
+        
+        if self.embeddings is None:
+            self.embeddings = embeddings
+        else:
+            self.embeddings = np.vstack([self.embeddings, embeddings])
+        
+        # Create FAISS index
+        self.index = faiss.IndexFlatIP(self.dimension)
+        self.index.add(self.embeddings.astype('float32'))
+        
         print(f"Successfully added {len(documents)} documents. Total documents: {len(self.documents)}")
 
-    def save_local(self, path: str):
-        """Save the vector store to a local directory"""
-        if not os.path.exists(path):
-            os.makedirs(path)
-        
-        # Save the index
-        if self.index is not None:
-            faiss.write_index(self.index, os.path.join(path, 'index.faiss'))
-        
-        # Save the documents and metadata
-        with open(os.path.join(path, 'documents.pkl'), 'wb') as f:
-            pickle.dump({
-                'documents': self.documents,
-                'metadata_index': self.metadata_index,
-                'chunk_size': self.chunk_size,
-                'chunk_overlap': self.chunk_overlap
-            }, f)
-        
-        print(f"Vector store saved to {path}")
-
-    def load_local(self, path: str):
-        """Load the vector store from a local directory"""
-        # Load the index
-        index_path = os.path.join(path, 'index.faiss')
-        if os.path.exists(index_path):
-            self.index = faiss.read_index(index_path)
-        
-        # Load the documents and metadata
-        documents_path = os.path.join(path, 'documents.pkl')
-        if os.path.exists(documents_path):
-            with open(documents_path, 'rb') as f:
-                data = pickle.load(f)
-                self.documents = data['documents']
-                self.metadata_index = data['metadata_index']
-                self.chunk_size = data.get('chunk_size', 500)
-                self.chunk_overlap = data.get('chunk_overlap', 50)
-        
-        # Reinitialize models with proper device placement
-        self.bi_encoder = SentenceTransformer('paraphrase-MiniLM-L3-v2')
-        self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-        self.bi_encoder.max_seq_length = 128
-        self.cross_encoder.max_seq_length = 128
-        
-        if torch.cuda.is_available():
-            self.bi_encoder = self.bi_encoder.to('cuda')
-            self.cross_encoder = self.cross_encoder.to('cuda')
-            self.bi_encoder = self.bi_encoder.half()
-            self.cross_encoder = self.cross_encoder.half()
-        
-        print(f"Vector store loaded from {path}")
-
-    def preprocess_query(self, query: str) -> str:
-        """Preprocess the query to improve search relevance"""
-        # Convert to lowercase
-        query = query.lower()
-        
-        # Add financial context if query seems financial
-        financial_terms = ['revenue', 'profit', 'earnings', 'income', 'financial', 'numbers', 'quarterly', 'annual', 'report']
-        if any(term in query for term in financial_terms):
-            query = f"financial report {query}"
-        
-        return query
-
     def search(self, query: str, k: int = 3) -> List[Dict]:
-        """Search for relevant documents with improved ranking"""
-        # Check cache first
-        cache_key = f"{query}:{k}"
-        if cache_key in self.similarity_cache:
-            return self.similarity_cache[cache_key]
-
-        # Preprocess query
-        processed_query = self.preprocess_query(query)
+        """Search for similar documents."""
+        if not self.documents or self.index is None:
+            return []
         
-        # Get query embedding
-        query_embedding = self.get_embedding(processed_query)
+        # Generate query embedding
+        query_embedding = self.model.encode([query])
         
-        # Search in FAISS index
-        if self.index is not None:
-            # Use a larger initial search to get more candidates
-            initial_k = min(k * 4, len(self.documents))  # Increased from k*2 to k*4
-            scores, indices = self.index.search(query_embedding.reshape(1, -1).astype('float32'), initial_k)
-            
-            # Get documents and their scores
-            candidates = []
-            for score, idx in zip(scores[0], indices[0]):
-                if idx != -1:  # FAISS returns -1 for empty slots
-                    doc = self.documents[idx]
-                    candidates.append({
-                        'text': doc['text'],
-                        'metadata': doc['metadata'],
-                        'score': float(score)
-                    })
-            
-            # Re-rank using cross-encoder
-            if candidates:
-                # Prepare pairs for cross-encoder
-                pairs = [(processed_query, candidate['text']) for candidate in candidates]
-                
-                # Get cross-encoder scores
-                cross_scores = self.cross_encoder.predict(pairs)
-                
-                # Update scores with cross-encoder scores
-                for candidate, cross_score in zip(candidates, cross_scores):
-                    # Combine bi-encoder and cross-encoder scores
-                    candidate['score'] = 0.3 * candidate['score'] + 0.7 * float(cross_score)
-            
-            # Sort by combined score in descending order and take top k
-            candidates.sort(key=lambda x: x['score'], reverse=True)
-            results = candidates[:k]
-            
-            # Cache the results
-            self.similarity_cache[cache_key] = results
-            return results
+        # Search
+        scores, indices = self.index.search(query_embedding.astype('float32'), k)
         
-        return []
-
-    def get_embedding(self, text: str):
-        if text in self.embedding_cache:
-            return self.embedding_cache[text]
-        else:
-            embedding = self.bi_encoder.encode([text],
-                                              batch_size=1,
-                                              convert_to_numpy=True,
-                                              normalize_embeddings=True)
-            self.embedding_cache[text] = embedding
-            return embedding
+        # Return results
+        results = []
+        for i, idx in enumerate(indices[0]):
+            if idx < len(self.documents):
+                results.append({
+                    'text': self.documents[idx]['text'],
+                    'metadata': self.documents[idx].get('metadata', {}),
+                    'score': float(scores[0][i])
+                })
+        
+        return results
 
 ### =================== Claude Handler =================== ###
 class ClaudeHandler:
     def __init__(self, system_prompt=None):
-        self.api_key = OPENAI_API_KEY
         self.api_url = "https://api.openai.com/v1/chat/completions"
         self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json"
         }
-        self.max_retries = 10
-        self.timeout = 600
-        self.response_cache = {}
-        self.session = requests.Session()
-        self.system_prompt = system_prompt or "Answer based on the context."
+        self.system_prompt = system_prompt or "You are a helpful assistant. Answer questions based on the provided context."
 
     def generate_answer(self, question: str, context: str) -> str:
-        cache_key = f"{question}:{hash(context)}"
-
-        if cache_key in self.response_cache:
-            return self.response_cache[cache_key]
-
-        for attempt in range(self.max_retries):
-            try:
-                # Truncate context if it's too long
-                max_context_length = 20000  # Reduced from 40000 to ~5k tokens
-                if len(context) > max_context_length:
-                    context = context[:max_context_length] + "..."
-
-                messages = [
-                    {
-                        "role": "system",
-                        "content": self.system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Context: {context}\nQ: {question}"  # Simplified format
-                    }
-                ]
-
-                payload = {
-                    "model": "gpt-4-turbo-preview",
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": 1000  # Reduced from 2000
+        try:
+            messages = [
+                {
+                    "role": "system",
+                    "content": self.system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": f"Context: {context}\n\nQuestion: {question}"
                 }
+            ]
 
-                response = self.session.post(
-                    self.api_url,
-                    headers=self.headers,
-                    json=payload,
-                    timeout=self.timeout
-                )
+            payload = {
+                "model": "gpt-4-turbo-preview",
+                "messages": messages,
+                "temperature": 0.3,
+                "max_tokens": 1000
+            }
 
-                response.raise_for_status()
-                response_data = response.json()
-                answer = response_data["choices"][0]["message"]["content"]
-                self.response_cache[cache_key] = answer
-                return answer
+            response = requests.post(
+                self.api_url,
+                headers=self.headers,
+                json=payload,
+                timeout=30
+            )
 
-            except requests.exceptions.Timeout:
-                if attempt < self.max_retries - 1:
-                    print(f"Request timed out. Retrying... (Attempt {attempt + 1}/{self.max_retries})")
-                    time.sleep(2 ** attempt)
-                    continue
-                else:
-                    return "Error: Request timed out after multiple attempts. Please try again."
+            response.raise_for_status()
+            response_data = response.json()
+            return response_data["choices"][0]["message"]["content"]
 
-            except requests.exceptions.RequestException as e:
-                error_msg = f"API Error: {str(e)}"
-                if hasattr(e, 'response') and e.response is not None:
-                    error_msg += f"\nResponse: {e.response.text}"
-                return f"Error generating answer: {error_msg}"
-
-            except Exception as e:
-                return f"Error generating answer: {str(e)}"
-
-        return "Error: Maximum retry attempts reached. Please try again."
+        except Exception as e:
+            return f"Error generating answer: {str(e)}"
 
 ### =================== Question Handler =================== ###
 class QuestionHandler:
