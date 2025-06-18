@@ -450,6 +450,7 @@ class RAGSystem:
         self.vector_store = VectorStore()
         self.question_handler = QuestionHandler(self.vector_store)
         self.is_web = is_web
+        self.conversation_history = []
 
     def process_web_uploads(self, uploaded_files):
         """Process files uploaded through the web interface"""
@@ -461,6 +462,22 @@ class RAGSystem:
             self.vector_store.add_documents(documents)
             return True
         return False
+
+    def add_to_conversation_history(self, question, answer, question_type="initial"):
+        """Add a Q&A pair to conversation history"""
+        self.conversation_history.append({
+            'question': question,
+            'answer': answer,
+            'type': question_type
+        })
+
+    def get_conversation_history(self):
+        """Get the conversation history"""
+        return self.conversation_history
+
+    def clear_conversation_history(self):
+        """Clear the conversation history"""
+        self.conversation_history = []
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
