@@ -990,7 +990,7 @@ def show_main_page():
 
             # After processing the follow-up
             st.session_state.clear_follow_up_input = True
-            st.experimental_rerun()
+            st.rerun()
 
         # Options
         st.session_state.use_internet = st.toggle("Internet")
