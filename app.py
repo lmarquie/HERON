@@ -974,7 +974,12 @@ def show_main_page():
                 st.markdown(a)
                 st.markdown("---")
             
-            # Add a new follow-up question input
+            # Before the widget is created, clear the value if needed
+            if st.session_state.get("clear_follow_up_input", False):
+                st.session_state.current_follow_up_input = ""
+                st.session_state.clear_follow_up_input = False
+
+            # ... then create the widget
             follow_up_question = st.text_input(
                 label="Ask a follow-up question",
                 value=st.session_state.get('current_follow_up_input', ''),
@@ -983,31 +988,9 @@ def show_main_page():
                 key="current_follow_up_input"
             )
 
-            # Process follow-up question if enter is pressed
-            if follow_up_question and not st.session_state.processing:
-                try:
-                    st.session_state.processing = True
-                    
-                    # Initialize variables
-                    follow_up_container = st.empty()  # Container for the typing effect
-                    use_internet = st.session_state.get('use_internet', False)
-                    
-                    # Show processing status
-                    with st.spinner("Processing your follow-up question..."):
-                        follow_up_answer = generate_answer(follow_up_question, use_internet, is_follow_up=True)
-                        # Type out the answer
-                        type_text(follow_up_answer, follow_up_container)
-                        # Add to follow-up questions list
-                        st.session_state.follow_up_questions.append((follow_up_question, follow_up_answer))
-                
-                except Exception as e:
-                    st.error(f"Error processing follow-up question: {str(e)}")
-                    st.info("Please try again or rephrase your follow-up question.")
-                finally:
-                    st.session_state.processing = False
-                    # Clear the follow-up question to prevent loop
-                    st.session_state.current_follow_up_input = ""
-                    st.rerun()  # Rerun to show the new follow-up input
+            # After processing the follow-up
+            st.session_state.clear_follow_up_input = True
+            st.experimental_rerun()
 
         # Options
         st.session_state.use_internet = st.toggle("Internet")
