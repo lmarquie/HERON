@@ -416,7 +416,7 @@ class VectorStore:
 
 ### =================== Claude Handler =================== ###
 class ClaudeHandler:
-    def __init__(self):
+    def __init__(self, system_prompt=None):
         self.api_key = OPENAI_API_KEY
         self.api_url = "https://api.openai.com/v1/chat/completions"
         self.headers = {
@@ -427,6 +427,7 @@ class ClaudeHandler:
         self.timeout = 600
         self.response_cache = {}
         self.session = requests.Session()
+        self.system_prompt = system_prompt or "Answer based on the context."
 
     def generate_answer(self, question: str, context: str) -> str:
         cache_key = f"{question}:{hash(context)}"
@@ -444,7 +445,7 @@ class ClaudeHandler:
                 messages = [
                     {
                         "role": "system",
-                        "content": "Answer based on the context."  # Minimal system prompt
+                        "content": self.system_prompt
                     },
                     {
                         "role": "user",
@@ -495,7 +496,28 @@ class ClaudeHandler:
 class QuestionHandler:
     def __init__(self, vector_store: VectorStore):
         self.vector_store = vector_store
-        self.llm = ClaudeHandler()
+        financial_system_prompt = """You are a financial analysis expert. Your task is to analyze financial documents and provide detailed, accurate answers to questions about them.
+
+Key capabilities:
+- Analyze financial statements, reports, and documents
+- Extract and interpret financial metrics and data
+- Identify trends, risks, and opportunities
+- Compare financial performance across periods
+- Explain financial concepts and terminology
+- Provide context for financial decisions
+- Highlight important financial insights
+
+Guidelines:
+1. Base your answers primarily on the provided context
+2. Be precise with numbers and financial data
+3. Explain financial terms when used
+4. Highlight any uncertainties or missing information
+5. Provide relevant context for your analysis
+6. Be clear about assumptions made
+7. If the context doesn't contain enough information, say so clearly
+
+Answer based on the context provided."""
+        self.llm = ClaudeHandler(system_prompt=financial_system_prompt)
 
     def process_question(self, question: str, query_type: str = "document", k: int = 5) -> str:
         results = self.vector_store.search(question, k=k)
