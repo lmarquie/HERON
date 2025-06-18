@@ -140,8 +140,6 @@ if 'documents_loaded' not in st.session_state:
     st.session_state.documents_loaded = False
 if 'vector_store' not in st.session_state:
     st.session_state.vector_store = None
-if 'rag_system' not in st.session_state:
-    st.session_state.rag_system = None
 if 'processing' not in st.session_state:
     st.session_state.processing = False
 if 'current_theme' not in st.session_state:
@@ -156,6 +154,19 @@ if 'follow_up_answer' not in st.session_state:
 # Create data directory if it doesn't exist
 DATA_DIR = "app_data"
 os.makedirs(DATA_DIR, exist_ok=True)
+
+# Initialize RAG system with Vision API setting
+def initialize_rag_system():
+    """Initialize the RAG system if it doesn't exist."""
+    if 'rag_system' not in st.session_state:
+        # Check if Vision API should be enabled
+        use_vision_api = st.session_state.get('use_vision_api', True)
+        st.session_state.rag_system = RAGSystem(is_web=True, use_vision_api=use_vision_api)
+        st.session_state.documents_loaded = False
+
+# Ensure images directory exists
+images_dir = os.path.join("app_data", "images")
+os.makedirs(images_dir, exist_ok=True)
 
 def save_conversation_history():
     """Save conversation history to a file"""
@@ -730,15 +741,9 @@ def display_answer_with_images(answer_text):
             image_filename = part.replace('IMAGE_REF:', '').strip()
             image_path = os.path.join("app_data", "images", image_filename)
             
-            # Debug information
-            st.info(f"Looking for image: {image_filename}")
-            st.info(f"Full path: {image_path}")
-            st.info(f"Path exists: {os.path.exists(image_path)}")
-            
             if os.path.exists(image_path):
                 try:
                     st.image(image_path, caption=f"Document Image: {image_filename}", use_column_width=True)
-                    st.success(f"Successfully displayed image: {image_filename}")
                 except Exception as e:
                     st.error(f"Error displaying image {image_filename}: {str(e)}")
             else:
@@ -747,7 +752,7 @@ def display_answer_with_images(answer_text):
                 images_dir = os.path.join("app_data", "images")
                 if os.path.exists(images_dir):
                     available_images = os.listdir(images_dir)
-                    st.info(f"Available images in directory: {available_images}")
+                    st.info(f"Available images: {available_images}")
                 else:
                     st.error("Images directory does not exist!")
         else:
@@ -1088,6 +1093,9 @@ def test_image_processing():
 def show_main_page():
     """Show the main page with file upload and question input."""
     try:
+        # Initialize RAG system
+        initialize_rag_system()
+        
         # Initialize session state variables if they don't exist
         if 'question' not in st.session_state:
             st.session_state.question = ""
