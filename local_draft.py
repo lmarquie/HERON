@@ -389,6 +389,7 @@ class QuestionHandler:
     def __init__(self, vector_store: VectorStore):
         self.vector_store = vector_store
         self.llm = ClaudeHandler()
+        self.conversation_history = []
 
     def process_question(self, question: str, query_type: str = "document", k: int = 5) -> str:
         results = self.vector_store.search(question, k=k)
@@ -399,7 +400,48 @@ class QuestionHandler:
         # Simple context building
         context = "\n".join([chunk['text'] for chunk in results])
         answer = self.llm.generate_answer(question, context)
+        
+        # Store conversation history
+        self.conversation_history.append({
+            'question': question,
+            'answer': answer,
+            'context': context
+        })
+        
         return answer
+
+    def process_follow_up(self, follow_up_question: str, k: int = 5) -> str:
+        """Process a follow-up question using conversation history and document context."""
+        if not self.conversation_history:
+            return "No previous conversation to follow up on. Please ask a question first."
+        
+        # Get recent conversation context
+        recent_context = ""
+        for i, conv in enumerate(self.conversation_history[-3:]):  # Last 3 exchanges
+            recent_context += f"Previous Q: {conv['question']}\nPrevious A: {conv['answer']}\n\n"
+        
+        # Get document context
+        results = self.vector_store.search(follow_up_question, k=k)
+        document_context = "\n".join([chunk['text'] for chunk in results]) if results else ""
+        
+        # Combine contexts
+        full_context = f"Conversation History:\n{recent_context}\nDocument Context:\n{document_context}"
+        
+        # Generate follow-up answer
+        answer = self.llm.generate_answer(follow_up_question, full_context)
+        
+        # Store in conversation history
+        self.conversation_history.append({
+            'question': follow_up_question,
+            'answer': answer,
+            'context': full_context
+        })
+        
+        return answer
+
+    def clear_conversation_history(self):
+        """Clear the conversation history."""
+        self.conversation_history = []
 
 ### =================== Main RAG System =================== ###
 class RAGSystem:
