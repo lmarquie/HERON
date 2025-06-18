@@ -988,9 +988,29 @@ def show_main_page():
                 key="current_follow_up_input"
             )
 
-            # After processing the follow-up
-            st.session_state.clear_follow_up_input = True
-            st.rerun()
+            # Process follow-up question if entered
+            if follow_up_question and follow_up_question != st.session_state.get('current_follow_up_input', '') and not st.session_state.processing:
+                try:
+                    st.session_state.processing = True
+                    use_internet = st.session_state.get('use_internet', False)
+                    
+                    # Show processing status
+                    with st.spinner("Processing your follow-up question..."):
+                        generate_answer(follow_up_question, use_internet, is_follow_up=True)
+                    
+                    # Add to follow-up questions list
+                    if st.session_state.follow_up_answer:
+                        st.session_state.follow_up_questions.append((follow_up_question, st.session_state.follow_up_answer))
+                    
+                    # Clear the input and rerun to show the new follow-up
+                    st.session_state.current_follow_up_input = ""
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"Error processing follow-up question: {str(e)}")
+                    st.info("Please try again or rephrase your question.")
+                finally:
+                    st.session_state.processing = False
 
         # Options
         st.session_state.use_internet = st.toggle("Internet")
