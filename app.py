@@ -67,10 +67,25 @@ st.title("HERON - Fast Document Analysis")
 # Question input
 question = st.text_input("Ask a question about your documents:")
 
-if question and st.button("Get Answer"):
-    if st.session_state.documents_loaded:
-        with st.spinner("Processing..."):
-            answer = generate_answer(question)
-            st.write(answer)
-    else:
-        st.error("Please upload documents first") 
+# Always show all three buttons
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.button("Get Answer", type="primary"):
+        if st.session_state.documents_loaded:
+            with st.spinner("Processing..."):
+                answer = generate_answer(question)
+                st.write(answer)
+        else:
+            st.error("Please upload documents first")
+
+with col2:
+    if st.button("Clear"):
+        st.rerun()
+
+with col3:
+    if st.button("Reset"):
+        # Clear session state
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun() 
