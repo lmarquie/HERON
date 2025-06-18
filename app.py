@@ -1090,9 +1090,16 @@ Guidelines:
 Question: {question}
 
 Context from documents:
-{chr(10).join([f"Source: {r['metadata'].get('source', 'Unknown')} (Relevance: {r['score']:.2f})\n{r['text']}\n" for r in final_results])}
-
-Please provide a comprehensive answer based on the document context provided."""
+"""
+                
+                # Build context separately to avoid f-string issues
+                for r in final_results:
+                    source = r['metadata'].get('source', 'Unknown')
+                    score = r['score']
+                    text = r['text']
+                    doc_context += f"Source: {source} (Relevance: {score:.2f})\n{text}\n\n"
+                
+                doc_context += "Please provide a comprehensive answer based on the document context provided."
                 
                 answer = st.session_state.rag_system.question_handler.process_question(doc_context)
         
