@@ -2,6 +2,8 @@ import streamlit as st
 import os
 import json
 import time
+import gc
+import shutil
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from local_draft import RAGSystem, WebFileHandler
@@ -10,6 +12,17 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+
+# Try to import optional dependencies
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 # Create app data directory if it doesn't exist
 DATA_DIR = 'app_data'
@@ -641,6 +654,8 @@ def generate_pdf_summary():
 
 def get_memory_usage():
     """Get current memory usage in MB."""
+    if psutil is None:
+        return 0  # Return 0 if psutil is not available
     process = psutil.Process(os.getpid())
     return process.memory_info().rss / 1024 / 1024  # Convert to MB
 
@@ -662,8 +677,8 @@ def cleanup_resources():
         st.cache_data.clear()
         st.cache_resource.clear()
         
-        # Clear PyTorch's cache only if CUDA is available
-        if torch.cuda.is_available():
+        # Clear PyTorch's cache only if CUDA is available and torch is imported
+        if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
         
         # Clear temporary files
@@ -807,8 +822,22 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
             if not st.session_state.documents_loaded:
                 answer = "I cannot answer this question as there are no documents loaded. Please either upload documents or enable internet search."
             else:
-                # When not using internet, explicitly instruct to only use document information
-                doc_context = f"""you are an investment banking analyst. you are only allowed to use the information in the loaded documents to answer the questions."""
+                # Build context from document results
+                doc_context = "You are an investment banking analyst. Use ONLY the following document information to answer the question. If the documents don't contain relevant information, say so clearly.\n\n"
+                doc_context += f"Question: {question}\n\n"
+                doc_context += "Document Information:\n"
+                
+                if results:
+                    for i, result in enumerate(results, 1):
+                        source = result.get('metadata', {}).get('source', 'Unknown source')
+                        text = result.get('text', '')
+                        doc_context += f"Source {i}: {source}\n"
+                        doc_context += f"Content: {text}\n\n"
+                else:
+                    doc_context += "No relevant documents found.\n\n"
+                
+                doc_context += "Please provide a comprehensive answer based on the document information above. If you cannot answer the question with the provided documents, clearly state this limitation."
+                
                 answer = st.session_state.rag_system.question_handler.process_question(doc_context)
         
         # Store the answer
@@ -870,12 +899,56 @@ def generate_multi_analyst_answer(question, use_internet=False):
         # Create status container
         status_text = st.empty()
         
+        # Get document results first
+        results = []
+        if st.session_state.documents_loaded:
+            results = st.session_state.rag_system.vector_store.search(question, k=5)
+        
+        # Process and filter results
+        processed_results = []
+        seen_sources = set()
+        seen_texts = set()
+        
+        for result in results:
+            source = result.get('metadata', {}).get('source', 'Unknown source')
+            text = result.get('text', '')
+            
+            if source in seen_sources or text in seen_texts:
+                continue
+                
+            seen_sources.add(source)
+            seen_texts.add(text)
+            
+            raw_score = result.get('score', 0)
+            normalized_score = (raw_score + 1) / 2
+            
+            processed_results.append({
+                'metadata': result.get('metadata', {}),
+                'score': normalized_score,
+                'text': text
+            })
+        
+        processed_results.sort(key=lambda x: x['score'], reverse=True)
+        results = processed_results[:5]
+        
+        # Build document context
+        doc_context = ""
+        if results:
+            doc_context = "\n\nDocument Information:\n"
+            for i, result in enumerate(results, 1):
+                source = result.get('metadata', {}).get('source', 'Unknown source')
+                text = result.get('text', '')
+                doc_context += f"Source {i}: {source}\n"
+                doc_context += f"Content: {text}\n\n"
+        else:
+            doc_context = "\n\nNo relevant documents found.\n\n"
+        
         # Define the debate prompt
         debate_prompt = f"""You are moderating a formal debate between four expert analysts. The question is: "{question}"
 
         IMPORTANT: You must ONLY use information from the provided documents to inform your debate. Do not use any external knowledge or general information.
         If the documents don't contain relevant information, acknowledge this limitation in your debate.
-        Do not make assumptions or use knowledge from outside the provided documents.
+        Do not make assumptions or use knowledge from outside the provided documents.{doc_context}
 
         The debate will follow this structure:
 
@@ -924,6 +997,7 @@ def generate_multi_analyst_answer(question, use_internet=False):
         # Generate and store the debate
         debate = st.session_state.rag_system.question_handler.process_question(debate_prompt)
         st.session_state.main_answer = debate
+        st.session_state.main_results = results
         
         # Display the debate
         st.markdown("### Formal Analyst Debate")
@@ -1134,6 +1208,19 @@ def show_main_page():
                             for prev_q, prev_a in st.session_state.follow_up_questions:
                                 context += f"\nPrevious follow-up: {prev_q}\nPrevious answer: {prev_a}\n"
                             context += f"\nNew follow-up question: {follow_up_question}"
+                            
+                            # Add document information to context
+                            context += "\n\nDocument Information:\n"
+                            if results:
+                                for i, result in enumerate(results, 1):
+                                    source = result.get('metadata', {}).get('source', 'Unknown source')
+                                    text = result.get('text', '')
+                                    context += f"Source {i}: {source}\n"
+                                    context += f"Content: {text}\n\n"
+                            else:
+                                context += "No relevant documents found.\n\n"
+                            
+                            context += "Please provide a comprehensive answer based on the document information above and the conversation history. If you cannot answer the question with the provided documents, clearly state this limitation."
                             
                             # Generate answer with previous context
                             follow_up_answer = st.session_state.rag_system.question_handler.process_question(context)
