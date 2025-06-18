@@ -19,6 +19,104 @@ import shutil
 DATA_DIR = 'app_data'
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# Performance tracking for smart processing
+class PerformanceTracker:
+    def __init__(self):
+        self.local_times = []
+        self.web_times = []
+        self.local_success_rate = 0
+        self.web_success_rate = 0
+    
+    def record_local_performance(self, time_taken, success=True):
+        self.local_times.append(time_taken)
+        if success:
+            self.local_success_rate = (self.local_success_rate * (len(self.local_times) - 1) + 1) / len(self.local_times)
+        else:
+            self.local_success_rate = (self.local_success_rate * (len(self.local_times) - 1)) / len(self.local_times)
+    
+    def record_web_performance(self, time_taken, success=True):
+        self.web_times.append(time_taken)
+        if success:
+            self.web_success_rate = (self.web_success_rate * (len(self.web_times) - 1) + 1) / len(self.web_times)
+        else:
+            self.web_success_rate = (self.web_success_rate * (len(self.web_times) - 1)) / len(self.web_times)
+    
+    def should_use_local(self):
+        """Determine if local processing should be used based on performance history"""
+        if not self.local_times and not self.web_times:
+            return True  # Default to local if no history
+        
+        if not self.local_times:
+            return False
+        if not self.web_times:
+            return True
+        
+        # Calculate average times
+        avg_local = sum(self.local_times) / len(self.local_times)
+        avg_web = sum(self.web_times) / len(self.web_times)
+        
+        # Consider success rates
+        local_score = avg_local * (1 - self.local_success_rate * 0.3)  # Penalize failures
+        web_score = avg_web * (1 - self.web_success_rate * 0.3)
+        
+        return local_score <= web_score
+
+# Initialize performance tracker
+if 'performance_tracker' not in st.session_state:
+    st.session_state.performance_tracker = PerformanceTracker()
+
+def clear_all_caches():
+    """Clear all caches to force fresh processing"""
+    try:
+        # Clear Streamlit caches
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        
+        # Clear session state
+        if 'rag_system' in st.session_state:
+            del st.session_state.rag_system
+        if 'documents_loaded' in st.session_state:
+            st.session_state.documents_loaded = False
+        if 'main_answer' in st.session_state:
+            del st.session_state.main_answer
+        if 'main_results' in st.session_state:
+            del st.session_state.main_results
+        
+        # Force garbage collection
+        gc.collect()
+        
+        st.success("All caches cleared! Please refresh the page.")
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"Error clearing caches: {str(e)}")
+
+def force_restart():
+    """Force a complete restart by clearing everything"""
+    try:
+        # Clear all Streamlit caches
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        
+        # Clear all session state
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        
+        # Force garbage collection
+        gc.collect()
+        
+        # Clear torch cache if available
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        st.success("🔄 Complete restart initiated! Please refresh the page.")
+        
+        # Force a rerun
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"Error during force restart: {str(e)}")
+
 # Add caching for expensive operations
 @st.cache_data(ttl=3600)  # Cache for 1 hour
 def cached_generate_answer(question, context, use_internet=False):
@@ -141,6 +239,39 @@ with st.sidebar:
     st.write("Top P")
     st.progress(settings['top_p'])  # Already 0-1 range
     
+    # Smart Processing Settings
+    st.divider()
+    st.subheader("Smart Processing")
+    
+    # Initialize smart processing in session state if not exists
+    if 'smart_processing' not in st.session_state:
+        st.session_state.smart_processing = True
+    
+    smart_processing_enabled = st.toggle(
+        "Enable Smart Processing",
+        value=st.session_state.smart_processing,
+        help="Automatically choose between local and web processing based on performance"
+    )
+    
+    if smart_processing_enabled != st.session_state.smart_processing:
+        st.session_state.smart_processing = smart_processing_enabled
+        st.success(f"Smart processing {'enabled' if smart_processing_enabled else 'disabled'}")
+    
+    if st.session_state.smart_processing:
+        # Show performance stats
+        tracker = st.session_state.performance_tracker
+        if tracker.local_times or tracker.web_times:
+            st.info("**Performance History:**")
+            if tracker.local_times:
+                avg_local = sum(tracker.local_times) / len(tracker.local_times)
+                st.write(f"Local: {avg_local:.2f}s avg ({len(tracker.local_times)} samples)")
+            if tracker.web_times:
+                avg_web = sum(tracker.web_times) / len(tracker.web_times)
+                st.write(f"Web: {avg_web:.2f}s avg ({len(tracker.web_times)} samples)")
+            
+            recommended = "Local" if tracker.should_use_local() else "Web"
+            st.success(f"Recommended: {recommended}")
+    
     # Vision API Toggle
     st.divider()
     st.subheader("Vision API Control")
@@ -181,6 +312,44 @@ with st.sidebar:
     with col2:
         if st.button("Force Restart", type="secondary", use_container_width=True):
             force_restart()
+    
+    # System Information
+    st.divider()
+    st.subheader("System Information")
+    
+    # Get system info
+    try:
+        # CPU info
+        cpu_count = psutil.cpu_count()
+        cpu_percent = psutil.cpu_percent(interval=1)
+        
+        # Memory info
+        memory = psutil.virtual_memory()
+        memory_gb = memory.total / (1024**3)
+        memory_percent = memory.percent
+        
+        # GPU info
+        gpu_info = "Not available"
+        if torch.cuda.is_available():
+            gpu_count = torch.cuda.device_count()
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_info = f"{gpu_name} ({gpu_count} device{'s' if gpu_count > 1 else ''})"
+        
+        # Display system info
+        st.write(f"**CPU:** {cpu_count} cores ({cpu_percent:.1f}% usage)")
+        st.write(f"**Memory:** {memory_gb:.1f} GB ({memory_percent:.1f}% used)")
+        st.write(f"**GPU:** {gpu_info}")
+        
+        # Performance recommendation
+        if torch.cuda.is_available() and memory_gb >= 8:
+            st.success("✅ Your system is well-suited for local processing")
+        elif memory_gb >= 4:
+            st.info("ℹ️ Your system can handle local processing")
+        else:
+            st.warning("⚠️ Consider using web processing for better performance")
+            
+    except Exception as e:
+        st.error(f"Error getting system info: {str(e)}")
 
 # Initialize session state
 if 'current_page' not in st.session_state:
@@ -791,6 +960,24 @@ def generate_answer(question, use_internet=False, is_follow_up=False):
         status_text = st.empty()
         answer_container = st.empty()  # Container for the typing effect
         
+        # Smart processing decision
+        smart_processing = st.session_state.get('smart_processing', True)
+        tracker = st.session_state.performance_tracker
+        
+        if smart_processing and not use_internet:
+            # Let smart processing decide between local and web
+            use_local_processing = tracker.should_use_local()
+            if use_local_processing:
+                status_text.text("🤖 Using local processing (smart choice)")
+            else:
+                status_text.text("🌐 Using web processing (smart choice)")
+        else:
+            use_local_processing = not use_internet
+            if use_internet:
+                status_text.text("🌐 Using web processing (manual choice)")
+            else:
+                status_text.text("🤖 Using local processing (manual choice)")
+        
         # Combine document search and processing
         process_start = time.time()
         progress_bar.progress(25)
@@ -920,12 +1107,34 @@ Please provide a comprehensive answer based on the document context provided."""
         # Type out the answer
         type_text(answer, answer_container)
         
-        # Show processing time
+        # Show processing time and record performance
         end_time = time.time()
         processing_time = end_time - start_time
-        st.info(f"Processing completed in {processing_time:.2f} seconds")
+        
+        # Record performance for smart processing
+        if smart_processing:
+            if use_internet:
+                tracker.record_web_performance(processing_time, success=True)
+            else:
+                tracker.record_local_performance(processing_time, success=True)
+        
+        # Show processing info
+        processing_type = "Web" if use_internet else "Local"
+        st.info(f"Processing completed in {processing_time:.2f} seconds using {processing_type} processing")
+        
+        # Show smart processing recommendation if enabled
+        if smart_processing and tracker.local_times and tracker.web_times:
+            recommended = "Local" if tracker.should_use_local() else "Web"
+            st.success(f"💡 Smart processing recommends: {recommended} for next query")
         
     except Exception as e:
+        # Record failure for smart processing
+        if smart_processing:
+            if use_internet:
+                tracker.record_web_performance(processing_time, success=False)
+            else:
+                tracker.record_local_performance(processing_time, success=False)
+        
         st.error(f"Error generating answer: {str(e)}")
     finally:
         st.session_state.processing = False
@@ -1309,58 +1518,6 @@ def show_main_page():
     except Exception as e:
         st.error(f"An unexpected error occurred: {str(e)}")
         st.info("Please refresh the page and try again.")
-
-def clear_all_caches():
-    """Clear all caches to force fresh processing"""
-    try:
-        # Clear Streamlit caches
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        
-        # Clear session state
-        if 'rag_system' in st.session_state:
-            del st.session_state.rag_system
-        if 'documents_loaded' in st.session_state:
-            st.session_state.documents_loaded = False
-        if 'main_answer' in st.session_state:
-            del st.session_state.main_answer
-        if 'main_results' in st.session_state:
-            del st.session_state.main_results
-        
-        # Force garbage collection
-        gc.collect()
-        
-        st.success("All caches cleared! Please refresh the page.")
-        st.rerun()
-        
-    except Exception as e:
-        st.error(f"Error clearing caches: {str(e)}")
-
-def force_restart():
-    """Force a complete restart by clearing everything"""
-    try:
-        # Clear all Streamlit caches
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        
-        # Clear all session state
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        
-        # Force garbage collection
-        gc.collect()
-        
-        # Clear torch cache if available
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        
-        st.success("🔄 Complete restart initiated! Please refresh the page.")
-        
-        # Force a rerun
-        st.rerun()
-        
-    except Exception as e:
-        st.error(f"Error during force restart: {str(e)}")
 
 # Main app logic
 if st.session_state.current_page == "settings":
