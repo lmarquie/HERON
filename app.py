@@ -974,12 +974,7 @@ def show_main_page():
                 st.markdown(a)
                 st.markdown("---")
             
-            # Before the widget is created, clear the value if needed
-            if st.session_state.get("clear_follow_up_input", False):
-                st.session_state.current_follow_up_input = ""
-                st.session_state.clear_follow_up_input = False
-
-            # ... then create the widget
+            # Create the follow-up question widget
             follow_up_question = st.text_input(
                 label="Ask a follow-up question",
                 value=st.session_state.get('current_follow_up_input', ''),
@@ -992,7 +987,7 @@ def show_main_page():
             if follow_up_question and follow_up_question != st.session_state.get('current_follow_up_input', '') and not st.session_state.processing:
                 try:
                     st.session_state.processing = True
-                    use_internet = st.session_state.get('use_internet', False)
+                    use_internet = st.session_state.get('use_internet', False)  # Use global internet setting
                     
                     # Show processing status
                     with st.spinner("Processing your follow-up question..."):
