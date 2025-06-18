@@ -985,6 +985,12 @@ def generate_multi_analyst_answer(question, use_internet=False):
         Each analyst should maintain their unique perspective while engaging meaningfully with others' arguments.
         """
         
+        # Generate the debate
+        status_text.text("💭 Analysts are debating...")
+        
+        # Store the question first
+        st.session_state.question = question
+        
         # Generate and store the debate
         debate = st.session_state.rag_system.question_handler.process_question(debate_prompt)
         st.session_state.main_answer = debate
