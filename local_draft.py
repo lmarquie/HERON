@@ -33,34 +33,64 @@ class InputInterface:
 ### =================== Document Loading =================== ###
 class LocalFileHandler:
     def __init__(self):
-        self.base_path = os.getcwd()
+        self.text_processor = TextProcessor()
 
     def select_folder_interactive(self):
-        """Let user select a folder from local system"""
-        print("\nPlease enter the path to your folder containing documents.")
-        print("Example: /path/to/your/documents")
-        print("Or just the folder name if it's in the current directory")
-
-        while True:
-            folder_path = input("\nEnter folder path: ").strip()
-
-            if not os.path.isabs(folder_path):
-                folder_path = os.path.join(self.base_path, folder_path)
-
+        """Allow user to select a folder interactively"""
+        print("\nPlease select a folder containing your documents:")
+        print("1. Enter folder path manually")
+        print("2. Browse current directory")
+        
+        choice = input("Enter your choice (1-2): ")
+        
+        if choice == "1":
+            folder_path = input("Enter the folder path: ").strip()
             if os.path.exists(folder_path) and os.path.isdir(folder_path):
-                print(f"✓ Selected folder: {folder_path}")
                 return {
                     'name': os.path.basename(folder_path),
                     'path': folder_path
                 }
             else:
-                print(f" Folder not found: {folder_path}")
-                print("Please try again or enter 'q' to quit")
-                if folder_path.lower() == 'q':
-                    return None
+                print("Invalid folder path. Please try again.")
+                return self.select_folder_interactive()
+        
+        elif choice == "2":
+            current_dir = os.getcwd()
+            print(f"\nCurrent directory: {current_dir}")
+            print("\nAvailable folders:")
+            
+            folders = [item for item in os.listdir(current_dir) 
+                      if os.path.isdir(os.path.join(current_dir, item))]
+            
+            if not folders:
+                print("No folders found in current directory.")
+                return self.select_folder_interactive()
+            
+            for i, folder in enumerate(folders, 1):
+                print(f"{i}. {folder}")
+            
+            try:
+                folder_choice = int(input(f"\nSelect folder (1-{len(folders)}): "))
+                if 1 <= folder_choice <= len(folders):
+                    selected_folder = folders[folder_choice - 1]
+                    folder_path = os.path.join(current_dir, selected_folder)
+                    return {
+                        'name': selected_folder,
+                        'path': folder_path
+                    }
+                else:
+                    print("Invalid choice. Please try again.")
+                    return self.select_folder_interactive()
+            except ValueError:
+                print("Invalid input. Please try again.")
+                return self.select_folder_interactive()
+        
+        else:
+            print("Invalid choice. Please try again.")
+            return self.select_folder_interactive()
 
     def process_selected_folder(self, folder_path):
-        """Process all files in the selected folder"""
+        """Process all files in the selected folder using TextProcessor with image recognition"""
         try:
             print(f"\nScanning folder: {folder_path}")
             files = []
@@ -76,18 +106,16 @@ class LocalFileHandler:
                 print("No files found in the selected folder.")
                 return []
 
-            print(f"\nFound {len(files)} files. Processing...")
+            print(f"\nFound {len(files)} files. Processing with image recognition...")
             documents = []
             for file in files:
                 if file['name'].endswith(('.txt', '.pdf')):
                     try:
                         if file['name'].endswith('.pdf'):
-                            doc = fitz.open(file['path'])
-                            content = ""
-                            for page in doc:
-                                content += page.get_text()
-                            doc.close()
+                            # Use TextProcessor for PDF processing with image recognition
+                            content = self.text_processor.extract_text_from_pdf(file['path'])
                         else:
+                            # For text files, use simple text extraction
                             with open(file['path'], 'r', encoding='utf-8') as f:
                                 content = f.read()
 
@@ -115,7 +143,7 @@ class WebFileHandler(LocalFileHandler):
         os.makedirs(self.temp_dir, exist_ok=True)
 
     def process_uploaded_files(self, uploaded_files):
-        """Process files uploaded through Streamlit's file uploader"""
+        """Process files uploaded through Streamlit's file uploader using TextProcessor with image recognition"""
         if not uploaded_files:
             return []
 
@@ -127,14 +155,12 @@ class WebFileHandler(LocalFileHandler):
                 with open(temp_path, 'wb') as f:
                     f.write(uploaded_file.getbuffer())
 
-                # Process the file based on its type
+                # Process the file based on its type using TextProcessor
                 if uploaded_file.name.endswith('.pdf'):
-                    doc = fitz.open(temp_path)
-                    content = ""
-                    for page in doc:
-                        content += page.get_text()
-                    doc.close()
+                    # Use TextProcessor for PDF processing with image recognition
+                    content = self.text_processor.extract_text_from_pdf(temp_path)
                 elif uploaded_file.name.endswith('.txt'):
+                    # For text files, use simple text extraction
                     with open(temp_path, 'r', encoding='utf-8') as f:
                         content = f.read()
                 else:
@@ -180,6 +206,7 @@ class TextProcessor:
                 
                 # Extract images and analyze them
                 image_list = page.get_images()
+                
                 if image_list:
                     text_content.append(f"Page {page_num + 1} Images:\n")
                     
@@ -189,6 +216,7 @@ class TextProcessor:
                             xref = img[0]
                             pix = fitz.Pixmap(doc, xref)
                             
+                            # Handle different image formats
                             if pix.n - pix.alpha < 4:  # GRAY or RGB
                                 # Convert to PIL Image
                                 img_data = pix.tobytes("png")
@@ -197,10 +225,46 @@ class TextProcessor:
                                 # Analyze image with OCR and vision
                                 image_analysis = self.analyze_image(pil_image, page_num + 1, img_index + 1)
                                 text_content.append(image_analysis)
+                            elif pix.n == 4:  # CMYK
+                                # Convert CMYK to RGB
+                                pix_rgb = fitz.Pixmap(fitz.csRGB, pix)
+                                img_data = pix_rgb.tobytes("png")
+                                pil_image = Image.open(io.BytesIO(img_data))
                                 
+                                # Analyze image with OCR and vision
+                                image_analysis = self.analyze_image(pil_image, page_num + 1, img_index + 1)
+                                text_content.append(image_analysis)
+                                
+                                pix_rgb = None  # Free memory
+                            
                             pix = None  # Free memory
                         except Exception as e:
                             text_content.append(f"Error processing image {img_index + 1}: {str(e)}\n")
+                
+                # Also try to extract images using a different method
+                try:
+                    # Get image blocks
+                    image_blocks = page.get_image_info()
+                    if image_blocks:
+                        text_content.append(f"Page {page_num + 1} Additional Images:\n")
+                        for block_index, block in enumerate(image_blocks):
+                            try:
+                                # Try to extract the image
+                                pix = fitz.Pixmap(doc, block["xref"])
+                                if pix.n - pix.alpha < 4:  # GRAY or RGB
+                                    img_data = pix.tobytes("png")
+                                    pil_image = Image.open(io.BytesIO(img_data))
+                                    
+                                    # Analyze image
+                                    image_analysis = self.analyze_image(pil_image, page_num + 1, f"block_{block_index + 1}")
+                                    text_content.append(image_analysis)
+                                
+                                pix = None  # Free memory
+                            except Exception as e:
+                                text_content.append(f"Error processing image block {block_index + 1}: {str(e)}\n")
+                except Exception as e:
+                    # If this method fails, continue
+                    pass
             
             doc.close()
             return "\n".join(text_content)
@@ -208,13 +272,16 @@ class TextProcessor:
         except Exception as e:
             return f"Error extracting text from PDF: {str(e)}"
 
-    def analyze_image(self, image: Image.Image, page_num: int, img_index: int) -> str:
+    def analyze_image(self, image: Image.Image, page_num: int, img_index) -> str:
         """Analyze image using OCR and vision APIs for comprehensive understanding."""
         analysis_parts = []
         
         try:
+            # Convert img_index to string for filename
+            img_index_str = str(img_index)
+            
             # Save image for display in answers
-            image_filename = f"image_page_{page_num}_img_{img_index}.png"
+            image_filename = f"image_page_{page_num}_img_{img_index_str}.png"
             image_path = os.path.join("app_data", "images", image_filename)
             os.makedirs(os.path.dirname(image_path), exist_ok=True)
             image.save(image_path)
@@ -222,37 +289,50 @@ class TextProcessor:
             # Add image reference for display
             analysis_parts.append(f"IMAGE_REF:{image_filename}")
             
-            # 1. OCR Text Extraction
-            ocr_text = pytesseract.image_to_string(image)
-            if ocr_text.strip():
-                analysis_parts.append(f"OCR Text: {ocr_text.strip()}")
+            # 1. OCR Text Extraction (with error handling)
+            try:
+                ocr_text = pytesseract.image_to_string(image)
+                if ocr_text.strip():
+                    analysis_parts.append(f"OCR Text: {ocr_text.strip()}")
+            except Exception as e:
+                # If OCR fails, continue without it
+                analysis_parts.append(f"OCR Text: [OCR processing failed: {str(e)}]")
             
-            # 2. Table Detection and Extraction
+            # 2. Table Detection and Extraction (with error handling)
             try:
                 table_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
                 # Process table data if detected
                 if any(float(conf) > 60 for conf in table_data['conf'] if conf != '-1'):
                     analysis_parts.append("Table detected - data extracted via OCR")
-            except:
+            except Exception as e:
+                # If table detection fails, continue without it
                 pass
             
             # 3. Vision API Analysis (OpenAI GPT-4 Vision)
-            vision_analysis = self.analyze_image_with_vision_api(image)
-            if vision_analysis:
-                analysis_parts.append(f"Vision Analysis: {vision_analysis}")
+            try:
+                vision_analysis = self.analyze_image_with_vision_api(image)
+                if vision_analysis:
+                    analysis_parts.append(f"Vision Analysis: {vision_analysis}")
+            except Exception as e:
+                # If vision API fails, continue without it
+                analysis_parts.append(f"Vision Analysis: [Vision API failed: {str(e)}]")
             
-            # 4. Chart/Graph Detection
-            chart_analysis = self.detect_charts_and_graphs(image)
-            if chart_analysis:
-                analysis_parts.append(f"Chart Analysis: {chart_analysis}")
+            # 4. Chart/Graph Detection (with error handling)
+            try:
+                chart_analysis = self.detect_charts_and_graphs(image)
+                if chart_analysis:
+                    analysis_parts.append(f"Chart Analysis: {chart_analysis}")
+            except Exception as e:
+                # If chart detection fails, continue without it
+                pass
             
             if analysis_parts:
-                return f"Image {img_index} Analysis:\n" + "\n".join(analysis_parts) + "\n"
+                return f"Image {img_index_str} Analysis:\n" + "\n".join(analysis_parts) + "\n"
             else:
-                return f"Image {img_index}: No text or significant content detected\n"
+                return f"Image {img_index_str}: No text or significant content detected\n"
                 
         except Exception as e:
-            return f"Image {img_index} Analysis Error: {str(e)}\n"
+            return f"Image {img_index_str} Analysis Error: {str(e)}\n"
 
     def analyze_image_with_vision_api(self, image: Image.Image) -> str:
         """Use OpenAI's GPT-4 Vision API for comprehensive image analysis."""
@@ -321,21 +401,24 @@ Provide a detailed analysis that can be used for financial document processing."
         try:
             # Convert to grayscale for analysis
             gray_image = image.convert('L')
-            
-            # Basic chart detection based on patterns
-            # This is a simplified approach - you could use more sophisticated ML models
-            
-            # Check for common chart patterns
             width, height = image.size
             
             # Simple heuristics for chart detection
             chart_indicators = []
             
-            # Check for grid-like patterns (common in charts)
-            # Check for color variations (common in graphs)
-            # Check for text density (labels, legends)
+            # Check image size - charts are usually larger than small icons
+            if width > 200 and height > 200:
+                chart_indicators.append("large image size")
             
-            if len(chart_indicators) > 0:
+            # Check for color variations (common in graphs)
+            if image.mode in ['RGB', 'RGBA']:
+                # Get color statistics
+                colors = image.getcolors(maxcolors=1000)
+                if colors and len(colors) > 10:  # Multiple colors suggest charts
+                    chart_indicators.append("multiple colors detected")
+            
+            # Basic pattern detection
+            if chart_indicators:
                 return f"Chart/Graph detected: {', '.join(chart_indicators)}"
             else:
                 return "No specific chart patterns detected"
