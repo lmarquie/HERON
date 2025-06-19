@@ -83,6 +83,14 @@ class TextProcessor:
                                     # Store semantic description for search
                                     self.image_descriptions[img_key] = img_analysis
                                     image_content.append(f"Page {page_num + 1}, Image {img_index + 1}: {img_analysis}")
+                                else:
+                                    # If not a figure/graph, remove from extracted images
+                                    if img_key in self.extracted_images:
+                                        del self.extracted_images[img_key]
+                                    # Delete the saved image file
+                                    if os.path.exists(img_path):
+                                        os.remove(img_path)
+                                    continue
                         
                         pix = None
                     except Exception as e:
@@ -104,7 +112,7 @@ class TextProcessor:
             return f"Error extracting text from PDF: {str(e)}"
 
     def analyze_image_detailed(self, img_pil):
-        """Enhanced image analysis using Vision API for semantic search."""
+        """Enhanced image analysis using Vision API for semantic search - focused on figures and graphs."""
         try:
             # Resize image to reduce API costs and speed
             max_size = 512
@@ -115,7 +123,7 @@ class TextProcessor:
             img_pil.save(buffer, format='PNG')
             img_base64 = base64.b64encode(buffer.getvalue()).decode()
             
-            # Enhanced Vision API call for semantic search
+            # Enhanced Vision API call focused on figures and graphs
             headers = {
                 "Authorization": f"Bearer {OPENAI_API_KEY}",
                 "Content-Type": "application/json"
@@ -129,7 +137,7 @@ class TextProcessor:
                         "content": [
                             {
                                 "type": "text",
-                                "text": "Analyze this image and provide a detailed description that would help someone find it when searching for specific content. Include: 1) Type of visual (chart, graph, table, diagram, photo, etc.) 2) Main subject/topic 3) Key data points or information shown 4) Any text or labels visible 5) Business context if applicable (revenue, growth, metrics, etc.). Be specific and searchable."
+                                "text": "Analyze this image and determine if it contains figures, graphs, charts, tables, or data visualizations. If it does, provide a detailed description including: 1) Type of visual (chart, graph, table, diagram, etc.) 2) Main subject/topic 3) Key data points or information shown 4) Any text or labels visible 5) Business context if applicable (revenue, growth, metrics, etc.). If this is NOT a figure/graph/chart (e.g., it's just text, a photo, or decorative element), respond with 'NOT_A_FIGURE'. Be specific and searchable."
                             },
                             {
                                 "type": "image_url",
@@ -152,7 +160,13 @@ class TextProcessor:
             
             if response.status_code == 200:
                 result = response.json()
-                return result["choices"][0]["message"]["content"]
+                content = result["choices"][0]["message"]["content"]
+                
+                # Only return description if it's actually a figure/graph
+                if "NOT_A_FIGURE" not in content.upper():
+                    return content
+                else:
+                    return None
             else:
                 return None
                 
@@ -790,12 +804,15 @@ class RAGSystem:
         """Determine if the question is asking for semantic image search."""
         question_lower = question.lower()
         
-        # Keywords that suggest looking for specific content in images
+        # Keywords that suggest looking for figures, graphs, and charts
         semantic_keywords = [
             'revenue', 'profit', 'growth', 'sales', 'earnings', 'income',
             'chart', 'graph', 'table', 'data', 'metrics', 'performance',
             'financial', 'business', 'quarterly', 'annual', 'report',
-            'trend', 'comparison', 'analysis', 'statistics', 'figures'
+            'trend', 'comparison', 'analysis', 'statistics', 'figures',
+            'figure', 'diagram', 'visualization', 'plot', 'bar chart',
+            'line chart', 'pie chart', 'scatter plot', 'histogram',
+            'dashboard', 'kpi', 'key performance indicator'
         ]
         
         # Check if question contains semantic keywords
