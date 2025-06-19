@@ -12,6 +12,7 @@ from config import OPENAI_API_KEY
 from PIL import Image
 import io
 import base64
+import re
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -27,11 +28,39 @@ class InputInterface:
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 500, overlap: int = 30):
+    def __init__(self, chunk_size: int = 500, overlap: int = 30, fast_mode: bool = True):
         self.chunk_size = chunk_size
         self.overlap = overlap
+        self.fast_mode = fast_mode
         self.extracted_images = {}  # Store images for display
         self.image_descriptions = {}  # Store semantic descriptions for search
+
+    def clean_extracted_text(self, text: str) -> str:
+        """Clean up extracted text to fix common PDF extraction issues."""
+        try:
+            # Fix concatenated words by adding spaces between transitions from lowercase to uppercase
+            text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
+            
+            # Fix cases where numbers are concatenated with words
+            text = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', text)
+            text = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', text)
+            
+            # Fix cases where parentheses are concatenated with words
+            text = re.sub(r'([a-zA-Z])(\()', r'\1 \2', text)
+            text = re.sub(r'(\))([a-zA-Z])', r'\1 \2', text)
+            
+            # Remove excessive whitespace
+            text = ' '.join(text.split())
+            
+            # Fix common PDF artifacts
+            text = text.replace('•', '- ')  # Replace bullets with dashes
+            text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
+            text = re.sub(r'([a-z])([A-Z][a-z])', r'\1 \2', text)  # Split camelCase
+            
+            return text
+        except Exception as e:
+            print(f"Error cleaning text: {e}")
+            return text
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extract text and images from PDF - simple and fast."""
@@ -47,9 +76,10 @@ class TextProcessor:
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
                 
-                # Extract text
+                # Extract text and clean it
                 text = page.get_text()
-                text_content.append(f"Page {page_num + 1}: {text}")
+                cleaned_text = self.clean_extracted_text(text)
+                text_content.append(f"Page {page_num + 1}: {cleaned_text}")
                 
                 # Extract images (simple approach)
                 image_list = page.get_images()
@@ -77,20 +107,22 @@ class TextProcessor:
                                     'image_num': img_index + 1
                                 }
                                 
-                                # Enhanced image analysis using Vision API
-                                img_analysis = self.analyze_image_detailed(img_pil)
-                                if img_analysis:
-                                    # Store semantic description for search
-                                    self.image_descriptions[img_key] = img_analysis
-                                    image_content.append(f"Page {page_num + 1}, Image {img_index + 1}: {img_analysis}")
-                                else:
-                                    # If not a figure/graph, remove from extracted images
-                                    if img_key in self.extracted_images:
-                                        del self.extracted_images[img_key]
-                                    # Delete the saved image file
-                                    if os.path.exists(img_path):
-                                        os.remove(img_path)
-                                    continue
+                                # Only analyze images if not in fast mode
+                                if not self.fast_mode:
+                                    # Enhanced image analysis using Vision API
+                                    img_analysis = self.analyze_image_detailed(img_pil)
+                                    if img_analysis:
+                                        # Store semantic description for search
+                                        self.image_descriptions[img_key] = img_analysis
+                                        image_content.append(f"Page {page_num + 1}, Image {img_index + 1}: {img_analysis}")
+                                    else:
+                                        # If not a figure/graph, remove from extracted images
+                                        if img_key in self.extracted_images:
+                                            del self.extracted_images[img_key]
+                                        # Delete the saved image file
+                                        if os.path.exists(img_path):
+                                            os.remove(img_path)
+                                        continue
                         
                         pix = None
                     except Exception as e:
@@ -427,6 +459,27 @@ class TextProcessor:
         
         return documents
 
+    def process_images_on_demand(self):
+        """Process images with Vision API when explicitly requested."""
+        if self.fast_mode and self.extracted_images:
+            print("Processing images with Vision API...")
+            for img_key, img_info in list(self.extracted_images.items()):
+                try:
+                    img_path = img_info['path']
+                    if os.path.exists(img_path):
+                        img_pil = Image.open(img_path)
+                        img_analysis = self.analyze_image_detailed(img_pil)
+                        if img_analysis:
+                            self.image_descriptions[img_key] = img_analysis
+                        else:
+                            # If not a figure/graph, remove from extracted images
+                            del self.extracted_images[img_key]
+                            if os.path.exists(img_path):
+                                os.remove(img_path)
+                except Exception as e:
+                    print(f"Error processing image {img_key}: {e}")
+                    continue
+
 ### =================== Document Loading =================== ###
 class LocalFileHandler:
     def __init__(self):
@@ -536,7 +589,7 @@ class LocalFileHandler:
 class WebFileHandler(LocalFileHandler):
     def __init__(self):
         super().__init__()
-        self.text_processor = TextProcessor()
+        self.text_processor = TextProcessor(fast_mode=True)  # Use fast mode for faster uploads
 
     def process_uploaded_files(self, uploaded_files):
         """Process files uploaded through Streamlit."""
@@ -770,6 +823,7 @@ class RAGSystem:
         self.question_handler = QuestionHandler(self.vector_store)
         self.is_web = is_web
         self.conversation_history = []
+        self.use_vision_api = use_vision_api
 
     def process_web_uploads(self, uploaded_files):
         """Process files uploaded through the web interface"""
@@ -797,6 +851,9 @@ class RAGSystem:
     def search_images_semantically(self, query: str, top_k: int = 3):
         """Search for images based on semantic similarity to the query."""
         if hasattr(self.file_handler, 'text_processor'):
+            # Process images on demand if in fast mode
+            if self.file_handler.text_processor.fast_mode:
+                self.file_handler.text_processor.process_images_on_demand()
             return self.file_handler.text_processor.search_images_semantically(query, top_k)
         return []
 
