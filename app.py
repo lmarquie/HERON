@@ -257,10 +257,9 @@ if not conversation_history:
 # Show follow-up input only if there is conversation history
 if conversation_history:
     st.markdown("---")
-    follow_up_key = f"followup_{len(conversation_history)}"
-    follow_up_question = st.text_input("Ask a follow-up question:", key=follow_up_key)
-    if st.button("Ask Follow-up", type="primary", key=f"followup_btn_{len(conversation_history)}"):
-        with st.spinner("Processing follow-up..."):
+    def submit_followup():
+        follow_up_question = st.session_state["followup_input"]
+        if follow_up_question.strip():
             follow_up_answer = generate_follow_up(follow_up_question)
             # If answer is a list (image info), display images
             if isinstance(follow_up_answer, list):
@@ -273,13 +272,18 @@ if conversation_history:
                             caption += f" - {img_info['description']}"
                         if 'similarity_score' in img_info:
                             caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                        
                         st.image(img_info['path'], caption=caption, use_container_width=True)
                 else:
                     st.write("No images were found in the uploaded documents.")
             else:
                 st.write(follow_up_answer)
-            st.session_state[follow_up_key] = ""
+            st.session_state["followup_input"] = ""  # Clear after processing
+    st.text_input(
+        "Ask a follow-up question:",
+        key="followup_input",
+        value=st.session_state.get("followup_input", ""),
+        on_change=submit_followup
+    )
 
 # Control buttons
 st.markdown("---")
