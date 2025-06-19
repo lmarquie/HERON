@@ -168,7 +168,8 @@ with st.sidebar:
         accept_multiple_files=True
     )
     
-    if uploaded_files:
+    # Only process uploads if not already loaded
+    if uploaded_files and not st.session_state.get('documents_loaded'):
         if st.session_state.rag_system.process_web_uploads(uploaded_files):
             st.success(f"Processed {len(uploaded_files)} file(s)")
             st.session_state.documents_loaded = True
