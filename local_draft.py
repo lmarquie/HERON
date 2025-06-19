@@ -219,7 +219,7 @@ class TextProcessor:
             return None
 
     def search_images_semantically(self, query: str, top_k: int = 3):
-        """On-demand: analyze images if needed, then search for images based on semantic similarity to the query."""
+        """On-demand: analyze images if needed, then search for images based on semantic similarity to the query. Only return the single best match, with no similarity threshold."""
         self.ensure_images_analyzed()
         try:
             if not self.image_descriptions:
@@ -274,23 +274,19 @@ class TextProcessor:
                 similarity = self.cosine_similarity(query_embedding, desc_embedding)
                 similarities.append((similarity, i))
             
-            # Sort by similarity and get top results
+            # Sort by similarity and get the best result (no threshold)
             similarities.sort(reverse=True)
-            top_indices = [idx for _, idx in similarities[:top_k]]
-            
-            # Return matching images
-            results = []
+            if not similarities:
+                return []
+            best_idx = similarities[0][1]
             img_keys = list(self.extracted_images.keys())
-            for idx in top_indices:
-                if idx < len(img_keys):
-                    img_key = img_keys[idx]
-                    img_info = self.extracted_images[img_key].copy()
-                    img_info['description'] = self.image_descriptions[img_key]
-                    img_info['similarity_score'] = similarities[idx][0]
-                    results.append(img_info)
-            
-            return results
-            
+            if best_idx < len(img_keys):
+                img_key = img_keys[best_idx]
+                img_info = self.extracted_images[img_key].copy()
+                img_info['description'] = self.image_descriptions[img_key]
+                img_info['similarity_score'] = similarities[0][0]
+                return [img_info]
+            return []
         except Exception as e:
             print(f"Error in semantic image search: {e}")
             return []
