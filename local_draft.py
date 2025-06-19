@@ -14,6 +14,8 @@ import io
 import base64
 import cv2
 import pytesseract
+from difflib import SequenceMatcher
+import openai
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -29,7 +31,7 @@ class InputInterface:
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 500, overlap: int = 30):
+    def __init__(self, chunk_size: int = 1500, overlap: int = 30):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.extracted_images = {}  # Store images for display
@@ -37,7 +39,7 @@ class TextProcessor:
         self.images_analyzed = set()  # Track which images have been analyzed
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract text and images from PDF, detect tables/graphs, and run OCR on each region."""
+        """Extract text and images from PDF, detect tables/graphs, and run OCR on each region (header + body)."""
         try:
             print(f"Processing PDF: {pdf_path}")
             doc = fitz.open(pdf_path)
@@ -52,24 +54,41 @@ class TextProcessor:
                 pix = page.get_pixmap(dpi=200)
                 img_data = pix.tobytes("png")
                 img_array = np.frombuffer(img_data, np.uint8)
-                img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-                if img_cv is not None:
-                    detected_regions = self.detect_tables_and_graphs(img_cv)
-                    for idx, (x, y, w, h) in enumerate(detected_regions):
-                        crop = img_cv[y:y+h, x:x+w]
-                        img_filename = f"page_{page_num + 1}_detected_{idx + 1}.png"
-                        img_path = os.path.join("images", img_filename)
-                        cv2.imwrite(img_path, crop)
-                        img_key = f"page_{page_num + 1}_detected_{idx + 1}"
-                        # OCR on the cropped region
-                        ocr_text = self.ocr_image(crop)
-                        self.extracted_images[img_key] = {
-                            'path': img_path,
-                            'page': page_num + 1,
-                            'image_num': idx + 1,
-                            'description': 'Detected table/graph region (OpenCV)',
-                            'ocr_text': ocr_text,
-                        }
+                
+                # Check image size to prevent processing extremely large images
+                if len(img_array) > 50 * 1024 * 1024:  # 50MB limit
+                    print(f"Warning: Page {page_num + 1} image too large ({len(img_array) / 1024 / 1024:.1f}MB), skipping image processing")
+                    continue
+                
+                # Add error handling for large PNG chunks
+                try:
+                    img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                    if img_cv is not None:
+                        detected_regions = self.detect_tables_and_graphs(img_cv)
+                        for idx, (x, y, w, h) in enumerate(detected_regions):
+                            crop = img_cv[y:y+h, x:x+w]
+                            img_filename = f"page_{page_num + 1}_detected_{idx + 1}.png"
+                            img_path = os.path.join("images", img_filename)
+                            cv2.imwrite(img_path, crop)
+                            img_key = f"page_{page_num + 1}_detected_{idx + 1}"
+                            # OCR on the cropped region (body)
+                            ocr_text = self.ocr_image(crop)
+                            # OCR on the header (top 20%)
+                            header_h = max(1, int(h * 0.2))
+                            header_crop = crop[0:header_h, :]
+                            ocr_header = self.ocr_image(header_crop)
+                            self.extracted_images[img_key] = {
+                                'path': img_path,
+                                'page': page_num + 1,
+                                'image_num': idx + 1,
+                                'description': 'Detected table/graph region (OpenCV)',
+                                'ocr_text': ocr_text,
+                                'ocr_header': ocr_header,
+                            }
+                except Exception as e:
+                    print(f"Warning: Could not process images on page {page_num + 1}: {e}")
+                    # Continue processing text even if image processing fails
+                    continue
             doc.close()
             final_content = "\n".join(text_content)
             print(f"PDF processing completed. Total content length: {len(final_content)}")
@@ -247,20 +266,25 @@ class TextProcessor:
             print(f"Error analyzing image: {e}")
             return None
 
-    def search_images_semantically(self, query: str, top_k: int = 3):
-        """Find the most relevant detected region by keyword overlap with the query (no AI)."""
-        # Lowercase and split query into keywords
-        query_keywords = set(query.lower().split())
+    def fuzzy_score(self, a, b):
+        """Return a fuzzy match ratio between two strings (0-100)."""
+        return int(SequenceMatcher(None, a, b).ratio() * 100)
+
+    def search_images_semantically(self, query: str, top_k: int = 3, min_score: int = 180):
+        """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header. Only return if score is high enough."""
+        query_lc = query.lower()
         best_score = -1
         best_img_info = None
         for img_info in self.extracted_images.values():
+            ocr_header = img_info.get('ocr_header', '').lower()
             ocr_text = img_info.get('ocr_text', '').lower()
-            ocr_words = set(ocr_text.split())
-            score = len(query_keywords & ocr_words)
-            if score > best_score:
-                best_score = score
+            header_score = self.fuzzy_score(query_lc, ocr_header)
+            body_score = self.fuzzy_score(query_lc, ocr_text)
+            combined_score = header_score * 2 + body_score  # Prioritize header
+            if combined_score > best_score:
+                best_score = combined_score
                 best_img_info = img_info
-        if best_img_info:
+        if best_img_info and best_score >= min_score:
             return [best_img_info]
         return []
 
@@ -544,8 +568,7 @@ class VectorStore:
         self.index = None
         self.chunk_size = 500
         self.chunk_overlap = 50
-        
-        # Simple error handling for model loading
+        # Restore local embedding model
         try:
             self.model = SentenceTransformer('all-MiniLM-L6-v2')
         except Exception as e:
@@ -553,55 +576,40 @@ class VectorStore:
             self.model = None
 
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store."""
+        """Add documents to the vector store using local SentenceTransformer."""
         if not documents:
             return
-            
         if self.model is None:
             print("Error: No embedding model available")
             return
-            
         print(f"Adding {len(documents)} documents to vector store...")
-        
-        # Extract text from documents
         texts = [doc['text'] for doc in documents]
-        
-        # Generate embeddings
         print("Converting text to vector embeddings...")
         try:
             embeddings = self.model.encode(texts, show_progress_bar=True)
         except Exception as e:
             print(f"Error generating embeddings: {e}")
             return
-        
-        # Store documents and embeddings
+        import numpy as np
         self.documents.extend(documents)
-        
         if self.embeddings is None:
             self.embeddings = embeddings
         else:
             self.embeddings = np.vstack([self.embeddings, embeddings])
-        
-        # Create FAISS index with correct dimension
         embedding_dim = self.embeddings.shape[1]
+        import faiss
         self.index = faiss.IndexFlatIP(embedding_dim)
         self.index.add(self.embeddings.astype('float32'))
-        
         print(f"Successfully added {len(documents)} documents. Total documents: {len(self.documents)}")
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
-        """Search for similar documents."""
+        """Search for similar documents using local SentenceTransformer."""
         if not self.documents or self.index is None or self.model is None:
             return []
-        
         try:
-            # Generate query embedding
             query_embedding = self.model.encode([query])
-            
-            # Search
+            import numpy as np
             scores, indices = self.index.search(query_embedding.astype('float32'), k)
-            
-            # Return results
             results = []
             for i, idx in enumerate(indices[0]):
                 if idx < len(self.documents):
@@ -610,7 +618,6 @@ class VectorStore:
                         'metadata': self.documents[idx].get('metadata', {}),
                         'score': float(scores[0][i])
                     })
-            
             return results
         except Exception as e:
             print(f"Error during search: {e}")
@@ -751,10 +758,22 @@ class RAGSystem:
             return self.file_handler.text_processor.get_all_images()
         return {}
 
-    def search_images_semantically(self, query: str, top_k: int = 3):
-        """Search for images based on semantic similarity to the query."""
-        if hasattr(self.file_handler, 'text_processor'):
-            return self.file_handler.text_processor.search_images_semantically(query, top_k)
+    def search_images_semantically(self, query: str, top_k: int = 3, min_score: int = 180):
+        """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header. Only return if score is high enough."""
+        query_lc = query.lower()
+        best_score = -1
+        best_img_info = None
+        for img_info in self.file_handler.text_processor.extracted_images.values():
+            ocr_header = img_info.get('ocr_header', '').lower()
+            ocr_text = img_info.get('ocr_text', '').lower()
+            header_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_header)
+            body_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_text)
+            combined_score = header_score * 2 + body_score  # Prioritize header
+            if combined_score > best_score:
+                best_score = combined_score
+                best_img_info = img_info
+        if best_img_info and best_score >= min_score:
+            return [best_img_info]
         return []
 
     def is_semantic_image_request(self, question: str):
