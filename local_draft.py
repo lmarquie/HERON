@@ -2,18 +2,32 @@
 import os
 import faiss
 import fitz  # PyMuPDF
+import time
 from typing import List, Dict
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
 import requests
 import numpy as np
+from config import OPENAI_API_KEY
 from PIL import Image
 import io
 import base64
 import cv2
 import pytesseract
 from difflib import SequenceMatcher
-from config import OPENAI_API_KEY
+import openai
+
+### =================== Input Interface =================== ###
+class InputInterface:
+    def __init__(self):
+        self.download_dir = "local_documents"
+        os.makedirs(self.download_dir, exist_ok=True)
+
+    def get_user_question(self) -> str:
+        return input("\nEnter your question: ").strip()
+
+    def display_answer(self, answer: str):
+        print("\nAnswer:", answer)
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
@@ -27,6 +41,7 @@ class TextProcessor:
     def extract_text_from_pdf(self, pdf_path: str, enable_image_processing: bool = False) -> str:
         """Extract text and images from PDF, detect tables/graphs, and run OCR on each region (header + body)."""
         try:
+            print(f"Processing PDF: {pdf_path}")
             doc = fitz.open(pdf_path)
             text_content = []
             
@@ -47,6 +62,7 @@ class TextProcessor:
                     
                     # Check image size to prevent processing extremely large images
                     if len(img_array) > 25 * 1024 * 1024:  # Reduced to 25MB limit
+                        print(f"Warning: Page {page_num + 1} image too large ({len(img_array) / 1024 / 1024:.1f}MB), skipping image processing")
                         continue
                     
                     # Add error handling for large PNG chunks
@@ -75,12 +91,16 @@ class TextProcessor:
                                     'ocr_header': ocr_header,
                                 }
                     except Exception as e:
+                        print(f"Warning: Could not process images on page {page_num + 1}: {e}")
+                        # Continue processing text even if image processing fails
                         continue
                         
             doc.close()
             final_content = "\n".join(text_content)
+            print(f"PDF processing completed. Total content length: {len(final_content)}")
             return final_content
         except Exception as e:
+            print(f"Error extracting text from PDF: {str(e)}")
             return f"Error extracting text from PDF: {str(e)}"
 
     def detect_tables_and_graphs(self, img_cv):
@@ -107,6 +127,7 @@ class TextProcessor:
             text = pytesseract.image_to_string(img_rgb)
             return text.strip()
         except Exception as e:
+            print(f"OCR failed: {e}")
             return ""
 
     def ensure_images_analyzed(self):
@@ -128,6 +149,7 @@ class TextProcessor:
                             os.remove(img_path)
                 self.images_analyzed.add(img_key)
             except Exception as e:
+                print(f"Error analyzing image {img_key}: {e}")
                 continue
 
     def analyze_image_detailed(self, img_pil):
@@ -190,6 +212,7 @@ class TextProcessor:
                 return None
                 
         except Exception as e:
+            print(f"Error analyzing image: {e}")
             return None
 
     def analyze_image_simple(self, img_pil):
@@ -246,6 +269,7 @@ class TextProcessor:
                 return None
                 
         except Exception as e:
+            print(f"Error analyzing image: {e}")
             return None
 
     def fuzzy_score(self, a, b):
@@ -270,6 +294,19 @@ class TextProcessor:
             return [best_img_info]
         return []
 
+    def cosine_similarity(self, vec1, vec2):
+        """Calculate cosine similarity between two vectors."""
+        try:
+            vec1 = np.array(vec1)
+            vec2 = np.array(vec2)
+            dot_product = np.dot(vec1, vec2)
+            norm1 = np.linalg.norm(vec1)
+            norm2 = np.linalg.norm(vec2)
+            return dot_product / (norm1 * norm2)
+        except Exception as e:
+            print(f"Error calculating cosine similarity: {e}")
+            return 0.0
+
     def is_blank_image(self, img_pil):
         """Check if image is mostly blank/white space."""
         try:
@@ -291,6 +328,7 @@ class TextProcessor:
             return non_white_percentage < 5
             
         except Exception as e:
+            print(f"Error checking if image is blank: {e}")
             return False  # If we can't check, assume it's not blank
 
     def get_image_path(self, page_num, image_num=None):
@@ -371,13 +409,120 @@ class TextProcessor:
                             })
                 
             except Exception as e:
+                print(f"Error processing {pdf_path}: {str(e)}")
                 continue
         
         return documents
 
 ### =================== Document Loading =================== ###
-class WebFileHandler:
+class LocalFileHandler:
     def __init__(self):
+        self.text_processor = TextProcessor()
+
+    def select_folder_interactive(self):
+        """Allow user to select a folder interactively"""
+        print("\nPlease select a folder containing your documents:")
+        print("1. Enter folder path manually")
+        print("2. Browse current directory")
+        
+        choice = input("Enter your choice (1-2): ")
+        
+        if choice == "1":
+            folder_path = input("Enter the folder path: ").strip()
+            if os.path.exists(folder_path) and os.path.isdir(folder_path):
+                return {
+                    'name': os.path.basename(folder_path),
+                    'path': folder_path
+                }
+            else:
+                print("Invalid folder path. Please try again.")
+                return self.select_folder_interactive()
+        
+        elif choice == "2":
+            current_dir = os.getcwd()
+            print(f"\nCurrent directory: {current_dir}")
+            print("\nAvailable folders:")
+            
+            folders = [item for item in os.listdir(current_dir) 
+                      if os.path.isdir(os.path.join(current_dir, item))]
+            
+            if not folders:
+                print("No folders found in current directory.")
+                return self.select_folder_interactive()
+            
+            for i, folder in enumerate(folders, 1):
+                print(f"{i}. {folder}")
+            
+            try:
+                folder_choice = int(input(f"\nSelect folder (1-{len(folders)}): "))
+                if 1 <= folder_choice <= len(folders):
+                    selected_folder = folders[folder_choice - 1]
+                    folder_path = os.path.join(current_dir, selected_folder)
+                    return {
+                        'name': selected_folder,
+                        'path': folder_path
+                    }
+                else:
+                    print("Invalid choice. Please try again.")
+                    return self.select_folder_interactive()
+            except ValueError:
+                print("Invalid input. Please try again.")
+                return self.select_folder_interactive()
+        
+        else:
+            print("Invalid choice. Please try again.")
+            return self.select_folder_interactive()
+
+    def process_selected_folder(self, folder_path):
+        """Process all files in the selected folder using TextProcessor with image recognition"""
+        try:
+            print(f"\nScanning folder: {folder_path}")
+            files = []
+            for item in os.listdir(folder_path):
+                full_path = os.path.join(folder_path, item)
+                if os.path.isfile(full_path):
+                    files.append({
+                        'name': item,
+                        'path': full_path
+                    })
+
+            if not files:
+                print("No files found in the selected folder.")
+                return []
+
+            print(f"\nFound {len(files)} files. Processing with image recognition...")
+            documents = []
+            for file in files:
+                if file['name'].endswith(('.txt', '.pdf')):
+                    try:
+                        if file['name'].endswith('.pdf'):
+                            # Use TextProcessor for PDF processing with image recognition
+                            content = self.text_processor.extract_text_from_pdf(file['path'])
+                        else:
+                            # For text files, use simple text extraction
+                            with open(file['path'], 'r', encoding='utf-8') as f:
+                                content = f.read()
+
+                        documents.append({
+                            'text': content,
+                            'metadata': {
+                                'source': file['name'],
+                                'path': file['path'],
+                                'date': datetime.now().isoformat()
+                            }
+                        })
+                        print(f"✓ Processed: {file['name']}")
+                    except Exception as e:
+                        print(f" Error processing {file['name']}: {str(e)}")
+
+            return documents
+        except Exception as e:
+            print(f" Error processing folder: {str(e)}")
+            return []
+
+class WebFileHandler(LocalFileHandler):
+    def __init__(self):
+        super().__init__()
         self.text_processor = TextProcessor()
         self.saved_pdf_paths = []  # Track saved PDF paths for later image processing
 
@@ -417,7 +562,10 @@ class WebFileHandler:
                                 }
                             })
                 
+                # Don't remove temp file - keep it for potential image processing
+                
             except Exception as e:
+                print(f"Error processing {uploaded_file.name}: {str(e)}")
                 continue
         
         return documents
@@ -438,6 +586,7 @@ class VectorStore:
         try:
             self.model = SentenceTransformer('all-MiniLM-L6-v2')
         except Exception as e:
+            print(f"Error loading model: {e}")
             self.model = None
 
     def add_documents(self, documents: List[Dict]):
@@ -445,20 +594,27 @@ class VectorStore:
         if not documents:
             return
         if self.model is None:
+            print("Error: No embedding model available")
             return
+        print(f"Adding {len(documents)} documents to vector store...")
         texts = [doc['text'] for doc in documents]
+        print("Converting text to vector embeddings...")
         try:
             embeddings = self.model.encode(texts, show_progress_bar=True)
         except Exception as e:
+            print(f"Error generating embeddings: {e}")
             return
+        import numpy as np
         self.documents.extend(documents)
         if self.embeddings is None:
             self.embeddings = embeddings
         else:
             self.embeddings = np.vstack([self.embeddings, embeddings])
         embedding_dim = self.embeddings.shape[1]
+        import faiss
         self.index = faiss.IndexFlatIP(embedding_dim)
         self.index.add(self.embeddings.astype('float32'))
+        print(f"Successfully added {len(documents)} documents. Total documents: {len(self.documents)}")
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
         """Search for similar documents using local SentenceTransformer."""
@@ -466,6 +622,7 @@ class VectorStore:
             return []
         try:
             query_embedding = self.model.encode([query])
+            import numpy as np
             scores, indices = self.index.search(query_embedding.astype('float32'), k)
             results = []
             for i, idx in enumerate(indices[0]):
@@ -477,6 +634,7 @@ class VectorStore:
                     })
             return results
         except Exception as e:
+            print(f"Error during search: {e}")
             return []
 
 ### =================== Claude Handler =================== ###
@@ -585,7 +743,7 @@ class QuestionHandler:
 ### =================== Main RAG System =================== ###
 class RAGSystem:
     def __init__(self, settings=None, is_web=False, use_vision_api=True):
-        self.file_handler = WebFileHandler()
+        self.file_handler = WebFileHandler() if is_web else LocalFileHandler()
         self.vector_store = VectorStore()
         self.question_handler = QuestionHandler(self.vector_store)
         self.is_web = is_web
@@ -694,10 +852,13 @@ class RAGSystem:
     def process_images_on_demand(self, pdf_path: str):
         """Process images from a specific PDF only when needed."""
         try:
+            print(f"Processing images on demand for: {pdf_path}")
             # Process images with the text processor
             self.file_handler.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
+            print("Image processing completed")
             return True
         except Exception as e:
+            print(f"Error processing images on demand: {e}")
             return False
 
     def is_image_related_question(self, question: str) -> bool:
@@ -725,6 +886,6 @@ class RAGSystem:
                 return saved_paths[0]
         return None
 
-    def run(self):
-        # This method is now empty as it's not needed for Streamlit
-        pass 
+if __name__ == "__main__": 
+    rag_system = RAGSystem()
+    rag_system.run() 
