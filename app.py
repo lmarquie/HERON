@@ -19,6 +19,7 @@ def initialize_rag_system():
     if 'rag_system' not in st.session_state:
         st.session_state.rag_system = RAGSystem(is_web=True, use_vision_api=False)
         st.session_state.documents_loaded = False
+        st.session_state.answer_given = False  # Track if an answer has been given
 
 # Simple answer generation
 def generate_answer(question):
@@ -225,60 +226,59 @@ if conversation_history:
                 st.write(f"**Answer:** {conv['answer']}")
 
 # Current question input
-if not conversation_history:
-    # First question
-    question = st.text_input("Ask a question about your documents:")
-    
-    if st.button("Get Answer", type="primary"):
-        if st.session_state.documents_loaded:
-            with st.spinner("Processing..."):
-                answer = generate_answer(question)
-                # If answer is a list (image info), display images
-                if isinstance(answer, list):
-                    if answer:
-                        img_info = answer[0]  # Only show the most relevant image
-                        if os.path.exists(img_info['path']):
-                            # Display image with enhanced caption
-                            caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
-                            if 'description' in img_info:
-                                caption += f" - {img_info['description']}"
-                            if 'similarity_score' in img_info:
-                                caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                            
-                            st.image(img_info['path'], caption=caption, use_container_width=True)
-                    else:
-                        st.write("No images were found in the uploaded documents.")
+question = st.text_input("Ask a question about your documents:")
+
+if st.button("Get Answer", type="primary"):
+    if st.session_state.documents_loaded:
+        with st.spinner("Processing..."):
+            answer = generate_answer(question)
+            # If answer is a list (image info), display images
+            if isinstance(answer, list):
+                if answer:
+                    img_info = answer[0]  # Only show the most relevant image
+                    if os.path.exists(img_info['path']):
+                        # Display image with enhanced caption
+                        caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                        if 'description' in img_info:
+                            caption += f" - {img_info['description']}"
+                        if 'similarity_score' in img_info:
+                            caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                        
+                        st.image(img_info['path'], caption=caption, use_container_width=True)
                 else:
-                    st.write(answer)
-        else:
-            st.error("Please upload documents first")
-else:
-    # Follow-up question
+                    st.write("No images were found in the uploaded documents.")
+            else:
+                st.write(answer)
+            # Set flag to show follow-up input after answer is given
+            st.session_state.answer_given = True
+    else:
+        st.error("Please upload documents first")
+
+# Only show follow-up input after an answer has been given
+if st.session_state.get('answer_given', False):
+    st.markdown("---")
     follow_up_question = st.text_input("Ask a follow-up question:")
     
     if st.button("Ask Follow-up", type="primary"):
-        if st.session_state.documents_loaded:
-            with st.spinner("Processing follow-up..."):
-                follow_up_answer = generate_follow_up(follow_up_question)
-                # If answer is a list (image info), display images
-                if isinstance(follow_up_answer, list):
-                    if follow_up_answer:
-                        img_info = follow_up_answer[0]  # Only show the most relevant image
-                        if os.path.exists(img_info['path']):
-                            # Display image with enhanced caption
-                            caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
-                            if 'description' in img_info:
-                                caption += f" - {img_info['description']}"
-                            if 'similarity_score' in img_info:
-                                caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                            
-                            st.image(img_info['path'], caption=caption, use_container_width=True)
-                    else:
-                        st.write("No images were found in the uploaded documents.")
+        with st.spinner("Processing follow-up..."):
+            follow_up_answer = generate_follow_up(follow_up_question)
+            # If answer is a list (image info), display images
+            if isinstance(follow_up_answer, list):
+                if follow_up_answer:
+                    img_info = follow_up_answer[0]  # Only show the most relevant image
+                    if os.path.exists(img_info['path']):
+                        # Display image with enhanced caption
+                        caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                        if 'description' in img_info:
+                            caption += f" - {img_info['description']}"
+                        if 'similarity_score' in img_info:
+                            caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                        
+                        st.image(img_info['path'], caption=caption, use_container_width=True)
                 else:
-                    st.write(follow_up_answer)
-        else:
-            st.error("Please upload documents first")
+                    st.write("No images were found in the uploaded documents.")
+            else:
+                st.write(follow_up_answer)
 
 # Control buttons
 st.markdown("---")
