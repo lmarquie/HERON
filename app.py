@@ -26,6 +26,14 @@ def generate_answer(question):
         if not st.session_state.documents_loaded:
             return "No documents loaded. Please upload documents first."
         
+        # Check if this is an image-related question that requires image processing
+        if st.session_state.rag_system.is_image_related_question(question):
+            # Process images on demand for the relevant PDF
+            pdf_path = st.session_state.rag_system.get_pdf_path_for_question(question)
+            if pdf_path:
+                with st.spinner("Processing images for your question..."):
+                    st.session_state.rag_system.process_images_on_demand(pdf_path)
+        
         # Check if user is asking to see images
         if any(word in question.lower() for word in ['show', 'display', 'image', 'picture', 'chart', 'graph']):
             return handle_image_request(question)
@@ -75,6 +83,14 @@ def generate_follow_up(follow_up_question):
     try:
         if not st.session_state.documents_loaded:
             return "No documents loaded. Please upload documents first."
+        
+        # Check if this is an image-related question that requires image processing
+        if st.session_state.rag_system.is_image_related_question(follow_up_question):
+            # Process images on demand for the relevant PDF
+            pdf_path = st.session_state.rag_system.get_pdf_path_for_question(follow_up_question)
+            if pdf_path:
+                with st.spinner("Processing images for your question..."):
+                    st.session_state.rag_system.process_images_on_demand(pdf_path)
         
         # Check if user is asking to see images
         if any(word in follow_up_question.lower() for word in ['show', 'display', 'image', 'picture', 'chart', 'graph']):
@@ -270,6 +286,27 @@ st.markdown("---")
 if st.button("Reset"):
     # Clear session state and conversation history
     st.session_state.rag_system.clear_conversation_history()
+    
+    # Clean up temporary PDF files
+    if hasattr(st.session_state.rag_system.file_handler, 'get_saved_pdf_paths'):
+        saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
+        for pdf_path in saved_paths:
+            if os.path.exists(pdf_path):
+                try:
+                    os.remove(pdf_path)
+                    print(f"Cleaned up: {pdf_path}")
+                except Exception as e:
+                    print(f"Could not remove {pdf_path}: {e}")
+    
+    # Clean up image files
+    if os.path.exists("images"):
+        import shutil
+        try:
+            shutil.rmtree("images")
+            print("Cleaned up images directory")
+        except Exception as e:
+            print(f"Could not clean up images directory: {e}")
+    
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
