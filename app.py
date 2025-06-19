@@ -225,41 +225,38 @@ if conversation_history:
             else:
                 st.write(f"**Answer:** {conv['answer']}")
 
-# Current question input
-question = st.text_input("Ask a question about your documents:")
-
-if st.button("Get Answer", type="primary"):
-    if st.session_state.documents_loaded:
-        with st.spinner("Processing..."):
-            answer = generate_answer(question)
-            # If answer is a list (image info), display images
-            if isinstance(answer, list):
-                if answer:
-                    img_info = answer[0]  # Only show the most relevant image
-                    if os.path.exists(img_info['path']):
-                        # Display image with enhanced caption
-                        caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
-                        if 'description' in img_info:
-                            caption += f" - {img_info['description']}"
-                        if 'similarity_score' in img_info:
-                            caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                        
-                        st.image(img_info['path'], caption=caption, use_container_width=True)
+# Show main question input only if there is no conversation history
+if not conversation_history:
+    question = st.text_input("Ask a question about your documents:")
+    if st.button("Get Answer", type="primary"):
+        if st.session_state.documents_loaded:
+            with st.spinner("Processing..."):
+                answer = generate_answer(question)
+                # If answer is a list (image info), display images
+                if isinstance(answer, list):
+                    if answer:
+                        img_info = answer[0]  # Only show the most relevant image
+                        if os.path.exists(img_info['path']):
+                            # Display image with enhanced caption
+                            caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                            if 'description' in img_info:
+                                caption += f" - {img_info['description']}"
+                            if 'similarity_score' in img_info:
+                                caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                            
+                            st.image(img_info['path'], caption=caption, use_container_width=True)
+                    else:
+                        st.write("No images were found in the uploaded documents.")
                 else:
-                    st.write("No images were found in the uploaded documents.")
-            else:
-                st.write(answer)
-            # Set flag to show follow-up input after answer is given
+                    st.write(answer)
             st.session_state.answer_given = True
-    else:
-        st.error("Please upload documents first")
-
-# Only show follow-up input after an answer has been given, and only once after the last expander
-if st.session_state.get('answer_given', False):
+        else:
+            st.error("Please upload documents first")
+# Show follow-up input only if there is conversation history
+if conversation_history:
     st.markdown("---")
     follow_up_key = f"followup_{len(conversation_history)}"
     follow_up_question = st.text_input("Ask a follow-up question:", key=follow_up_key)
-    
     if st.button("Ask Follow-up", type="primary", key=f"followup_btn_{len(conversation_history)}"):
         with st.spinner("Processing follow-up..."):
             follow_up_answer = generate_follow_up(follow_up_question)
