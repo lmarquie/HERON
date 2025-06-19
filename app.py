@@ -209,7 +209,7 @@ with st.sidebar:
             st.info("Documents already loaded. Upload new files to replace them.")
 
 # Main content
-st.title("HERON")
+# st.title("HERON")
 
 # Display conversation history using logic layer
 conversation_history = st.session_state.rag_system.get_conversation_history()
