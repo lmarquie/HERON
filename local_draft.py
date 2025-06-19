@@ -375,9 +375,8 @@ class TextProcessor:
         return documents
 
 ### =================== Document Loading =================== ###
-class WebFileHandler(LocalFileHandler):
+class WebFileHandler:
     def __init__(self):
-        super().__init__()
         self.text_processor = TextProcessor()
         self.saved_pdf_paths = []  # Track saved PDF paths for later image processing
 
