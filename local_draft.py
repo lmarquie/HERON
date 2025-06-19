@@ -12,6 +12,7 @@ from config import OPENAI_API_KEY
 from PIL import Image
 import io
 import base64
+import cv2
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -35,39 +36,37 @@ class TextProcessor:
         self.images_analyzed = set()  # Track which images have been analyzed
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract text and images from PDF - fast, no Vision API analysis here."""
+        """Extract text and images from PDF, and detect tables/graphs using OpenCV (no AI)."""
         try:
             print(f"Processing PDF: {pdf_path}")
             doc = fitz.open(pdf_path)
             text_content = []
-            image_content = []
             os.makedirs("images", exist_ok=True)
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
                 text = page.get_text()
                 text_content.append(f"Page {page_num + 1}: {text}")
-                image_list = page.get_images()
-                for img_index, img in enumerate(image_list):
-                    try:
-                        xref = img[0]
-                        pix = fitz.Pixmap(doc, xref)
-                        if pix.n - pix.alpha < 4:  # GRAY or RGB
-                            img_data = pix.tobytes("png")
-                            img_pil = Image.open(io.BytesIO(img_data))
-                            if not self.is_blank_image(img_pil):
-                                img_filename = f"page_{page_num + 1}_image_{img_index + 1}.png"
-                                img_path = os.path.join("images", img_filename)
-                                img_pil.save(img_path)
-                                img_key = f"page_{page_num + 1}_image_{img_index + 1}"
-                                self.extracted_images[img_key] = {
-                                    'path': img_path,
-                                    'page': page_num + 1,
-                                    'image_num': img_index + 1
-                                }
-                        pix = None
-                    except Exception as e:
-                        print(f"Error processing image on page {page_num + 1}: {e}")
-                        continue
+
+                # Render page as image
+                pix = page.get_pixmap(dpi=200)
+                img_data = pix.tobytes("png")
+                img_array = np.frombuffer(img_data, np.uint8)
+                img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                if img_cv is not None:
+                    # Detect tables/graphs (rectangles, line-dense regions)
+                    detected_regions = self.detect_tables_and_graphs(img_cv)
+                    for idx, (x, y, w, h) in enumerate(detected_regions):
+                        crop = img_cv[y:y+h, x:x+w]
+                        img_filename = f"page_{page_num + 1}_detected_{idx + 1}.png"
+                        img_path = os.path.join("images", img_filename)
+                        cv2.imwrite(img_path, crop)
+                        img_key = f"page_{page_num + 1}_detected_{idx + 1}"
+                        self.extracted_images[img_key] = {
+                            'path': img_path,
+                            'page': page_num + 1,
+                            'image_num': idx + 1,
+                            'description': 'Detected table/graph region (OpenCV)',
+                        }
             doc.close()
             final_content = "\n".join(text_content)
             print(f"PDF processing completed. Total content length: {len(final_content)}")
@@ -75,6 +74,22 @@ class TextProcessor:
         except Exception as e:
             print(f"Error extracting text from PDF: {str(e)}")
             return f"Error extracting text from PDF: {str(e)}"
+
+    def detect_tables_and_graphs(self, img_cv):
+        """Detect likely tables/graphs in a page image using OpenCV (returns list of bounding boxes)."""
+        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blur, 50, 150, apertureSize=3)
+        # Find contours
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        regions = []
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            # Heuristic: Only keep large regions (likely tables/graphs)
+            if w > 100 and h > 60 and w*h > 10000:
+                regions.append((x, y, w, h))
+        # Optionally, merge overlapping/close rectangles here
+        return regions
 
     def ensure_images_analyzed(self):
         """Analyze all images that have not yet been analyzed with Vision API."""
