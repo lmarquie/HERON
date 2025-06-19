@@ -10,7 +10,6 @@ from datetime import datetime
 # Set page config
 st.set_page_config(
     page_title="HERON",
-    page_icon="🦅",
     layout="wide"
 )
 
@@ -18,9 +17,7 @@ st.set_page_config(
 st.markdown(
     """
     <div style='text-align: center; margin-bottom: 1.5em;'>
-        <span style='font-size: 3.5rem; color: #1f77b4;'>🦅</span>
         <h1 style='margin-bottom: 0; color: #1f77b4; font-family: "Segoe UI", "Arial", sans-serif;'>HERON</h1>
-        <div style='font-size: 1.2rem; color: #555;'>AI-powered Document Analysis</div>
     </div>
     """,
     unsafe_allow_html=True
