@@ -14,79 +14,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for modern, clean styling
-st.markdown("""
-<style>
-    .main-header {
-        text-align: center;
-        font-size: 2.5rem;
-        font-weight: 300;
-        color: #1e3a8a;
-        margin-bottom: 2rem;
-        letter-spacing: 2px;
-    }
-    
-    .sidebar-header {
-        background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
-        padding: 1.5rem;
-        border-radius: 8px;
-        color: white;
-        text-align: center;
-        margin-bottom: 1.5rem;
-        font-weight: 500;
-    }
-    
-    .upload-section {
-        background: #f8fafc;
-        padding: 1.5rem;
-        border-radius: 8px;
-        border: 1px solid #e2e8f0;
-        margin-bottom: 1rem;
-    }
-    
-    .conversation-box {
-        background: #ffffff;
-        padding: 1.5rem;
-        border-radius: 8px;
-        border: 1px solid #e2e8f0;
-        margin-bottom: 1rem;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-    
-    .control-buttons {
-        text-align: center;
-        margin-top: 2rem;
-    }
-    
-    .stButton > button {
-        background: #3b82f6;
-        color: white;
-        border: none;
-        border-radius: 6px;
-        padding: 0.75rem 2rem;
-        font-weight: 500;
-        transition: all 0.2s ease;
-        margin: 0.5rem;
-    }
-    
-    .stButton > button:hover {
-        background: #2563eb;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-    }
-    
-    .stTextInput > div > div > input {
-        border-radius: 6px;
-        border: 1px solid #d1d5db;
-    }
-    
-    .stTextInput > div > div > input:focus {
-        border-color: #3b82f6;
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # Initialize RAG system
 def initialize_rag_system():
     if 'rag_system' not in st.session_state:
@@ -223,11 +150,8 @@ def export_conversation_to_pdf():
 # Main app
 initialize_rag_system()
 
-# Styled sidebar
+# Simple sidebar
 with st.sidebar:
-    st.markdown('<div class="sidebar-header">HERON AI</div>', unsafe_allow_html=True)
-    
-    st.markdown('<div class="upload-section">', unsafe_allow_html=True)
     st.header("Upload Documents")
     
     uploaded_files = st.file_uploader(
@@ -242,15 +166,13 @@ with st.sidebar:
             st.session_state.documents_loaded = True
         else:
             st.error("Failed to process files")
-    st.markdown('</div>', unsafe_allow_html=True)
 
-# Main content with clean header
-st.markdown('<h1 class="main-header">HERON</h1>', unsafe_allow_html=True)
+# Main content
+st.title("HERON")
 
 # Display conversation history using logic layer
 conversation_history = st.session_state.rag_system.get_conversation_history()
 if conversation_history:
-    st.markdown('<div class="conversation-box">', unsafe_allow_html=True)
     st.subheader("Conversation History")
     for i, conv in enumerate(conversation_history):
         with st.expander(f"Q{i+1}: {conv['question'][:50]}..."):
@@ -266,12 +188,10 @@ if conversation_history:
                     st.write("No images were found in the uploaded documents.")
             else:
                 st.write(f"**Answer:** {conv['answer']}")
-    st.markdown('</div>', unsafe_allow_html=True)
 
 # Current question input
 if not conversation_history:
     # First question
-    st.markdown('<div class="conversation-box">', unsafe_allow_html=True)
     question = st.text_input("Ask a question about your documents:")
     
     if st.button("Get Answer", type="primary"):
@@ -292,10 +212,8 @@ if not conversation_history:
                     st.rerun()  # Only rerun for text answers, not images
         else:
             st.error("Please upload documents first")
-    st.markdown('</div>', unsafe_allow_html=True)
 else:
     # Follow-up question
-    st.markdown('<div class="conversation-box">', unsafe_allow_html=True)
     follow_up_question = st.text_input("Ask a follow-up question:")
     
     if st.button("Ask Follow-up", type="primary"):
@@ -316,10 +234,8 @@ else:
                     st.rerun()  # Only rerun for text answers, not images
         else:
             st.error("Please upload documents first")
-    st.markdown('</div>', unsafe_allow_html=True)
 
 # Control buttons
-st.markdown('<div class="control-buttons">', unsafe_allow_html=True)
 st.markdown("---")
 
 if st.button("Reset"):
@@ -344,6 +260,4 @@ if st.button("Export PDF"):
                 mime="application/pdf"
             )
     else:
-        st.warning("No conversation to export")
-
-st.markdown('</div>', unsafe_allow_html=True) 
+        st.warning("No conversation to export") 
