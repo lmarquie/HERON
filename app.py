@@ -165,7 +165,8 @@ with st.sidebar:
     uploaded_files = st.file_uploader(
         "Upload PDF files",
         type=['pdf'],
-        accept_multiple_files=True
+        accept_multiple_files=True,
+        key="pdf_uploader"  # Add stable key to prevent reruns
     )
     
     if uploaded_files:
@@ -233,7 +234,6 @@ if not conversation_history:
                         st.write("No images were found in the uploaded documents.")
                 else:
                     st.write(answer)
-                    st.rerun()  # Only rerun for text answers, not images
         else:
             st.error("Please upload documents first")
 else:
@@ -261,7 +261,6 @@ else:
                         st.write("No images were found in the uploaded documents.")
                 else:
                     st.write(follow_up_answer)
-                    st.rerun()  # Only rerun for text answers, not images
         else:
             st.error("Please upload documents first")
 
