@@ -254,12 +254,13 @@ if st.button("Get Answer", type="primary"):
     else:
         st.error("Please upload documents first")
 
-# Only show follow-up input after an answer has been given
+# Only show follow-up input after an answer has been given, and only once after the last expander
 if st.session_state.get('answer_given', False):
     st.markdown("---")
-    follow_up_question = st.text_input("Ask a follow-up question:")
+    follow_up_key = f"followup_{len(conversation_history)}"
+    follow_up_question = st.text_input("Ask a follow-up question:", key=follow_up_key)
     
-    if st.button("Ask Follow-up", type="primary"):
+    if st.button("Ask Follow-up", type="primary", key=f"followup_btn_{len(conversation_history)}"):
         with st.spinner("Processing follow-up..."):
             follow_up_answer = generate_follow_up(follow_up_question)
             # If answer is a list (image info), display images
