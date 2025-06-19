@@ -138,7 +138,7 @@ def export_conversation_to_pdf():
             # Answer
             if isinstance(conv['answer'], list):
                 # Handle image answers
-                answer_text = f"Found {len(conv['answer'])} image(s)"
+                answer_text = "Found 1 image" if conv['answer'] else "No images found"
                 story.append(Paragraph(f"<b>A{i+1}:</b> {answer_text}", question_style))
             else:
                 # Handle text answers
@@ -188,17 +188,16 @@ if conversation_history:
             # If the answer is a list (image info), display images
             if isinstance(conv['answer'], list):
                 if conv['answer']:
-                    st.write(f"Found {len(conv['answer'])} image(s):")
-                    for img_info in conv['answer']:
-                        if os.path.exists(img_info['path']):
-                            # Display image with enhanced caption
-                            caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
-                            if 'description' in img_info:
-                                caption += f" - {img_info['description']}"
-                            if 'similarity_score' in img_info:
-                                caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                            
-                            st.image(img_info['path'], caption=caption, use_container_width=True)
+                    img_info = conv['answer'][0]  # Only show the most relevant image
+                    if os.path.exists(img_info['path']):
+                        # Display image with enhanced caption
+                        caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                        if 'description' in img_info:
+                            caption += f" - {img_info['description']}"
+                        if 'similarity_score' in img_info:
+                            caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                        
+                        st.image(img_info['path'], caption=caption, use_container_width=True)
                 else:
                     st.write("No images were found in the uploaded documents.")
             else:
@@ -216,17 +215,16 @@ if not conversation_history:
                 # If answer is a list (image info), display images
                 if isinstance(answer, list):
                     if answer:
-                        st.write(f"Found {len(answer)} image(s):")
-                        for img_info in answer:
-                            if os.path.exists(img_info['path']):
-                                # Display image with enhanced caption
-                                caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
-                                if 'description' in img_info:
-                                    caption += f" - {img_info['description']}"
-                                if 'similarity_score' in img_info:
-                                    caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                                
-                                st.image(img_info['path'], caption=caption, use_container_width=True)
+                        img_info = answer[0]  # Only show the most relevant image
+                        if os.path.exists(img_info['path']):
+                            # Display image with enhanced caption
+                            caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                            if 'description' in img_info:
+                                caption += f" - {img_info['description']}"
+                            if 'similarity_score' in img_info:
+                                caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                            
+                            st.image(img_info['path'], caption=caption, use_container_width=True)
                     else:
                         st.write("No images were found in the uploaded documents.")
                 else:
@@ -245,17 +243,16 @@ else:
                 # If answer is a list (image info), display images
                 if isinstance(follow_up_answer, list):
                     if follow_up_answer:
-                        st.write(f"Found {len(follow_up_answer)} image(s):")
-                        for img_info in follow_up_answer:
-                            if os.path.exists(img_info['path']):
-                                # Display image with enhanced caption
-                                caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
-                                if 'description' in img_info:
-                                    caption += f" - {img_info['description']}"
-                                if 'similarity_score' in img_info:
-                                    caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                                
-                                st.image(img_info['path'], caption=caption, use_container_width=True)
+                        img_info = follow_up_answer[0]  # Only show the most relevant image
+                        if os.path.exists(img_info['path']):
+                            # Display image with enhanced caption
+                            caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                            if 'description' in img_info:
+                                caption += f" - {img_info['description']}"
+                            if 'similarity_score' in img_info:
+                                caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                            
+                            st.image(img_info['path'], caption=caption, use_container_width=True)
                     else:
                         st.write("No images were found in the uploaded documents.")
                 else:
