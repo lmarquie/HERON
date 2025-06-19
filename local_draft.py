@@ -31,7 +31,7 @@ class InputInterface:
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 500, overlap: int = 30):
+    def __init__(self, chunk_size: int = 1500, overlap: int = 30):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.extracted_images = {}  # Store images for display
@@ -550,41 +550,36 @@ class WebFileHandler(LocalFileHandler):
 
 ### =================== Vector Store =================== ###
 class VectorStore:
-    def __init__(self, dimension: int = 1536):
+    def __init__(self, dimension: int = 768):
         self.documents = []
         self.embeddings = None
         self.index = None
         self.chunk_size = 500
         self.chunk_overlap = 50
-        self.dimension = dimension  # OpenAI embedding size
-
-    def get_openai_embeddings(self, texts):
-        """Get embeddings from OpenAI API for a list of texts."""
+        # Restore local embedding model
         try:
-            response = openai.embeddings.create(
-                model="text-embedding-3-small",
-                input=texts,
-                api_key=OPENAI_API_KEY
-            )
-            return [item.embedding for item in response.data]
+            self.model = SentenceTransformer('all-MiniLM-L6-v2')
         except Exception as e:
-            print(f"Error getting OpenAI embeddings: {e}")
-            return None
+            print(f"Error loading model: {e}")
+            self.model = None
 
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store using OpenAI embeddings."""
+        """Add documents to the vector store using local SentenceTransformer."""
         if not documents:
+            return
+        if self.model is None:
+            print("Error: No embedding model available")
             return
         print(f"Adding {len(documents)} documents to vector store...")
         texts = [doc['text'] for doc in documents]
-        print("Requesting OpenAI embeddings...")
-        embeddings = self.get_openai_embeddings(texts)
-        if embeddings is None:
-            print("Error: Could not get embeddings from OpenAI API.")
+        print("Converting text to vector embeddings...")
+        try:
+            embeddings = self.model.encode(texts, show_progress_bar=True)
+        except Exception as e:
+            print(f"Error generating embeddings: {e}")
             return
-        self.documents.extend(documents)
         import numpy as np
-        embeddings = np.array(embeddings)
+        self.documents.extend(documents)
         if self.embeddings is None:
             self.embeddings = embeddings
         else:
@@ -596,15 +591,13 @@ class VectorStore:
         print(f"Successfully added {len(documents)} documents. Total documents: {len(self.documents)}")
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
-        """Search for similar documents using OpenAI embeddings."""
-        if not self.documents or self.index is None:
+        """Search for similar documents using local SentenceTransformer."""
+        if not self.documents or self.index is None or self.model is None:
             return []
         try:
-            query_embedding = self.get_openai_embeddings([query])
-            if query_embedding is None:
-                return []
+            query_embedding = self.model.encode([query])
             import numpy as np
-            scores, indices = self.index.search(np.array(query_embedding).astype('float32'), k)
+            scores, indices = self.index.search(query_embedding.astype('float32'), k)
             results = []
             for i, idx in enumerate(indices[0]):
                 if idx < len(self.documents):
