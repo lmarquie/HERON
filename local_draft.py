@@ -13,6 +13,7 @@ import base64
 import cv2
 import pytesseract
 from difflib import SequenceMatcher
+from config import OPENAI_API_KEY
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
