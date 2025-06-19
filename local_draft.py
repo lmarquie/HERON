@@ -38,57 +38,63 @@ class TextProcessor:
         self.image_descriptions = {}  # Store semantic descriptions for search
         self.images_analyzed = set()  # Track which images have been analyzed
 
-    def extract_text_from_pdf(self, pdf_path: str) -> str:
+    def extract_text_from_pdf(self, pdf_path: str, enable_image_processing: bool = False) -> str:
         """Extract text and images from PDF, detect tables/graphs, and run OCR on each region (header + body)."""
         try:
             print(f"Processing PDF: {pdf_path}")
             doc = fitz.open(pdf_path)
             text_content = []
-            os.makedirs("images", exist_ok=True)
+            
+            if enable_image_processing:
+                os.makedirs("images", exist_ok=True)
+            
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
                 text = page.get_text()
                 text_content.append(f"Page {page_num + 1}: {text}")
 
-                # Render page as image
-                pix = page.get_pixmap(dpi=200)
-                img_data = pix.tobytes("png")
-                img_array = np.frombuffer(img_data, np.uint8)
-                
-                # Check image size to prevent processing extremely large images
-                if len(img_array) > 50 * 1024 * 1024:  # 50MB limit
-                    print(f"Warning: Page {page_num + 1} image too large ({len(img_array) / 1024 / 1024:.1f}MB), skipping image processing")
-                    continue
-                
-                # Add error handling for large PNG chunks
-                try:
-                    img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-                    if img_cv is not None:
-                        detected_regions = self.detect_tables_and_graphs(img_cv)
-                        for idx, (x, y, w, h) in enumerate(detected_regions):
-                            crop = img_cv[y:y+h, x:x+w]
-                            img_filename = f"page_{page_num + 1}_detected_{idx + 1}.png"
-                            img_path = os.path.join("images", img_filename)
-                            cv2.imwrite(img_path, crop)
-                            img_key = f"page_{page_num + 1}_detected_{idx + 1}"
-                            # OCR on the cropped region (body)
-                            ocr_text = self.ocr_image(crop)
-                            # OCR on the header (top 20%)
-                            header_h = max(1, int(h * 0.2))
-                            header_crop = crop[0:header_h, :]
-                            ocr_header = self.ocr_image(header_crop)
-                            self.extracted_images[img_key] = {
-                                'path': img_path,
-                                'page': page_num + 1,
-                                'image_num': idx + 1,
-                                'description': 'Detected table/graph region (OpenCV)',
-                                'ocr_text': ocr_text,
-                                'ocr_header': ocr_header,
-                            }
-                except Exception as e:
-                    print(f"Warning: Could not process images on page {page_num + 1}: {e}")
-                    # Continue processing text even if image processing fails
-                    continue
+                # Only process images if enabled (much faster without this)
+                if enable_image_processing:
+                    # Render page as image with lower DPI for speed
+                    pix = page.get_pixmap(dpi=150)  # Reduced from 200 to 150
+                    img_data = pix.tobytes("png")
+                    img_array = np.frombuffer(img_data, np.uint8)
+                    
+                    # Check image size to prevent processing extremely large images
+                    if len(img_array) > 25 * 1024 * 1024:  # Reduced to 25MB limit
+                        print(f"Warning: Page {page_num + 1} image too large ({len(img_array) / 1024 / 1024:.1f}MB), skipping image processing")
+                        continue
+                    
+                    # Add error handling for large PNG chunks
+                    try:
+                        img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                        if img_cv is not None:
+                            detected_regions = self.detect_tables_and_graphs(img_cv)
+                            for idx, (x, y, w, h) in enumerate(detected_regions):
+                                crop = img_cv[y:y+h, x:x+w]
+                                img_filename = f"page_{page_num + 1}_detected_{idx + 1}.png"
+                                img_path = os.path.join("images", img_filename)
+                                cv2.imwrite(img_path, crop)
+                                img_key = f"page_{page_num + 1}_detected_{idx + 1}"
+                                # OCR on the cropped region (body)
+                                ocr_text = self.ocr_image(crop)
+                                # OCR on the header (top 20%)
+                                header_h = max(1, int(h * 0.2))
+                                header_crop = crop[0:header_h, :]
+                                ocr_header = self.ocr_image(header_crop)
+                                self.extracted_images[img_key] = {
+                                    'path': img_path,
+                                    'page': page_num + 1,
+                                    'image_num': idx + 1,
+                                    'description': 'Detected table/graph region (OpenCV)',
+                                    'ocr_text': ocr_text,
+                                    'ocr_header': ocr_header,
+                                }
+                    except Exception as e:
+                        print(f"Warning: Could not process images on page {page_num + 1}: {e}")
+                        # Continue processing text even if image processing fails
+                        continue
+                        
             doc.close()
             final_content = "\n".join(text_content)
             print(f"PDF processing completed. Total content length: {len(final_content)}")
@@ -518,10 +524,12 @@ class WebFileHandler(LocalFileHandler):
     def __init__(self):
         super().__init__()
         self.text_processor = TextProcessor()
+        self.saved_pdf_paths = []  # Track saved PDF paths for later image processing
 
     def process_uploaded_files(self, uploaded_files):
         """Process files uploaded through Streamlit."""
         documents = []
+        self.saved_pdf_paths = []  # Reset for new uploads
         
         for uploaded_file in uploaded_files:
             try:
@@ -532,8 +540,11 @@ class WebFileHandler(LocalFileHandler):
                 with open(temp_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 
-                # Extract text from PDF
-                text_content = self.text_processor.extract_text_from_pdf(temp_path)
+                # Save the path for later image processing
+                self.saved_pdf_paths.append(temp_path)
+                
+                # Extract text from PDF (disable image processing for speed)
+                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
                 
                 if text_content.strip():
                     # Split into chunks
@@ -551,14 +562,17 @@ class WebFileHandler(LocalFileHandler):
                                 }
                             })
                 
-                # Clean up temp file
-                os.remove(temp_path)
+                # Don't remove temp file - keep it for potential image processing
                 
             except Exception as e:
                 print(f"Error processing {uploaded_file.name}: {str(e)}")
                 continue
         
         return documents
+
+    def get_saved_pdf_paths(self):
+        """Get the paths of saved PDF files for image processing."""
+        return self.saved_pdf_paths
 
 ### =================== Vector Store =================== ###
 class VectorStore:
@@ -834,6 +848,43 @@ class RAGSystem:
     def clear_conversation_history(self):
         """Clear the conversation history"""
         self.conversation_history = []
+
+    def process_images_on_demand(self, pdf_path: str):
+        """Process images from a specific PDF only when needed."""
+        try:
+            print(f"Processing images on demand for: {pdf_path}")
+            # Process images with the text processor
+            self.file_handler.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
+            print("Image processing completed")
+            return True
+        except Exception as e:
+            print(f"Error processing images on demand: {e}")
+            return False
+
+    def is_image_related_question(self, question: str) -> bool:
+        """Check if a question is related to images, charts, graphs, etc."""
+        question_lower = question.lower()
+        
+        # Keywords that suggest image-related questions
+        image_keywords = [
+            'show', 'display', 'image', 'picture', 'chart', 'graph', 'table', 'figure',
+            'diagram', 'visual', 'plot', 'graphic', 'photo', 'screenshot', 'illustration',
+            'revenue chart', 'profit graph', 'sales figure', 'data visualization',
+            'bar chart', 'line graph', 'pie chart', 'scatter plot', 'histogram'
+        ]
+        
+        return any(keyword in question_lower for keyword in image_keywords)
+
+    def get_pdf_path_for_question(self, question: str) -> str:
+        """Get the PDF path that should be processed for an image question."""
+        # Get saved PDF paths from the file handler
+        if hasattr(self.file_handler, 'get_saved_pdf_paths'):
+            saved_paths = self.file_handler.get_saved_pdf_paths()
+            if saved_paths:
+                # For now, return the first PDF
+                # In a more sophisticated version, you could analyze which PDF is most relevant
+                return saved_paths[0]
+        return None
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
