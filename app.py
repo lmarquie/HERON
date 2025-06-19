@@ -107,6 +107,8 @@ def generate_follow_up(follow_up_question):
         # Store in conversation history using logic layer
         st.session_state.rag_system.add_to_conversation_history(follow_up_question, answer, "follow_up")
         
+        st.session_state[follow_up_key] = ""
+        
         return answer
         
     except Exception as e:
@@ -277,6 +279,7 @@ if conversation_history:
                     st.write("No images were found in the uploaded documents.")
             else:
                 st.write(follow_up_answer)
+            st.session_state[follow_up_key] = ""
 
 # Control buttons
 st.markdown("---")
