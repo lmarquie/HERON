@@ -28,10 +28,9 @@ class InputInterface:
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 500, overlap: int = 30, fast_mode: bool = True):
+    def __init__(self, chunk_size: int = 500, overlap: int = 30):
         self.chunk_size = chunk_size
         self.overlap = overlap
-        self.fast_mode = fast_mode
         self.extracted_images = {}  # Store images for display
         self.image_descriptions = {}  # Store semantic descriptions for search
 
@@ -107,22 +106,20 @@ class TextProcessor:
                                     'image_num': img_index + 1
                                 }
                                 
-                                # Only analyze images if not in fast mode
-                                if not self.fast_mode:
-                                    # Enhanced image analysis using Vision API
-                                    img_analysis = self.analyze_image_detailed(img_pil)
-                                    if img_analysis:
-                                        # Store semantic description for search
-                                        self.image_descriptions[img_key] = img_analysis
-                                        image_content.append(f"Page {page_num + 1}, Image {img_index + 1}: {img_analysis}")
-                                    else:
-                                        # If not a figure/graph, remove from extracted images
-                                        if img_key in self.extracted_images:
-                                            del self.extracted_images[img_key]
-                                        # Delete the saved image file
-                                        if os.path.exists(img_path):
-                                            os.remove(img_path)
-                                        continue
+                                # Enhanced image analysis using Vision API
+                                img_analysis = self.analyze_image_detailed(img_pil)
+                                if img_analysis:
+                                    # Store semantic description for search
+                                    self.image_descriptions[img_key] = img_analysis
+                                    image_content.append(f"Page {page_num + 1}, Image {img_index + 1}: {img_analysis}")
+                                else:
+                                    # If not a figure/graph, remove from extracted images
+                                    if img_key in self.extracted_images:
+                                        del self.extracted_images[img_key]
+                                    # Delete the saved image file
+                                    if os.path.exists(img_path):
+                                        os.remove(img_path)
+                                    continue
                         
                         pix = None
                     except Exception as e:
@@ -459,27 +456,6 @@ class TextProcessor:
         
         return documents
 
-    def process_images_on_demand(self):
-        """Process images with Vision API when explicitly requested."""
-        if self.fast_mode and self.extracted_images:
-            print("Processing images with Vision API...")
-            for img_key, img_info in list(self.extracted_images.items()):
-                try:
-                    img_path = img_info['path']
-                    if os.path.exists(img_path):
-                        img_pil = Image.open(img_path)
-                        img_analysis = self.analyze_image_detailed(img_pil)
-                        if img_analysis:
-                            self.image_descriptions[img_key] = img_analysis
-                        else:
-                            # If not a figure/graph, remove from extracted images
-                            del self.extracted_images[img_key]
-                            if os.path.exists(img_path):
-                                os.remove(img_path)
-                except Exception as e:
-                    print(f"Error processing image {img_key}: {e}")
-                    continue
-
 ### =================== Document Loading =================== ###
 class LocalFileHandler:
     def __init__(self):
@@ -589,7 +565,7 @@ class LocalFileHandler:
 class WebFileHandler(LocalFileHandler):
     def __init__(self):
         super().__init__()
-        self.text_processor = TextProcessor(fast_mode=True)  # Use fast mode for faster uploads
+        self.text_processor = TextProcessor()  # Use default behavior (analyze images during upload)
 
     def process_uploaded_files(self, uploaded_files):
         """Process files uploaded through Streamlit."""
@@ -851,9 +827,6 @@ class RAGSystem:
     def search_images_semantically(self, query: str, top_k: int = 3):
         """Search for images based on semantic similarity to the query."""
         if hasattr(self.file_handler, 'text_processor'):
-            # Process images on demand if in fast mode
-            if self.file_handler.text_processor.fast_mode:
-                self.file_handler.text_processor.process_images_on_demand()
             return self.file_handler.text_processor.search_images_semantically(query, top_k)
         return []
 
