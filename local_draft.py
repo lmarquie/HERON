@@ -12,8 +12,6 @@ from config import OPENAI_API_KEY
 from PIL import Image
 import io
 import base64
-import re
-import traceback
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -35,33 +33,6 @@ class TextProcessor:
         self.extracted_images = {}  # Store images for display
         self.image_descriptions = {}  # Store semantic descriptions for search
 
-    def clean_extracted_text(self, text: str) -> str:
-        """Clean up extracted text to fix common PDF extraction issues."""
-        try:
-            # Fix concatenated words by adding spaces between transitions from lowercase to uppercase
-            text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
-            
-            # Fix cases where numbers are concatenated with words
-            text = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', text)
-            text = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', text)
-            
-            # Fix cases where parentheses are concatenated with words
-            text = re.sub(r'([a-zA-Z])(\()', r'\1 \2', text)
-            text = re.sub(r'(\))([a-zA-Z])', r'\1 \2', text)
-            
-            # Remove excessive whitespace
-            text = ' '.join(text.split())
-            
-            # Fix common PDF artifacts
-            text = text.replace('•', '- ')  # Replace bullets with dashes
-            text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
-            text = re.sub(r'([a-z])([A-Z][a-z])', r'\1 \2', text)  # Split camelCase
-            
-            return text
-        except Exception as e:
-            print(f"Error cleaning text: {e}")
-            return text
-
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extract text and images from PDF - simple and fast."""
         try:
@@ -76,15 +47,9 @@ class TextProcessor:
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
                 
-                # Extract text and clean it
-                try:
-                    text = page.get_text()
-                    cleaned_text = self.clean_extracted_text(text)
-                except Exception as e:
-                    print(f"Error extracting text from page {page_num + 1}: {e}")
-                    traceback.print_exc()
-                    cleaned_text = "[Error extracting text from this page]"
-                text_content.append(f"Page {page_num + 1}: {cleaned_text}")
+                # Extract text
+                text = page.get_text()
+                text_content.append(f"Page {page_num + 1}: {text}")
                 
                 # Extract images (simple approach)
                 image_list = page.get_images()
@@ -113,12 +78,7 @@ class TextProcessor:
                                 }
                                 
                                 # Enhanced image analysis using Vision API
-                                try:
-                                    img_analysis = self.analyze_image_detailed(img_pil)
-                                except Exception as e:
-                                    print(f"Error analyzing image on page {page_num + 1}, image {img_index + 1}: {e}")
-                                    traceback.print_exc()
-                                    img_analysis = None
+                                img_analysis = self.analyze_image_detailed(img_pil)
                                 if img_analysis:
                                     # Store semantic description for search
                                     self.image_descriptions[img_key] = img_analysis
@@ -134,8 +94,7 @@ class TextProcessor:
                         
                         pix = None
                     except Exception as e:
-                        print(f"Error processing image on page {page_num + 1}, image {img_index + 1}: {e}")
-                        traceback.print_exc()
+                        print(f"Error processing image on page {page_num + 1}: {e}")
                         continue
             
             doc.close()
@@ -150,7 +109,6 @@ class TextProcessor:
             
         except Exception as e:
             print(f"Error extracting text from PDF: {str(e)}")
-            traceback.print_exc()
             return f"Error extracting text from PDF: {str(e)}"
 
     def analyze_image_detailed(self, img_pil):
@@ -193,17 +151,12 @@ class TextProcessor:
                 "max_tokens": 200
             }
             
-            try:
-                response = requests.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=15
-                )
-            except Exception as e:
-                print(f"Error making Vision API request: {e}")
-                traceback.print_exc()
-                return None
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=15
+            )
             
             if response.status_code == 200:
                 result = response.json()
@@ -215,7 +168,6 @@ class TextProcessor:
                 else:
                     return None
             else:
-                print(f"Vision API returned status {response.status_code}: {response.text}")
                 return None
                 
         except Exception as e:
@@ -584,7 +536,7 @@ class LocalFileHandler:
 class WebFileHandler(LocalFileHandler):
     def __init__(self):
         super().__init__()
-        self.text_processor = TextProcessor()  # Use default behavior (analyze images during upload)
+        self.text_processor = TextProcessor()
 
     def process_uploaded_files(self, uploaded_files):
         """Process files uploaded through Streamlit."""
@@ -818,7 +770,6 @@ class RAGSystem:
         self.question_handler = QuestionHandler(self.vector_store)
         self.is_web = is_web
         self.conversation_history = []
-        self.use_vision_api = use_vision_api
 
     def process_web_uploads(self, uploaded_files):
         """Process files uploaded through the web interface"""
@@ -853,19 +804,24 @@ class RAGSystem:
         """Determine if the question is asking for semantic image search."""
         question_lower = question.lower()
         
-        # Explicit image/visual keywords that must be present
-        explicit_image_keywords = [
-            'show me', 'find', 'where is', 'locate', 'display',
-            'image', 'picture', 'chart', 'graph', 'table', 'figure',
-            'diagram', 'visualization', 'plot', 'bar chart', 'line chart',
-            'pie chart', 'scatter plot', 'histogram', 'dashboard'
+        # Keywords that suggest looking for figures, graphs, and charts
+        semantic_keywords = [
+            'revenue', 'profit', 'growth', 'sales', 'earnings', 'income',
+            'chart', 'graph', 'table', 'data', 'metrics', 'performance',
+            'financial', 'business', 'quarterly', 'annual', 'report',
+            'trend', 'comparison', 'analysis', 'statistics', 'figures',
+            'figure', 'diagram', 'visualization', 'plot', 'bar chart',
+            'line chart', 'pie chart', 'scatter plot', 'histogram',
+            'dashboard', 'kpi', 'key performance indicator'
         ]
         
-        # Check if question explicitly asks for images/visuals
-        is_asking_for_visual = any(keyword in question_lower for keyword in explicit_image_keywords)
+        # Check if question contains semantic keywords
+        has_semantic_keywords = any(keyword in question_lower for keyword in semantic_keywords)
         
-        # Only proceed if explicitly asking for visual content
-        return is_asking_for_visual
+        # Check if it's asking to show/find something specific
+        is_asking_for_specific = any(word in question_lower for word in ['show me', 'find', 'where is', 'locate', 'display'])
+        
+        return has_semantic_keywords and is_asking_for_specific
 
     def handle_semantic_image_search(self, question: str):
         """Handle semantic image search requests."""
