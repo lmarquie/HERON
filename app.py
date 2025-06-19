@@ -37,14 +37,10 @@ def generate_answer(question):
         # Use the logic from local_draft
         answer = st.session_state.rag_system.question_handler.process_question(question)
         
-        # Also search for a relevant image/graph as supporting evidence
-        image_results = st.session_state.rag_system.search_images_semantically(question, top_k=1)
-        supporting_image = image_results[0] if image_results else None
-        
         # Store in conversation history using logic layer
         st.session_state.rag_system.add_to_conversation_history(question, answer, "initial")
         
-        return (answer, supporting_image)
+        return answer
         
     except Exception as e:
         return f"Error: {str(e)}"
@@ -91,14 +87,10 @@ def generate_follow_up(follow_up_question):
         # Use the logic from local_draft
         answer = st.session_state.rag_system.question_handler.process_follow_up(follow_up_question)
         
-        # Also search for a relevant image/graph as supporting evidence
-        image_results = st.session_state.rag_system.search_images_semantically(follow_up_question, top_k=1)
-        supporting_image = image_results[0] if image_results else None
-        
         # Store in conversation history using logic layer
         st.session_state.rag_system.add_to_conversation_history(follow_up_question, answer, "follow_up")
         
-        return (answer, supporting_image)
+        return answer
         
     except Exception as e:
         return f"Error: {str(e)}"
@@ -176,8 +168,7 @@ with st.sidebar:
         accept_multiple_files=True
     )
     
-    # Only process uploads if not already loaded
-    if uploaded_files and not st.session_state.get('documents_loaded'):
+    if uploaded_files:
         if st.session_state.rag_system.process_web_uploads(uploaded_files):
             st.success(f"Processed {len(uploaded_files)} file(s)")
             st.session_state.documents_loaded = True
@@ -189,11 +180,6 @@ st.title("HERON")
 
 # Display conversation history using logic layer
 conversation_history = st.session_state.rag_system.get_conversation_history()
-
-# Initialize show_followup flag if not present
-if 'show_followup' not in st.session_state:
-    st.session_state.show_followup = False
-
 if conversation_history:
     st.subheader("Conversation History")
     for i, conv in enumerate(conversation_history):
@@ -217,68 +203,61 @@ if conversation_history:
             else:
                 st.write(f"**Answer:** {conv['answer']}")
 
-# Only show the follow-up input after the first question is answered (i.e., after there is conversation history)
+# Current question input
 if not conversation_history:
     # First question
     question = st.text_input("Ask a question about your documents:")
+    
     if st.button("Get Answer", type="primary"):
         if st.session_state.documents_loaded:
             with st.spinner("Processing..."):
-                answer, supporting_image = generate_answer(question)
+                answer = generate_answer(question)
+                # If answer is a list (image info), display images
                 if isinstance(answer, list):
                     if answer:
-                        img_info = answer[0]
+                        img_info = answer[0]  # Only show the most relevant image
                         if os.path.exists(img_info['path']):
+                            # Display image with enhanced caption
                             caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
                             if 'description' in img_info:
                                 caption += f" - {img_info['description']}"
                             if 'similarity_score' in img_info:
                                 caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                            
                             st.image(img_info['path'], caption=caption, use_container_width=True)
                     else:
                         st.write("No images were found in the uploaded documents.")
                 else:
                     st.write(answer)
-                # Show supporting image if found
-                if supporting_image and os.path.exists(supporting_image['path']):
-                    st.markdown("**Supporting evidence:**")
-                    caption = f"Page {supporting_image['page']}, Image {supporting_image['image_num']}"
-                    if 'description' in supporting_image:
-                        caption += f" - {supporting_image['description']}"
-                    st.image(supporting_image['path'], caption=caption, use_container_width=True)
-                # Set flag to show follow-up input after answer is displayed
-                st.session_state.show_followup = True
+                    st.rerun()  # Only rerun for text answers, not images
         else:
             st.error("Please upload documents first")
-elif st.session_state.show_followup:
-    # Show follow-up input only after the first answer has been displayed
-    st.markdown("---")
-    follow_up_question = st.text_input("Ask a follow-up question:", key="followup")
-    if st.button("Ask Follow-up", key="followup_btn"):
+else:
+    # Follow-up question
+    follow_up_question = st.text_input("Ask a follow-up question:")
+    
+    if st.button("Ask Follow-up", type="primary"):
         if st.session_state.documents_loaded:
             with st.spinner("Processing follow-up..."):
-                follow_up_answer, supporting_image = generate_follow_up(follow_up_question)
+                follow_up_answer = generate_follow_up(follow_up_question)
+                # If answer is a list (image info), display images
                 if isinstance(follow_up_answer, list):
                     if follow_up_answer:
-                        img_info = follow_up_answer[0]
+                        img_info = follow_up_answer[0]  # Only show the most relevant image
                         if os.path.exists(img_info['path']):
+                            # Display image with enhanced caption
                             caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
                             if 'description' in img_info:
                                 caption += f" - {img_info['description']}"
                             if 'similarity_score' in img_info:
                                 caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                            
                             st.image(img_info['path'], caption=caption, use_container_width=True)
                     else:
                         st.write("No images were found in the uploaded documents.")
                 else:
                     st.write(follow_up_answer)
-                if supporting_image and os.path.exists(supporting_image['path']):
-                    st.markdown("**Supporting evidence:**")
-                    caption = f"Page {supporting_image['page']}, Image {supporting_image['image_num']}"
-                    if 'description' in supporting_image:
-                        caption += f" - {supporting_image['description']}"
-                    st.image(supporting_image['path'], caption=caption, use_container_width=True)
-            st.session_state["followup"] = ""
+                    st.rerun()  # Only rerun for text answers, not images
         else:
             st.error("Please upload documents first")
 
@@ -288,9 +267,6 @@ st.markdown("---")
 if st.button("Reset"):
     # Clear session state and conversation history
     st.session_state.rag_system.clear_conversation_history()
-    # Clear the follow-up flag
-    if 'show_followup' in st.session_state:
-        del st.session_state.show_followup
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
