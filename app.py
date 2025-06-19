@@ -585,7 +585,7 @@ class QuestionHandler:
 ### =================== Main RAG System =================== ###
 class RAGSystem:
     def __init__(self, settings=None, is_web=False, use_vision_api=True):
-        self.file_handler = WebFileHandler() if is_web else LocalFileHandler()
+        self.file_handler = WebFileHandler()
         self.vector_store = VectorStore()
         self.question_handler = QuestionHandler(self.vector_store)
         self.is_web = is_web
