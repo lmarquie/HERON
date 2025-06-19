@@ -32,84 +32,71 @@ class TextProcessor:
         self.overlap = overlap
         self.extracted_images = {}  # Store images for display
         self.image_descriptions = {}  # Store semantic descriptions for search
+        self.images_analyzed = set()  # Track which images have been analyzed
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract text and images from PDF - simple and fast."""
+        """Extract text and images from PDF - fast, no Vision API analysis here."""
         try:
             print(f"Processing PDF: {pdf_path}")
             doc = fitz.open(pdf_path)
             text_content = []
             image_content = []
-            
-            # Create images directory
             os.makedirs("images", exist_ok=True)
-            
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
-                
-                # Extract text
                 text = page.get_text()
                 text_content.append(f"Page {page_num + 1}: {text}")
-                
-                # Extract images (simple approach)
                 image_list = page.get_images()
                 for img_index, img in enumerate(image_list):
                     try:
                         xref = img[0]
                         pix = fitz.Pixmap(doc, xref)
-                        
                         if pix.n - pix.alpha < 4:  # GRAY or RGB
                             img_data = pix.tobytes("png")
                             img_pil = Image.open(io.BytesIO(img_data))
-                            
-                            # Check if image is not just blank/white space
                             if not self.is_blank_image(img_pil):
-                                # Save image for display
                                 img_filename = f"page_{page_num + 1}_image_{img_index + 1}.png"
                                 img_path = os.path.join("images", img_filename)
                                 img_pil.save(img_path)
-                                
-                                # Store image info for retrieval
                                 img_key = f"page_{page_num + 1}_image_{img_index + 1}"
                                 self.extracted_images[img_key] = {
                                     'path': img_path,
                                     'page': page_num + 1,
                                     'image_num': img_index + 1
                                 }
-                                
-                                # Enhanced image analysis using Vision API
-                                img_analysis = self.analyze_image_detailed(img_pil)
-                                if img_analysis:
-                                    # Store semantic description for search
-                                    self.image_descriptions[img_key] = img_analysis
-                                    image_content.append(f"Page {page_num + 1}, Image {img_index + 1}: {img_analysis}")
-                                else:
-                                    # If not a figure/graph, remove from extracted images
-                                    if img_key in self.extracted_images:
-                                        del self.extracted_images[img_key]
-                                    # Delete the saved image file
-                                    if os.path.exists(img_path):
-                                        os.remove(img_path)
-                                    continue
-                        
                         pix = None
                     except Exception as e:
                         print(f"Error processing image on page {page_num + 1}: {e}")
                         continue
-            
             doc.close()
-            
-            # Combine text and image content
             final_content = "\n".join(text_content)
-            if image_content:
-                final_content += "\n\nImage Analysis:\n" + "\n".join(image_content)
-            
             print(f"PDF processing completed. Total content length: {len(final_content)}")
             return final_content
-            
         except Exception as e:
             print(f"Error extracting text from PDF: {str(e)}")
             return f"Error extracting text from PDF: {str(e)}"
+
+    def ensure_images_analyzed(self):
+        """Analyze all images that have not yet been analyzed with Vision API."""
+        for img_key, img_info in list(self.extracted_images.items()):
+            if img_key in self.images_analyzed:
+                continue
+            try:
+                img_path = img_info['path']
+                if os.path.exists(img_path):
+                    img_pil = Image.open(img_path)
+                    img_analysis = self.analyze_image_detailed(img_pil)
+                    if img_analysis:
+                        self.image_descriptions[img_key] = img_analysis
+                    else:
+                        # If not a figure/graph, remove from extracted images
+                        del self.extracted_images[img_key]
+                        if os.path.exists(img_path):
+                            os.remove(img_path)
+                self.images_analyzed.add(img_key)
+            except Exception as e:
+                print(f"Error analyzing image {img_key}: {e}")
+                continue
 
     def analyze_image_detailed(self, img_pil):
         """Enhanced image analysis using Vision API for semantic search - focused on figures and graphs."""
@@ -232,7 +219,8 @@ class TextProcessor:
             return None
 
     def search_images_semantically(self, query: str, top_k: int = 3):
-        """Search for images based on semantic similarity to the query."""
+        """On-demand: analyze images if needed, then search for images based on semantic similarity to the query."""
+        self.ensure_images_analyzed()
         try:
             if not self.image_descriptions:
                 return []
