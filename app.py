@@ -14,6 +14,18 @@ st.set_page_config(
     layout="wide"
 )
 
+# Modern centered blue logo and title
+st.markdown(
+    """
+    <div style='text-align: center; margin-bottom: 1.5em;'>
+        <span style='font-size: 3.5rem; color: #1f77b4;'>🦅</span>
+        <h1 style='margin-bottom: 0; color: #1f77b4; font-family: "Segoe UI", "Arial", sans-serif;'>HERON</h1>
+        <div style='font-size: 1.2rem; color: #555;'>AI-powered Document Analysis</div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 # Initialize RAG system
 def initialize_rag_system():
     if 'rag_system' not in st.session_state:
@@ -260,24 +272,29 @@ if conversation_history:
     def submit_followup():
         follow_up_question = st.session_state["followup_input"]
         if follow_up_question.strip():
-            follow_up_answer = generate_follow_up(follow_up_question)
-            # If answer is a list (image info), display images
-            if isinstance(follow_up_answer, list):
-                if follow_up_answer:
-                    img_info = follow_up_answer[0]  # Only show the most relevant image
-                    if os.path.exists(img_info['path']):
-                        # Display image with enhanced caption
-                        caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
-                        if 'description' in img_info:
-                            caption += f" - {img_info['description']}"
-                        if 'similarity_score' in img_info:
-                            caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                        st.image(img_info['path'], caption=caption, use_container_width=True)
+            try:
+                follow_up_answer = generate_follow_up(follow_up_question)
+                if isinstance(follow_up_answer, list):
+                    if follow_up_answer:
+                        img_info = follow_up_answer[0]
+                        if os.path.exists(img_info['path']):
+                            caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                            if 'description' in img_info:
+                                caption += f" - {img_info['description']}"
+                            if 'similarity_score' in img_info:
+                                caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                            st.image(img_info['path'], caption=caption, use_container_width=True)
+                    else:
+                        st.write("No images were found in the uploaded documents.")
+                elif isinstance(follow_up_answer, str):
+                    st.write(follow_up_answer)
                 else:
-                    st.write("No images were found in the uploaded documents.")
-            else:
-                st.write(follow_up_answer)
-            st.session_state["followup_input"] = ""  # Clear after processing
+                    st.write("Unexpected answer type.")
+                # Only clear input if answer is not an error message
+                if not (isinstance(follow_up_answer, str) and follow_up_answer.lower().startswith("error")):
+                    st.session_state["followup_input"] = ""
+            except Exception as e:
+                st.error(f"Error processing follow-up: {e}")
     st.text_input(
         "Ask a follow-up question:",
         key="followup_input",
