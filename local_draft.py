@@ -31,6 +31,7 @@ class TextProcessor:
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.extracted_images = {}  # Store images for display
+        self.image_descriptions = {}  # Store semantic descriptions for search
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extract text and images from PDF - simple and fast."""
@@ -69,15 +70,18 @@ class TextProcessor:
                                 img_pil.save(img_path)
                                 
                                 # Store image info for retrieval
-                                self.extracted_images[f"page_{page_num + 1}_image_{img_index + 1}"] = {
+                                img_key = f"page_{page_num + 1}_image_{img_index + 1}"
+                                self.extracted_images[img_key] = {
                                     'path': img_path,
                                     'page': page_num + 1,
                                     'image_num': img_index + 1
                                 }
                                 
-                                # Simple image analysis using Vision API
-                                img_analysis = self.analyze_image_simple(img_pil)
+                                # Enhanced image analysis using Vision API
+                                img_analysis = self.analyze_image_detailed(img_pil)
                                 if img_analysis:
+                                    # Store semantic description for search
+                                    self.image_descriptions[img_key] = img_analysis
                                     image_content.append(f"Page {page_num + 1}, Image {img_index + 1}: {img_analysis}")
                         
                         pix = None
@@ -98,6 +102,63 @@ class TextProcessor:
         except Exception as e:
             print(f"Error extracting text from PDF: {str(e)}")
             return f"Error extracting text from PDF: {str(e)}"
+
+    def analyze_image_detailed(self, img_pil):
+        """Enhanced image analysis using Vision API for semantic search."""
+        try:
+            # Resize image to reduce API costs and speed
+            max_size = 512
+            img_pil.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            
+            # Convert to base64
+            buffer = io.BytesIO()
+            img_pil.save(buffer, format='PNG')
+            img_base64 = base64.b64encode(buffer.getvalue()).decode()
+            
+            # Enhanced Vision API call for semantic search
+            headers = {
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "gpt-4o",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Analyze this image and provide a detailed description that would help someone find it when searching for specific content. Include: 1) Type of visual (chart, graph, table, diagram, photo, etc.) 2) Main subject/topic 3) Key data points or information shown 4) Any text or labels visible 5) Business context if applicable (revenue, growth, metrics, etc.). Be specific and searchable."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{img_base64}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 200
+            }
+            
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                return None
+                
+        except Exception as e:
+            print(f"Error analyzing image: {e}")
+            return None
 
     def analyze_image_simple(self, img_pil):
         """Simple image analysis using Vision API - minimal and fast."""
@@ -155,6 +216,95 @@ class TextProcessor:
         except Exception as e:
             print(f"Error analyzing image: {e}")
             return None
+
+    def search_images_semantically(self, query: str, top_k: int = 3):
+        """Search for images based on semantic similarity to the query."""
+        try:
+            if not self.image_descriptions:
+                return []
+            
+            # Use OpenAI embeddings to compare query with image descriptions
+            headers = {
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            # Get query embedding
+            query_payload = {
+                "model": "text-embedding-3-small",
+                "input": query
+            }
+            
+            query_response = requests.post(
+                "https://api.openai.com/v1/embeddings",
+                headers=headers,
+                json=query_payload,
+                timeout=10
+            )
+            
+            if query_response.status_code != 200:
+                return []
+            
+            query_embedding = query_response.json()["data"][0]["embedding"]
+            
+            # Get embeddings for all image descriptions
+            descriptions = list(self.image_descriptions.values())
+            description_payload = {
+                "model": "text-embedding-3-small",
+                "input": descriptions
+            }
+            
+            desc_response = requests.post(
+                "https://api.openai.com/v1/embeddings",
+                headers=headers,
+                json=description_payload,
+                timeout=15
+            )
+            
+            if desc_response.status_code != 200:
+                return []
+            
+            description_embeddings = [item["embedding"] for item in desc_response.json()["data"]]
+            
+            # Calculate cosine similarities
+            similarities = []
+            for i, desc_embedding in enumerate(description_embeddings):
+                similarity = self.cosine_similarity(query_embedding, desc_embedding)
+                similarities.append((similarity, i))
+            
+            # Sort by similarity and get top results
+            similarities.sort(reverse=True)
+            top_indices = [idx for _, idx in similarities[:top_k]]
+            
+            # Return matching images
+            results = []
+            img_keys = list(self.extracted_images.keys())
+            for idx in top_indices:
+                if idx < len(img_keys):
+                    img_key = img_keys[idx]
+                    img_info = self.extracted_images[img_key].copy()
+                    img_info['description'] = self.image_descriptions[img_key]
+                    img_info['similarity_score'] = similarities[idx][0]
+                    results.append(img_info)
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error in semantic image search: {e}")
+            return []
+
+    def cosine_similarity(self, vec1, vec2):
+        """Calculate cosine similarity between two vectors."""
+        try:
+            vec1 = np.array(vec1)
+            vec2 = np.array(vec2)
+            dot_product = np.dot(vec1, vec2)
+            norm1 = np.linalg.norm(vec1)
+            norm2 = np.linalg.norm(vec2)
+            return dot_product / (norm1 * norm2)
+        except Exception as e:
+            print(f"Error calculating cosine similarity: {e}")
+            return 0.0
 
     def is_blank_image(self, img_pil):
         """Check if image is mostly blank/white space."""
@@ -629,6 +779,52 @@ class RAGSystem:
         if hasattr(self.file_handler, 'text_processor'):
             return self.file_handler.text_processor.get_all_images()
         return {}
+
+    def search_images_semantically(self, query: str, top_k: int = 3):
+        """Search for images based on semantic similarity to the query."""
+        if hasattr(self.file_handler, 'text_processor'):
+            return self.file_handler.text_processor.search_images_semantically(query, top_k)
+        return []
+
+    def is_semantic_image_request(self, question: str):
+        """Determine if the question is asking for semantic image search."""
+        question_lower = question.lower()
+        
+        # Keywords that suggest looking for specific content in images
+        semantic_keywords = [
+            'revenue', 'profit', 'growth', 'sales', 'earnings', 'income',
+            'chart', 'graph', 'table', 'data', 'metrics', 'performance',
+            'financial', 'business', 'quarterly', 'annual', 'report',
+            'trend', 'comparison', 'analysis', 'statistics', 'figures'
+        ]
+        
+        # Check if question contains semantic keywords
+        has_semantic_keywords = any(keyword in question_lower for keyword in semantic_keywords)
+        
+        # Check if it's asking to show/find something specific
+        is_asking_for_specific = any(word in question_lower for word in ['show me', 'find', 'where is', 'locate', 'display'])
+        
+        return has_semantic_keywords and is_asking_for_specific
+
+    def handle_semantic_image_search(self, question: str):
+        """Handle semantic image search requests."""
+        try:
+            # Search for semantically similar images
+            matching_images = self.search_images_semantically(question, top_k=3)
+            
+            if matching_images:
+                # Filter out low similarity scores
+                good_matches = [img for img in matching_images if img.get('similarity_score', 0) > 0.3]
+                
+                if good_matches:
+                    return good_matches
+                else:
+                    return f"I found some images but they don't seem to match your request closely enough. Try being more specific about what you're looking for."
+            else:
+                return "I couldn't find any images matching your request. Try rephrasing or being more specific."
+                
+        except Exception as e:
+            return f"Error searching for images: {str(e)}"
 
     def add_to_conversation_history(self, question, answer, question_type="initial"):
         """Add a Q&A pair to conversation history"""
