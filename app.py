@@ -30,6 +30,10 @@ def generate_answer(question):
         if any(word in question.lower() for word in ['show', 'display', 'image', 'picture', 'chart', 'graph']):
             return handle_image_request(question)
         
+        # Check if this might be a semantic image search request
+        if st.session_state.rag_system.is_semantic_image_request(question):
+            return st.session_state.rag_system.handle_semantic_image_search(question)
+        
         # Use the logic from local_draft
         answer = st.session_state.rag_system.question_handler.process_question(question)
         
@@ -75,6 +79,10 @@ def generate_follow_up(follow_up_question):
         # Check if user is asking to see images
         if any(word in follow_up_question.lower() for word in ['show', 'display', 'image', 'picture', 'chart', 'graph']):
             return handle_image_request(follow_up_question)
+        
+        # Check if this might be a semantic image search request
+        if st.session_state.rag_system.is_semantic_image_request(follow_up_question):
+            return st.session_state.rag_system.handle_semantic_image_search(follow_up_question)
         
         # Use the logic from local_draft
         answer = st.session_state.rag_system.question_handler.process_follow_up(follow_up_question)
@@ -183,7 +191,14 @@ if conversation_history:
                     st.write(f"Found {len(conv['answer'])} image(s):")
                     for img_info in conv['answer']:
                         if os.path.exists(img_info['path']):
-                            st.image(img_info['path'], caption=f"Page {img_info['page']}, Image {img_info['image_num']}", use_container_width=True)
+                            # Display image with enhanced caption
+                            caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                            if 'description' in img_info:
+                                caption += f" - {img_info['description']}"
+                            if 'similarity_score' in img_info:
+                                caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                            
+                            st.image(img_info['path'], caption=caption, use_container_width=True)
                 else:
                     st.write("No images were found in the uploaded documents.")
             else:
@@ -204,7 +219,14 @@ if not conversation_history:
                         st.write(f"Found {len(answer)} image(s):")
                         for img_info in answer:
                             if os.path.exists(img_info['path']):
-                                st.image(img_info['path'], caption=f"Page {img_info['page']}, Image {img_info['image_num']}", use_container_width=True)
+                                # Display image with enhanced caption
+                                caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                                if 'description' in img_info:
+                                    caption += f" - {img_info['description']}"
+                                if 'similarity_score' in img_info:
+                                    caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                                
+                                st.image(img_info['path'], caption=caption, use_container_width=True)
                     else:
                         st.write("No images were found in the uploaded documents.")
                 else:
@@ -226,7 +248,14 @@ else:
                         st.write(f"Found {len(follow_up_answer)} image(s):")
                         for img_info in follow_up_answer:
                             if os.path.exists(img_info['path']):
-                                st.image(img_info['path'], caption=f"Page {img_info['page']}, Image {img_info['image_num']}", use_container_width=True)
+                                # Display image with enhanced caption
+                                caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                                if 'description' in img_info:
+                                    caption += f" - {img_info['description']}"
+                                if 'similarity_score' in img_info:
+                                    caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                                
+                                st.image(img_info['path'], caption=caption, use_container_width=True)
                     else:
                         st.write("No images were found in the uploaded documents.")
                 else:
