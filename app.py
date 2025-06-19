@@ -287,6 +287,10 @@ if st.button("Reset"):
     # Clear session state and conversation history
     st.session_state.rag_system.clear_conversation_history()
     
+    # Clear the answer given flag
+    if 'answer_given' in st.session_state:
+        del st.session_state.answer_given
+    
     # Clean up temporary PDF files
     if hasattr(st.session_state.rag_system.file_handler, 'get_saved_pdf_paths'):
         saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
