@@ -804,24 +804,19 @@ class RAGSystem:
         """Determine if the question is asking for semantic image search."""
         question_lower = question.lower()
         
-        # Keywords that suggest looking for figures, graphs, and charts
-        semantic_keywords = [
-            'revenue', 'profit', 'growth', 'sales', 'earnings', 'income',
-            'chart', 'graph', 'table', 'data', 'metrics', 'performance',
-            'financial', 'business', 'quarterly', 'annual', 'report',
-            'trend', 'comparison', 'analysis', 'statistics', 'figures',
-            'figure', 'diagram', 'visualization', 'plot', 'bar chart',
-            'line chart', 'pie chart', 'scatter plot', 'histogram',
-            'dashboard', 'kpi', 'key performance indicator'
+        # Explicit image/visual keywords that must be present
+        explicit_image_keywords = [
+            'show me', 'find', 'where is', 'locate', 'display',
+            'image', 'picture', 'chart', 'graph', 'table', 'figure',
+            'diagram', 'visualization', 'plot', 'bar chart', 'line chart',
+            'pie chart', 'scatter plot', 'histogram', 'dashboard'
         ]
         
-        # Check if question contains semantic keywords
-        has_semantic_keywords = any(keyword in question_lower for keyword in semantic_keywords)
+        # Check if question explicitly asks for images/visuals
+        is_asking_for_visual = any(keyword in question_lower for keyword in explicit_image_keywords)
         
-        # Check if it's asking to show/find something specific
-        is_asking_for_specific = any(word in question_lower for word in ['show me', 'find', 'where is', 'locate', 'display'])
-        
-        return has_semantic_keywords and is_asking_for_specific
+        # Only proceed if explicitly asking for visual content
+        return is_asking_for_visual
 
     def handle_semantic_image_search(self, question: str):
         """Handle semantic image search requests."""
