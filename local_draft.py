@@ -645,7 +645,7 @@ class ClaudeHandler:
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json"
         }
-        self.system_prompt = system_prompt or "You are a helpful assistant. Answer questions based on the provided context."
+        self.system_prompt = system_prompt or "You are a helpful assistant. Answer questions based on and ONLY based on the provided context."
 
     def generate_answer(self, question: str, context: str) -> str:
         try:
