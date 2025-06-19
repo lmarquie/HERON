@@ -37,10 +37,14 @@ def generate_answer(question):
         # Use the logic from local_draft
         answer = st.session_state.rag_system.question_handler.process_question(question)
         
+        # Also search for a relevant image/graph as supporting evidence
+        image_results = st.session_state.rag_system.search_images_semantically(question, top_k=1)
+        supporting_image = image_results[0] if image_results else None
+        
         # Store in conversation history using logic layer
         st.session_state.rag_system.add_to_conversation_history(question, answer, "initial")
         
-        return answer
+        return (answer, supporting_image)
         
     except Exception as e:
         return f"Error: {str(e)}"
@@ -87,10 +91,14 @@ def generate_follow_up(follow_up_question):
         # Use the logic from local_draft
         answer = st.session_state.rag_system.question_handler.process_follow_up(follow_up_question)
         
+        # Also search for a relevant image/graph as supporting evidence
+        image_results = st.session_state.rag_system.search_images_semantically(follow_up_question, top_k=1)
+        supporting_image = image_results[0] if image_results else None
+        
         # Store in conversation history using logic layer
         st.session_state.rag_system.add_to_conversation_history(follow_up_question, answer, "follow_up")
         
-        return answer
+        return (answer, supporting_image)
         
     except Exception as e:
         return f"Error: {str(e)}"
@@ -211,7 +219,7 @@ if not conversation_history:
     if st.button("Get Answer", type="primary"):
         if st.session_state.documents_loaded:
             with st.spinner("Processing..."):
-                answer = generate_answer(question)
+                answer, supporting_image = generate_answer(question)
                 if isinstance(answer, list):
                     if answer:
                         img_info = answer[0]
@@ -226,7 +234,13 @@ if not conversation_history:
                         st.write("No images were found in the uploaded documents.")
                 else:
                     st.write(answer)
-                    st.rerun()  # Only rerun for text answers, not images
+                # Show supporting image if found
+                if supporting_image and os.path.exists(supporting_image['path']):
+                    st.markdown("**Supporting evidence:**")
+                    caption = f"Page {supporting_image['page']}, Image {supporting_image['image_num']}"
+                    if 'description' in supporting_image:
+                        caption += f" - {supporting_image['description']}"
+                    st.image(supporting_image['path'], caption=caption, use_container_width=True)
         else:
             st.error("Please upload documents first")
 else:
@@ -235,7 +249,7 @@ else:
     if st.button("Ask Follow-up", type="primary"):
         if st.session_state.documents_loaded:
             with st.spinner("Processing follow-up..."):
-                follow_up_answer = generate_follow_up(follow_up_question)
+                follow_up_answer, supporting_image = generate_follow_up(follow_up_question)
                 if isinstance(follow_up_answer, list):
                     if follow_up_answer:
                         img_info = follow_up_answer[0]
@@ -250,7 +264,13 @@ else:
                         st.write("No images were found in the uploaded documents.")
                 else:
                     st.write(follow_up_answer)
-                    st.rerun()  # Only rerun for text answers, not images
+                # Show supporting image if found
+                if supporting_image and os.path.exists(supporting_image['path']):
+                    st.markdown("**Supporting evidence:**")
+                    caption = f"Page {supporting_image['page']}, Image {supporting_image['image_num']}"
+                    if 'description' in supporting_image:
+                        caption += f" - {supporting_image['description']}"
+                    st.image(supporting_image['path'], caption=caption, use_container_width=True)
         else:
             st.error("Please upload documents first")
 
