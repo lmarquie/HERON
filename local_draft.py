@@ -14,6 +14,7 @@ import io
 import base64
 import cv2
 import pytesseract
+from difflib import SequenceMatcher
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -37,7 +38,7 @@ class TextProcessor:
         self.images_analyzed = set()  # Track which images have been analyzed
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract text and images from PDF, detect tables/graphs, and run OCR on each region."""
+        """Extract text and images from PDF, detect tables/graphs, and run OCR on each region (header + body)."""
         try:
             print(f"Processing PDF: {pdf_path}")
             doc = fitz.open(pdf_path)
@@ -61,14 +62,19 @@ class TextProcessor:
                         img_path = os.path.join("images", img_filename)
                         cv2.imwrite(img_path, crop)
                         img_key = f"page_{page_num + 1}_detected_{idx + 1}"
-                        # OCR on the cropped region
+                        # OCR on the cropped region (body)
                         ocr_text = self.ocr_image(crop)
+                        # OCR on the header (top 20%)
+                        header_h = max(1, int(h * 0.2))
+                        header_crop = crop[0:header_h, :]
+                        ocr_header = self.ocr_image(header_crop)
                         self.extracted_images[img_key] = {
                             'path': img_path,
                             'page': page_num + 1,
                             'image_num': idx + 1,
                             'description': 'Detected table/graph region (OpenCV)',
                             'ocr_text': ocr_text,
+                            'ocr_header': ocr_header,
                         }
             doc.close()
             final_content = "\n".join(text_content)
@@ -247,18 +253,23 @@ class TextProcessor:
             print(f"Error analyzing image: {e}")
             return None
 
+    def fuzzy_score(self, a, b):
+        """Return a fuzzy match ratio between two strings (0-100)."""
+        return int(SequenceMatcher(None, a, b).ratio() * 100)
+
     def search_images_semantically(self, query: str, top_k: int = 3):
-        """Find the most relevant detected region by keyword overlap with the query (no AI)."""
-        # Lowercase and split query into keywords
-        query_keywords = set(query.lower().split())
+        """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header."""
+        query_lc = query.lower()
         best_score = -1
         best_img_info = None
         for img_info in self.extracted_images.values():
+            ocr_header = img_info.get('ocr_header', '').lower()
             ocr_text = img_info.get('ocr_text', '').lower()
-            ocr_words = set(ocr_text.split())
-            score = len(query_keywords & ocr_words)
-            if score > best_score:
-                best_score = score
+            header_score = self.fuzzy_score(query_lc, ocr_header)
+            body_score = self.fuzzy_score(query_lc, ocr_text)
+            combined_score = header_score * 2 + body_score  # Prioritize header
+            if combined_score > best_score:
+                best_score = combined_score
                 best_img_info = img_info
         if best_img_info:
             return [best_img_info]
