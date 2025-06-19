@@ -15,6 +15,7 @@ import base64
 import cv2
 import pytesseract
 from difflib import SequenceMatcher
+import openai
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -549,70 +550,61 @@ class WebFileHandler(LocalFileHandler):
 
 ### =================== Vector Store =================== ###
 class VectorStore:
-    def __init__(self, dimension: int = 768):
+    def __init__(self, dimension: int = 1536):
         self.documents = []
         self.embeddings = None
         self.index = None
         self.chunk_size = 500
         self.chunk_overlap = 50
-        
-        # Simple error handling for model loading
+        self.dimension = dimension  # OpenAI embedding size
+
+    def get_openai_embeddings(self, texts):
+        """Get embeddings from OpenAI API for a list of texts."""
         try:
-            self.model = SentenceTransformer('all-MiniLM-L6-v2')
+            response = openai.embeddings.create(
+                model="text-embedding-3-small",
+                input=texts,
+                api_key=OPENAI_API_KEY
+            )
+            return [item.embedding for item in response.data]
         except Exception as e:
-            print(f"Error loading model: {e}")
-            self.model = None
+            print(f"Error getting OpenAI embeddings: {e}")
+            return None
 
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store."""
+        """Add documents to the vector store using OpenAI embeddings."""
         if not documents:
             return
-            
-        if self.model is None:
-            print("Error: No embedding model available")
-            return
-            
         print(f"Adding {len(documents)} documents to vector store...")
-        
-        # Extract text from documents
         texts = [doc['text'] for doc in documents]
-        
-        # Generate embeddings
-        print("Converting text to vector embeddings...")
-        try:
-            embeddings = self.model.encode(texts, show_progress_bar=True)
-        except Exception as e:
-            print(f"Error generating embeddings: {e}")
+        print("Requesting OpenAI embeddings...")
+        embeddings = self.get_openai_embeddings(texts)
+        if embeddings is None:
+            print("Error: Could not get embeddings from OpenAI API.")
             return
-        
-        # Store documents and embeddings
         self.documents.extend(documents)
-        
+        import numpy as np
+        embeddings = np.array(embeddings)
         if self.embeddings is None:
             self.embeddings = embeddings
         else:
             self.embeddings = np.vstack([self.embeddings, embeddings])
-        
-        # Create FAISS index with correct dimension
         embedding_dim = self.embeddings.shape[1]
+        import faiss
         self.index = faiss.IndexFlatIP(embedding_dim)
         self.index.add(self.embeddings.astype('float32'))
-        
         print(f"Successfully added {len(documents)} documents. Total documents: {len(self.documents)}")
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
-        """Search for similar documents."""
-        if not self.documents or self.index is None or self.model is None:
+        """Search for similar documents using OpenAI embeddings."""
+        if not self.documents or self.index is None:
             return []
-        
         try:
-            # Generate query embedding
-            query_embedding = self.model.encode([query])
-            
-            # Search
-            scores, indices = self.index.search(query_embedding.astype('float32'), k)
-            
-            # Return results
+            query_embedding = self.get_openai_embeddings([query])
+            if query_embedding is None:
+                return []
+            import numpy as np
+            scores, indices = self.index.search(np.array(query_embedding).astype('float32'), k)
             results = []
             for i, idx in enumerate(indices[0]):
                 if idx < len(self.documents):
@@ -621,7 +613,6 @@ class VectorStore:
                         'metadata': self.documents[idx].get('metadata', {}),
                         'score': float(scores[0][i])
                     })
-            
             return results
         except Exception as e:
             print(f"Error during search: {e}")
