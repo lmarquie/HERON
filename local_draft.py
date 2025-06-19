@@ -258,8 +258,8 @@ class TextProcessor:
         """Return a fuzzy match ratio between two strings (0-100)."""
         return int(SequenceMatcher(None, a, b).ratio() * 100)
 
-    def search_images_semantically(self, query: str, top_k: int = 3):
-        """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header."""
+    def search_images_semantically(self, query: str, top_k: int = 3, min_score: int = 180):
+        """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header. Only return if score is high enough."""
         query_lc = query.lower()
         best_score = -1
         best_img_info = None
@@ -272,7 +272,7 @@ class TextProcessor:
             if combined_score > best_score:
                 best_score = combined_score
                 best_img_info = img_info
-        if best_img_info:
+        if best_img_info and best_score >= min_score:
             return [best_img_info]
         return []
 
@@ -746,10 +746,22 @@ class RAGSystem:
             return self.file_handler.text_processor.get_all_images()
         return {}
 
-    def search_images_semantically(self, query: str, top_k: int = 3):
-        """Search for images based on semantic similarity to the query."""
-        if hasattr(self.file_handler, 'text_processor'):
-            return self.file_handler.text_processor.search_images_semantically(query, top_k)
+    def search_images_semantically(self, query: str, top_k: int = 3, min_score: int = 180):
+        """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header. Only return if score is high enough."""
+        query_lc = query.lower()
+        best_score = -1
+        best_img_info = None
+        for img_info in self.file_handler.text_processor.extracted_images.values():
+            ocr_header = img_info.get('ocr_header', '').lower()
+            ocr_text = img_info.get('ocr_text', '').lower()
+            header_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_header)
+            body_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_text)
+            combined_score = header_score * 2 + body_score  # Prioritize header
+            if combined_score > best_score:
+                best_score = combined_score
+                best_img_info = img_info
+        if best_img_info and best_score >= min_score:
+            return [best_img_info]
         return []
 
     def is_semantic_image_request(self, question: str):
