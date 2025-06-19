@@ -13,6 +13,7 @@ from PIL import Image
 import io
 import base64
 import re
+import traceback
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -76,8 +77,13 @@ class TextProcessor:
                 page = doc.load_page(page_num)
                 
                 # Extract text and clean it
-                text = page.get_text()
-                cleaned_text = self.clean_extracted_text(text)
+                try:
+                    text = page.get_text()
+                    cleaned_text = self.clean_extracted_text(text)
+                except Exception as e:
+                    print(f"Error extracting text from page {page_num + 1}: {e}")
+                    traceback.print_exc()
+                    cleaned_text = "[Error extracting text from this page]"
                 text_content.append(f"Page {page_num + 1}: {cleaned_text}")
                 
                 # Extract images (simple approach)
@@ -107,7 +113,12 @@ class TextProcessor:
                                 }
                                 
                                 # Enhanced image analysis using Vision API
-                                img_analysis = self.analyze_image_detailed(img_pil)
+                                try:
+                                    img_analysis = self.analyze_image_detailed(img_pil)
+                                except Exception as e:
+                                    print(f"Error analyzing image on page {page_num + 1}, image {img_index + 1}: {e}")
+                                    traceback.print_exc()
+                                    img_analysis = None
                                 if img_analysis:
                                     # Store semantic description for search
                                     self.image_descriptions[img_key] = img_analysis
@@ -123,7 +134,8 @@ class TextProcessor:
                         
                         pix = None
                     except Exception as e:
-                        print(f"Error processing image on page {page_num + 1}: {e}")
+                        print(f"Error processing image on page {page_num + 1}, image {img_index + 1}: {e}")
+                        traceback.print_exc()
                         continue
             
             doc.close()
@@ -138,6 +150,7 @@ class TextProcessor:
             
         except Exception as e:
             print(f"Error extracting text from PDF: {str(e)}")
+            traceback.print_exc()
             return f"Error extracting text from PDF: {str(e)}"
 
     def analyze_image_detailed(self, img_pil):
@@ -180,12 +193,17 @@ class TextProcessor:
                 "max_tokens": 200
             }
             
-            response = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=15
-            )
+            try:
+                response = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=15
+                )
+            except Exception as e:
+                print(f"Error making Vision API request: {e}")
+                traceback.print_exc()
+                return None
             
             if response.status_code == 200:
                 result = response.json()
@@ -197,6 +215,7 @@ class TextProcessor:
                 else:
                     return None
             else:
+                print(f"Vision API returned status {response.status_code}: {response.text}")
                 return None
                 
         except Exception as e:
