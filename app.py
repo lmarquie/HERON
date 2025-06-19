@@ -169,11 +169,15 @@ with st.sidebar:
     )
     
     if uploaded_files:
-        if st.session_state.rag_system.process_web_uploads(uploaded_files):
-            st.success(f"Processed {len(uploaded_files)} file(s)")
-            st.session_state.documents_loaded = True
+        # Only process uploads if not already loaded
+        if not st.session_state.get('documents_loaded'):
+            if st.session_state.rag_system.process_web_uploads(uploaded_files):
+                st.success(f"Processed {len(uploaded_files)} file(s)")
+                st.session_state.documents_loaded = True
+            else:
+                st.error("Failed to process files")
         else:
-            st.error("Failed to process files")
+            st.info("Documents already loaded. Upload new files to replace them.")
 
 # Main content
 st.title("HERON")
