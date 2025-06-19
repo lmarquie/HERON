@@ -13,6 +13,7 @@ from PIL import Image
 import io
 import base64
 import cv2
+import pytesseract
 
 ### =================== Input Interface =================== ###
 class InputInterface:
@@ -36,7 +37,7 @@ class TextProcessor:
         self.images_analyzed = set()  # Track which images have been analyzed
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract text and images from PDF, and detect tables/graphs using OpenCV (no AI)."""
+        """Extract text and images from PDF, detect tables/graphs, and run OCR on each region."""
         try:
             print(f"Processing PDF: {pdf_path}")
             doc = fitz.open(pdf_path)
@@ -53,7 +54,6 @@ class TextProcessor:
                 img_array = np.frombuffer(img_data, np.uint8)
                 img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                 if img_cv is not None:
-                    # Detect tables/graphs (rectangles, line-dense regions)
                     detected_regions = self.detect_tables_and_graphs(img_cv)
                     for idx, (x, y, w, h) in enumerate(detected_regions):
                         crop = img_cv[y:y+h, x:x+w]
@@ -61,11 +61,14 @@ class TextProcessor:
                         img_path = os.path.join("images", img_filename)
                         cv2.imwrite(img_path, crop)
                         img_key = f"page_{page_num + 1}_detected_{idx + 1}"
+                        # OCR on the cropped region
+                        ocr_text = self.ocr_image(crop)
                         self.extracted_images[img_key] = {
                             'path': img_path,
                             'page': page_num + 1,
                             'image_num': idx + 1,
                             'description': 'Detected table/graph region (OpenCV)',
+                            'ocr_text': ocr_text,
                         }
             doc.close()
             final_content = "\n".join(text_content)
@@ -90,6 +93,17 @@ class TextProcessor:
                 regions.append((x, y, w, h))
         # Optionally, merge overlapping/close rectangles here
         return regions
+
+    def ocr_image(self, img_cv):
+        """Run OCR on a cropped image region using Tesseract if available, else fallback to empty string."""
+        try:
+            # Convert to RGB for pytesseract
+            img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
+            text = pytesseract.image_to_string(img_rgb)
+            return text.strip()
+        except Exception as e:
+            print(f"OCR failed: {e}")
+            return ""
 
     def ensure_images_analyzed(self):
         """Analyze all images that have not yet been analyzed with Vision API."""
@@ -234,77 +248,21 @@ class TextProcessor:
             return None
 
     def search_images_semantically(self, query: str, top_k: int = 3):
-        """On-demand: analyze images if needed, then search for images based on semantic similarity to the query. Only return the single best match, with no similarity threshold."""
-        self.ensure_images_analyzed()
-        try:
-            if not self.image_descriptions:
-                return []
-            
-            # Use OpenAI embeddings to compare query with image descriptions
-            headers = {
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            
-            # Get query embedding
-            query_payload = {
-                "model": "text-embedding-3-small",
-                "input": query
-            }
-            
-            query_response = requests.post(
-                "https://api.openai.com/v1/embeddings",
-                headers=headers,
-                json=query_payload,
-                timeout=10
-            )
-            
-            if query_response.status_code != 200:
-                return []
-            
-            query_embedding = query_response.json()["data"][0]["embedding"]
-            
-            # Get embeddings for all image descriptions
-            descriptions = list(self.image_descriptions.values())
-            description_payload = {
-                "model": "text-embedding-3-small",
-                "input": descriptions
-            }
-            
-            desc_response = requests.post(
-                "https://api.openai.com/v1/embeddings",
-                headers=headers,
-                json=description_payload,
-                timeout=15
-            )
-            
-            if desc_response.status_code != 200:
-                return []
-            
-            description_embeddings = [item["embedding"] for item in desc_response.json()["data"]]
-            
-            # Calculate cosine similarities
-            similarities = []
-            for i, desc_embedding in enumerate(description_embeddings):
-                similarity = self.cosine_similarity(query_embedding, desc_embedding)
-                similarities.append((similarity, i))
-            
-            # Sort by similarity and get the best result (no threshold)
-            similarities.sort(reverse=True)
-            if not similarities:
-                return []
-            best_idx = similarities[0][1]
-            img_keys = list(self.extracted_images.keys())
-            if best_idx < len(img_keys):
-                img_key = img_keys[best_idx]
-                img_info = self.extracted_images[img_key].copy()
-                img_info['description'] = self.image_descriptions[img_key]
-                img_info['similarity_score'] = similarities[0][0]
-                return [img_info]
-            return []
-        except Exception as e:
-            print(f"Error in semantic image search: {e}")
-            return []
+        """Find the most relevant detected region by keyword overlap with the query (no AI)."""
+        # Lowercase and split query into keywords
+        query_keywords = set(query.lower().split())
+        best_score = -1
+        best_img_info = None
+        for img_info in self.extracted_images.values():
+            ocr_text = img_info.get('ocr_text', '').lower()
+            ocr_words = set(ocr_text.split())
+            score = len(query_keywords & ocr_words)
+            if score > best_score:
+                best_score = score
+                best_img_info = img_info
+        if best_img_info:
+            return [best_img_info]
+        return []
 
     def cosine_similarity(self, vec1, vec2):
         """Calculate cosine similarity between two vectors."""
