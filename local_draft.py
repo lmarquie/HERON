@@ -25,6 +25,9 @@ from abc import ABC, abstractmethod
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Reduce verbose httpx logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 ### =================== Text Processing =================== ###
 class TextProcessor:
     def __init__(self, chunk_size: int = 1500, overlap: int = 30):
@@ -518,8 +521,8 @@ class VectorStore:
                 else:
                     time.sleep(1)  # Wait before retry
 
-    def get_openai_embedding(self, text, model="text-embedding-ada-002"):
-        """Get embedding from OpenAI API."""
+    def get_openai_embedding_single(self, text, model="text-embedding-ada-002"):
+        """Get a single embedding from OpenAI API."""
         try:
             client = openai.OpenAI(api_key=OPENAI_API_KEY)
             response = client.embeddings.create(input=text, model=model)
@@ -528,8 +531,18 @@ class VectorStore:
             logger.error(f"Error getting OpenAI embedding: {str(e)}")
             return None
 
+    def get_openai_embeddings_batch(self, texts, model="text-embedding-ada-002"):
+        """Get embeddings from OpenAI API in batches."""
+        try:
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            response = client.embeddings.create(input=texts, model=model)
+            return [data.embedding for data in response.data]
+        except Exception as e:
+            logger.error(f"Error getting OpenAI embeddings batch: {str(e)}")
+            return None
+
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store using OpenAI embeddings."""
+        """Add documents to the vector store using OpenAI embeddings with batching."""
         if not documents:
             return
         
@@ -539,28 +552,15 @@ class VectorStore:
         
         try:
             texts = [doc['text'] for doc in documents]
-            embeddings = []
             
-            # Process embeddings one by one to handle API limits
-            for text in texts:
-                emb = self.get_openai_embedding(text)
-                if emb is not None:
-                    embeddings.append(emb)
-                else:
-                    logger.warning(f"Failed to get embedding for text: {text[:100]}...")
+            # Get all embeddings in a single batch call
+            embeddings = self.get_openai_embeddings_batch(texts)
             
-            if not embeddings:
-                logger.error("No embeddings were successfully created. Check OpenAI API key and connectivity.")
+            if embeddings is None or len(embeddings) != len(documents):
+                logger.error("Failed to get embeddings for all documents")
                 return
             
-            if len(embeddings) != len(documents):
-                logger.warning("Some documents could not be embedded and will be skipped.")
-                valid_docs = [doc for doc, emb in zip(documents, embeddings) if emb is not None]
-                embeddings = [emb for emb in embeddings if emb is not None]
-            else:
-                valid_docs = documents
-            
-            self.documents.extend(valid_docs)
+            self.documents.extend(documents)
             embeddings = np.array(embeddings)
             
             if self.embeddings is None:
@@ -572,7 +572,7 @@ class VectorStore:
             self.index = faiss.IndexFlatIP(embedding_dim)
             self.index.add(self.embeddings.astype('float32'))
             
-            logger.info(f"Added {len(valid_docs)} documents to vector store (OpenAI embeddings)")
+            logger.info(f"Added {len(documents)} documents to vector store (OpenAI embeddings - batch)")
             
         except Exception as e:
             logger.error(f"Error adding documents to vector store: {str(e)}")
@@ -583,7 +583,7 @@ class VectorStore:
             return []
         
         try:
-            query_embedding = self.get_openai_embedding(query)
+            query_embedding = self.get_openai_embedding_single(query)
             if query_embedding is None:
                 return []
             
@@ -853,7 +853,7 @@ class SessionManager:
 
 ### =================== Main RAG System =================== ###
 class RAGSystem:
-    def __init__(self, settings=None, is_web=False, use_vision_api=True, session_id: str = None):
+    def __init__(self, settings=None, is_web=False, use_vision_api=True, session_id: str = None, internet_mode=False):
         self.file_handler = WebFileHandler() if is_web else None
         self.vector_store = VectorStore()
         self.question_handler = QuestionHandler(self.vector_store)
@@ -862,6 +862,7 @@ class RAGSystem:
         self.session_id = session_id
         self.session_manager = SessionManager()
         self.error_handling_enabled = True
+        self.internet_mode = internet_mode  # New: Enable internet search mode
         self.performance_metrics = {
             'total_queries': 0,
             'avg_response_time': 0,
@@ -972,12 +973,13 @@ class RAGSystem:
             logger.error(f"Error in semantic image search: {str(e)}")
             return f"Error searching for images: {str(e)}"
 
-    def add_to_conversation_history(self, question, answer, question_type="initial"):
-        """Add a Q&A pair to conversation history"""
+    def add_to_conversation_history(self, question, answer, question_type="initial", mode="document"):
+        """Add to conversation history with mode tracking."""
         self.conversation_history.append({
             'question': question,
             'answer': answer,
-            'type': question_type,
+            'question_type': question_type,
+            'mode': mode,  # Track which mode was used
             'timestamp': datetime.now().isoformat()
         })
 
@@ -1034,6 +1036,90 @@ class RAGSystem:
             'total_queries': 0,
             'avg_response_time': 0,
             'error_count': 0
+        }
+
+    def set_internet_mode(self, enabled: bool):
+        """Toggle internet mode on/off."""
+        self.internet_mode = enabled
+        logger.info(f"Internet mode {'enabled' if enabled else 'disabled'}")
+
+    def is_internet_mode_enabled(self) -> bool:
+        """Check if internet mode is enabled."""
+        return self.internet_mode
+
+    def generate_internet_answer(self, question: str) -> str:
+        """Generate answer using internet search when no documents are available."""
+        try:
+            # Use OpenAI's web browsing capabilities
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            
+            # Create a system prompt for internet search
+            system_prompt = (
+                "You are a helpful assistant with access to the internet. "
+                "Answer questions based on current information from the web. "
+                "Always cite your sources and provide accurate, up-to-date information. "
+                "If you cannot find relevant information, say so clearly."
+            )
+            
+            response = client.chat.completions.create(
+                model="gpt-4-turbo-preview",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question}
+                ],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            logger.error(f"Error generating internet answer: {str(e)}")
+            return f"Error accessing internet: {str(e)}"
+
+    def process_question_with_mode(self, question: str, normalize_length: bool = True) -> str:
+        """Process question using either document mode or internet mode."""
+        if self.internet_mode:
+            # Use internet mode
+            logger.info("Processing question using internet mode")
+            answer = self.generate_internet_answer(question)
+            self.add_to_conversation_history(question, answer, "internet")
+            return answer
+        else:
+            # Use document mode (existing logic)
+            if not self.vector_store.is_ready():
+                return "No documents loaded. Please upload documents first or enable internet mode."
+            
+            logger.info("Processing question using document mode")
+            answer = self.question_handler.process_question(question, normalize_length=normalize_length)
+            self.add_to_conversation_history(question, answer, "document")
+            return answer
+
+    def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
+        """Process follow-up question using either document mode or internet mode."""
+        if self.internet_mode:
+            # Use internet mode for follow-up
+            logger.info("Processing follow-up using internet mode")
+            answer = self.generate_internet_answer(follow_up_question)
+            self.add_to_conversation_history(follow_up_question, answer, "internet_followup")
+            return answer
+        else:
+            # Use document mode (existing logic)
+            if not self.vector_store.is_ready():
+                return "No documents loaded. Please upload documents first or enable internet mode."
+            
+            logger.info("Processing follow-up using document mode")
+            answer = self.question_handler.process_follow_up(follow_up_question, normalize_length=normalize_length)
+            self.add_to_conversation_history(follow_up_question, answer, "document_followup")
+            return answer
+
+    def get_mode_status(self) -> Dict:
+        """Get current mode status and information."""
+        return {
+            'internet_mode': self.internet_mode,
+            'documents_loaded': self.vector_store.is_ready(),
+            'total_documents': len(self.vector_store.documents) if self.vector_store.documents else 0,
+            'mode_description': 'Internet Search' if self.internet_mode else 'Document Search'
         }
 
 if __name__ == "__main__": 
