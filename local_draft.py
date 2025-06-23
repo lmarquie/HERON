@@ -1083,6 +1083,13 @@ class RAGSystem:
 
     def process_question_with_mode(self, question: str, normalize_length: bool = True) -> str:
         """Process question using either document mode or internet mode."""
+        # Check for image/graph requests first
+        if self.is_image_related_question(question) or self.is_semantic_image_request(question):
+            logger.info("Processing image/graph request")
+            answer = self.handle_semantic_image_search(question)
+            self.add_to_conversation_history(question, answer, "image_search")
+            return answer
+            
         if self.internet_mode:
             # Use internet mode
             logger.info("Processing question using internet mode")
@@ -1101,6 +1108,13 @@ class RAGSystem:
 
     def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
         """Process follow-up question using either document mode or internet mode."""
+        # Check for image/graph requests first
+        if self.is_image_related_question(follow_up_question) or self.is_semantic_image_request(follow_up_question):
+            logger.info("Processing follow-up image/graph request")
+            answer = self.handle_semantic_image_search(follow_up_question)
+            self.add_to_conversation_history(follow_up_question, answer, "image_search_followup")
+            return answer
+            
         if self.internet_mode:
             # Use internet mode for follow-up
             logger.info("Processing follow-up using internet mode")
