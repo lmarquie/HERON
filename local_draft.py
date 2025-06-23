@@ -926,7 +926,7 @@ class RAGSystem:
                 if good_matches:
                     return good_matches
                 else:
-                    return f"I found some images but they don't seem to match your request closely enough. Try being more specific about what you're looking for."
+                    return "I found some images but they don't seem to match your request closely enough. Try being more specific about what you're looking for."
             else:
                 return "I couldn't find any images matching your request. Try rephrasing or being more specific."
                 
