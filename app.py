@@ -81,22 +81,7 @@ def handle_image_request(question):
 
 # Follow-up question generation with improved error handling
 def generate_follow_up(follow_up_question):
-    try:
-        start_time = time.time()
-        
-        # Use the new mode-aware follow-up processing
-        answer = st.session_state.rag_system.process_follow_up_with_mode(follow_up_question, normalize_length=True)
-        
-        # Update performance metrics
-        response_time = time.time() - start_time
-        st.session_state.performance_metrics['last_response_time'] = response_time
-        
-        return answer
-        
-    except Exception as e:
-        st.session_state.error_count += 1
-        logger.error(f"Error generating follow-up: {str(e)}")
-        return f"Error: {str(e)}"
+    return st.session_state.rag_system.handle_follow_up(follow_up_question)
 
 # PDF Export function
 def export_conversation_to_pdf():
