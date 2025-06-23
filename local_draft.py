@@ -4,7 +4,6 @@ import faiss
 import fitz  # PyMuPDF
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
-from sentence_transformers import SentenceTransformer
 import requests
 import numpy as np
 from PIL import Image
@@ -18,6 +17,9 @@ import logging
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import openai
+import pdfplumber
+from abc import ABC, abstractmethod
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -501,32 +503,65 @@ class VectorStore:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                self.model = SentenceTransformer('all-MiniLM-L6-v2')
+                # Test the OpenAI API connection
+                client = openai.OpenAI(api_key=OPENAI_API_KEY)
+                # Test with a simple embedding
+                response = client.embeddings.create(input="test", model="text-embedding-ada-002")
                 self.initialized = True
-                logger.info("Embedding model initialized successfully")
+                logger.info("OpenAI embedding model initialized successfully")
                 break
             except Exception as e:
-                logger.warning(f"Attempt {attempt + 1} failed to initialize model: {str(e)}")
+                logger.warning(f"Attempt {attempt + 1} failed to initialize OpenAI model: {str(e)}")
                 if attempt == max_retries - 1:
-                    logger.error("Failed to initialize embedding model after all retries")
-                    self.model = None
+                    logger.error("Failed to initialize OpenAI embedding model after all retries")
+                    self.initialized = False
                 else:
                     time.sleep(1)  # Wait before retry
 
+    def get_openai_embedding(self, text, model="text-embedding-ada-002"):
+        """Get embedding from OpenAI API."""
+        try:
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            response = client.embeddings.create(input=text, model=model)
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(f"Error getting OpenAI embedding: {str(e)}")
+            return None
+
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store using local SentenceTransformer."""
+        """Add documents to the vector store using OpenAI embeddings."""
         if not documents:
             return
         
-        if not self.initialized or self.model is None:
+        if not self.initialized:
             logger.error("Model not initialized, cannot add documents")
             return
         
         try:
             texts = [doc['text'] for doc in documents]
-            embeddings = self.model.encode(texts, show_progress_bar=True, batch_size=32)
+            embeddings = []
             
-            self.documents.extend(documents)
+            # Process embeddings one by one to handle API limits
+            for text in texts:
+                emb = self.get_openai_embedding(text)
+                if emb is not None:
+                    embeddings.append(emb)
+                else:
+                    logger.warning(f"Failed to get embedding for text: {text[:100]}...")
+            
+            if not embeddings:
+                logger.error("No embeddings were successfully created. Check OpenAI API key and connectivity.")
+                return
+            
+            if len(embeddings) != len(documents):
+                logger.warning("Some documents could not be embedded and will be skipped.")
+                valid_docs = [doc for doc, emb in zip(documents, embeddings) if emb is not None]
+                embeddings = [emb for emb in embeddings if emb is not None]
+            else:
+                valid_docs = documents
+            
+            self.documents.extend(valid_docs)
+            embeddings = np.array(embeddings)
             
             if self.embeddings is None:
                 self.embeddings = embeddings
@@ -537,18 +572,28 @@ class VectorStore:
             self.index = faiss.IndexFlatIP(embedding_dim)
             self.index.add(self.embeddings.astype('float32'))
             
-            logger.info(f"Added {len(documents)} documents to vector store")
+            logger.info(f"Added {len(valid_docs)} documents to vector store (OpenAI embeddings)")
             
         except Exception as e:
             logger.error(f"Error adding documents to vector store: {str(e)}")
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
-        """Search for similar documents using local SentenceTransformer."""
+        """Search for similar documents using OpenAI embeddings."""
         if not self.documents or self.index is None or not self.initialized:
             return []
         
         try:
-            query_embedding = self.model.encode([query])
+            query_embedding = self.get_openai_embedding(query)
+            if query_embedding is None:
+                return []
+            
+            query_embedding = np.array([query_embedding])
+            
+            # Safety check: ensure we have valid embeddings
+            if self.embeddings is None or len(self.embeddings) == 0:
+                logger.warning("No embeddings available for search")
+                return []
+            
             scores, indices = self.index.search(query_embedding.astype('float32'), k)
             results = []
             for i, idx in enumerate(indices[0]):
@@ -562,6 +607,17 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error searching vector store: {str(e)}")
             return []
+
+    def is_ready(self) -> bool:
+        """Check if the vector store is properly initialized and ready for use."""
+        return (
+            self.initialized and
+            self.documents is not None and 
+            len(self.documents) > 0 and 
+            self.embeddings is not None and 
+            len(self.embeddings) > 0 and 
+            self.index is not None
+        )
 
 ### =================== Claude Handler =================== ###
 class ClaudeHandler:
