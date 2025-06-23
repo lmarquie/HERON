@@ -18,6 +18,7 @@ import logging
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import openai
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -502,71 +503,69 @@ class WebFileHandler:
 
 ### =================== Vector Store =================== ###
 class VectorStore:
-    def __init__(self, dimension: int = 768):
+    def __init__(self, dimension: int = 1536):
         self.documents = []
         self.embeddings = None
         self.index = None
         self.chunk_size = 500
         self.chunk_overlap = 50
-        self.model = None
-        self.initialized = False
-        
-        # Initialize embedding model with retry logic
-        self._initialize_model()
+        self.dimension = dimension
 
-    def _initialize_model(self):
-        """Initialize the embedding model with retry logic."""
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                self.model = SentenceTransformer('all-MiniLM-L6-v2')
-                self.initialized = True
-                logger.info("Embedding model initialized successfully")
-                break
-            except Exception as e:
-                logger.warning(f"Attempt {attempt + 1} failed to initialize model: {str(e)}")
-                if attempt == max_retries - 1:
-                    logger.error("Failed to initialize embedding model after all retries")
-                    self.model = None
-                else:
-                    time.sleep(1)  # Wait before retry
+    def get_openai_embedding(self, text, model="text-embedding-ada-002"):
+        try:
+            response = openai.Embedding.create(
+                input=text,
+                model=model,
+                api_key=OPENAI_API_KEY
+            )
+            return response['data'][0]['embedding']
+        except Exception as e:
+            logger.error(f"OpenAI embedding error: {str(e)}")
+            return None
 
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store using local SentenceTransformer."""
+        """Add documents to the vector store using OpenAI embeddings."""
         if not documents:
             return
-        
-        if not self.initialized or self.model is None:
-            logger.error("Model not initialized, cannot add documents")
-            return
-        
         try:
             texts = [doc['text'] for doc in documents]
-            embeddings = self.model.encode(texts, show_progress_bar=True, batch_size=32)
-            
-            self.documents.extend(documents)
-            
+            embeddings = []
+            for text in texts:
+                emb = self.get_openai_embedding(text)
+                if emb is not None:
+                    embeddings.append(emb)
+            if len(embeddings) != len(documents):
+                logger.warning("Some documents could not be embedded and will be skipped.")
+                # Only keep successfully embedded documents
+                valid_docs = [doc for doc, emb in zip(documents, embeddings) if emb is not None]
+                embeddings = [emb for emb in embeddings if emb is not None]
+            else:
+                valid_docs = documents
+            self.documents.extend(valid_docs)
+            import numpy as np
+            embeddings = np.array(embeddings)
             if self.embeddings is None:
                 self.embeddings = embeddings
             else:
                 self.embeddings = np.vstack([self.embeddings, embeddings])
-            
             embedding_dim = self.embeddings.shape[1]
+            import faiss
             self.index = faiss.IndexFlatIP(embedding_dim)
             self.index.add(self.embeddings.astype('float32'))
-            
-            logger.info(f"Added {len(documents)} documents to vector store")
-            
+            logger.info(f"Added {len(valid_docs)} documents to vector store (OpenAI embeddings)")
         except Exception as e:
             logger.error(f"Error adding documents to vector store: {str(e)}")
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
-        """Search for similar documents using local SentenceTransformer."""
-        if not self.documents or self.index is None or not self.initialized:
+        """Search for similar documents using OpenAI embeddings."""
+        if not self.documents or self.index is None:
             return []
-        
         try:
-            query_embedding = self.model.encode([query])
+            query_embedding = self.get_openai_embedding(query)
+            if query_embedding is None:
+                return []
+            import numpy as np
+            query_embedding = np.array([query_embedding])
             scores, indices = self.index.search(query_embedding.astype('float32'), k)
             results = []
             for i, idx in enumerate(indices[0]):
@@ -989,7 +988,7 @@ class RAGSystem:
     def get_performance_metrics(self):
         """Get performance metrics for monitoring."""
         return self.performance_metrics
- 
+
     def reset_performance_metrics(self):
         """Reset performance metrics."""
         self.performance_metrics = {
