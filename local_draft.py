@@ -19,6 +19,7 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import openai
+import pdfplumber
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -34,34 +35,69 @@ class TextProcessor:
         self.images_analyzed = set()  # Track which images have been analyzed
         self.processing_lock = threading.Lock()  # Thread safety for image processing
         self.error_count = 0  # Track errors for better error handling
+        self.extracted_tables = []  # Store extracted tables as structured data
 
     def extract_text_from_pdf(self, pdf_path: str, enable_image_processing: bool = False) -> str:
-        """Extract text and images from PDF, detect tables/graphs, and run OCR on each region (header + body)."""
+        """Extract text, tables, and images from PDF, detect tables/graphs, and run OCR on each region (header + body)."""
         try:
             doc = fitz.open(pdf_path)
             text_content = []
+            sectioned_content = []  # (section_title, text)
+            current_section = "Introduction"
+            current_text = []
+            self.extracted_tables = []  # Reset for each PDF
             
             if enable_image_processing:
                 os.makedirs("images", exist_ok=True)
             
+            # --- Table extraction with pdfplumber ---
+            try:
+                with pdfplumber.open(pdf_path) as plumber_pdf:
+                    for page_num, page in enumerate(plumber_pdf.pages):
+                        tables = page.extract_tables()
+                        for t_idx, table in enumerate(tables):
+                            # Convert table to markdown for preview, and plain text for embedding
+                            table_md = self._table_to_markdown(table)
+                            table_txt = self._table_to_text(table)
+                            self.extracted_tables.append({
+                                'page': page_num + 1,
+                                'table_num': t_idx + 1,
+                                'table_markdown': table_md,
+                                'table_text': table_txt,
+                                'source': pdf_path
+                            })
+            except Exception as e:
+                logger.warning(f"pdfplumber table extraction error: {str(e)}")
+            # --- End table extraction ---
+            
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
-                text = page.get_text()
-                text_content.append(f"Page {page_num + 1}: {text}")
-
-                # Only process images if enabled (much faster without this)
+                blocks = page.get_text("dict")['blocks']
+                for block in blocks:
+                    if block['type'] == 0:  # text block
+                        for line in block['lines']:
+                            line_text = " ".join([span['text'] for span in line['spans']]).strip()
+                            max_font = max([span['size'] for span in line['spans']])
+                            is_heading = (
+                                max_font > 13 or
+                                line_text.isupper() or
+                                (len(line_text) < 80 and (line_text.endswith(":") or line_text.endswith("."))) or
+                                (line_text and (line_text[0].isdigit() and "." in line_text))
+                            )
+                            if is_heading and len(line_text) > 2:
+                                if current_text:
+                                    sectioned_content.append((current_section, " ".join(current_text)))
+                                    current_text = []
+                                current_section = line_text
+                            else:
+                                current_text.append(line_text)
                 if enable_image_processing:
                     try:
-                        # Render page as image with lower DPI for speed
-                        pix = page.get_pixmap(dpi=150)  # Reduced from 200 to 150
+                        pix = page.get_pixmap(dpi=150)
                         img_data = pix.tobytes("png")
                         img_array = np.frombuffer(img_data, np.uint8)
-                        
-                        # Check image size to prevent processing extremely large images
-                        if len(img_array) > 25 * 1024 * 1024:  # Reduced to 25MB limit
+                        if len(img_array) > 25 * 1024 * 1024:
                             continue
-                        
-                        # Add error handling for large PNG chunks
                         img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                         if img_cv is not None:
                             detected_regions = self.detect_tables_and_graphs(img_cv)
@@ -71,9 +107,7 @@ class TextProcessor:
                                 img_path = os.path.join("images", img_filename)
                                 cv2.imwrite(img_path, crop)
                                 img_key = f"page_{page_num + 1}_detected_{idx + 1}"
-                                # OCR on the cropped region (body)
                                 ocr_text = self.ocr_image(crop)
-                                # OCR on the header (top 20%)
                                 header_h = max(1, int(h * 0.2))
                                 header_crop = crop[0:header_h, :]
                                 ocr_header = self.ocr_image(header_crop)
@@ -88,14 +122,32 @@ class TextProcessor:
                     except Exception as e:
                         logger.warning(f"Error processing images on page {page_num + 1}: {str(e)}")
                         continue
-                        
+            if current_text:
+                sectioned_content.append((current_section, " ".join(current_text)))
             doc.close()
-            final_content = "\n".join(text_content)
-            return final_content
+            flat_text = "\n".join([f"{sec}\n{text}" for sec, text in sectioned_content])
+            self.sectioned_content = sectioned_content  # Save for chunking
+            return flat_text
         except Exception as e:
             self.error_count += 1
             logger.error(f"Error extracting text from PDF: {str(e)}")
             return f"Error extracting text from PDF: {str(e)}"
+
+    def _table_to_markdown(self, table):
+        if not table or not table[0]:
+            return ""
+        header = table[0]
+        rows = table[1:]
+        md = "| " + " | ".join(header) + " |\n"
+        md += "|" + "---|" * len(header) + "\n"
+        for row in rows:
+            md += "| " + " | ".join(row) + " |\n"
+        return md
+
+    def _table_to_text(self, table):
+        if not table:
+            return ""
+        return "\n".join(["\t".join(row) for row in table])
 
     def detect_tables_and_graphs(self, img_cv):
         """Detect likely tables/graphs in a page image using OpenCV (returns list of bounding boxes)."""
@@ -337,35 +389,54 @@ class TextProcessor:
         return self.extracted_images
 
     def chunk_text(self, text: str) -> List[str]:
-        """Split text into overlapping chunks."""
-        if not text.strip():
-            return []
-        
+        """Split text into overlapping chunks, context-aware if sectioned_content is available, and add tables as special chunks."""
         chunks = []
-        start = 0
-        
-        while start < len(text):
-            end = start + self.chunk_size
-            
-            if end >= len(text):
-                chunks.append(text[start:])
-                break
-            
-            # Try to break at a sentence boundary
-            last_period = text.rfind('.', start, end)
-            last_newline = text.rfind('\n', start, end)
-            
-            if last_period > start and last_period > last_newline:
-                end = last_period + 1
-            elif last_newline > start:
-                end = last_newline + 1
-            
-            chunks.append(text[start:end])
-            start = end - self.overlap
-            
-            if start >= len(text):
-                break
-        
+        # Add sectioned text chunks
+        if hasattr(self, 'sectioned_content') and self.sectioned_content:
+            for section_title, section_text in self.sectioned_content:
+                start = 0
+                while start < len(section_text):
+                    end = start + self.chunk_size
+                    if end >= len(section_text):
+                        chunk = section_text[start:]
+                        if chunk.strip():
+                            chunks.append(f"[{section_title}]\n{chunk.strip()}")
+                        break
+                    last_period = section_text.rfind('.', start, end)
+                    last_newline = section_text.rfind('\n', start, end)
+                    if last_period > start and last_period > last_newline:
+                        end = last_period + 1
+                    elif last_newline > start:
+                        end = last_newline + 1
+                    chunk = section_text[start:end]
+                    if chunk.strip():
+                        chunks.append(f"[{section_title}]\n{chunk.strip()}")
+                    start = end - self.overlap
+                    if start >= len(section_text):
+                        break
+        # Add table chunks
+        if hasattr(self, 'extracted_tables') and self.extracted_tables:
+            for table in self.extracted_tables:
+                table_chunk = f"[TABLE page {table['page']} table {table['table_num']} from {os.path.basename(table['source'])}]:\n{table['table_text']}"
+                chunks.append(table_chunk)
+        # fallback to old logic if no sectioned_content
+        if not chunks and text.strip():
+            start = 0
+            while start < len(text):
+                end = start + self.chunk_size
+                if end >= len(text):
+                    chunks.append(text[start:])
+                    break
+                last_period = text.rfind('.', start, end)
+                last_newline = text.rfind('\n', start, end)
+                if last_period > start and last_period > last_newline:
+                    end = last_period + 1
+                elif last_newline > start:
+                    end = last_newline + 1
+                chunks.append(text[start:end])
+                start = end - self.overlap
+                if start >= len(text):
+                    break
         return chunks
 
     def prepare_documents(self, pdf_paths: List[str]) -> List[Dict]:
