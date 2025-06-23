@@ -984,7 +984,7 @@ class RAGSystem:
 
     def reset_performance_metrics(self):
         """Reset performance metrics."""
-        self.performance_metrics = {
+        self.performance_metrics = { 
             'total_queries': 0,
             'avg_response_time': 0,
             'error_count': 0
