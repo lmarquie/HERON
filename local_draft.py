@@ -512,16 +512,9 @@ class VectorStore:
         self.dimension = dimension
 
     def get_openai_embedding(self, text, model="text-embedding-ada-002"):
-        try:
-            response = openai.Embedding.create(
-                input=text,
-                model=model,
-                api_key=OPENAI_API_KEY
-            )
-            return response['data'][0]['embedding']
-        except Exception as e:
-            logger.error(f"OpenAI embedding error: {str(e)}")
-            return None
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.embeddings.create(input=text, model=model)
+        return response.data[0].embedding
 
     def add_documents(self, documents: List[Dict]):
         """Add documents to the vector store using OpenAI embeddings."""
