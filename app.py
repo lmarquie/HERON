@@ -8,6 +8,7 @@ from reportlab.lib.units import inch
 from datetime import datetime
 import time
 import logging
+import json
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -174,6 +175,24 @@ initialize_rag_system()
 with st.sidebar:
     st.header("Upload Documents")
     
+    # Show uploaded documents and allow removal
+    if 'last_uploaded_files' in st.session_state and st.session_state['last_uploaded_files']:
+        st.subheader("Uploaded Documents")
+        docs_to_remove = []
+        for doc_name in st.session_state['last_uploaded_files']:
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.write(doc_name)
+            with col2:
+                if st.button(f"Remove", key=f"remove_{doc_name}"):
+                    docs_to_remove.append(doc_name)
+        # Remove selected docs
+        if docs_to_remove:
+            st.session_state['last_uploaded_files'] = [d for d in st.session_state['last_uploaded_files'] if d not in docs_to_remove]
+            st.session_state.documents_loaded = False
+            st.session_state.processing_status = {}
+            st.experimental_rerun()
+
     uploaded_files = st.file_uploader(
         "Upload PDF files",
         type=['pdf'],
@@ -181,37 +200,41 @@ with st.sidebar:
         key="pdf_uploader"
     )
     
+    # Progress indicator and status
     if uploaded_files:
-        # Check if files are new (different from last upload)
         current_files = [f.name for f in uploaded_files]
         last_files = st.session_state.get('last_uploaded_files', [])
-        
         if current_files != last_files or not st.session_state.get('documents_loaded'):
             st.session_state.last_uploaded_files = current_files
             st.session_state.last_upload_time = time.time()
-            
             with st.spinner("Processing documents..."):
+                # Show progress bar for processing
+                progress_bar = st.progress(0)
+                total_steps = 3
+                progress_bar.progress(1/total_steps, text="Uploading files...")
+                time.sleep(0.5)
                 if st.session_state.rag_system.process_web_uploads(uploaded_files):
+                    progress_bar.progress(2/total_steps, text="Embedding documents...")
+                    time.sleep(0.5)
                     st.success(f"Processed {len(uploaded_files)} file(s)")
                     st.session_state.documents_loaded = True
-                    
-                    # Get processing status
                     processing_status = st.session_state.rag_system.file_handler.get_processing_status()
                     st.session_state.processing_status = processing_status
-                    
-                    # Show processing details
-                    if processing_status:
-                        st.subheader("Processing Details:")
-                        for filename, status in processing_status.items():
-                            if status == "success":
-                                st.success(f"✅ {filename}")
-                            else:
-                                st.error(f"❌ {filename}")
+                    progress_bar.progress(1.0, text="Ready!")
                 else:
                     st.error("Failed to process files")
                     st.session_state.documents_loaded = False
+                    progress_bar.progress(1.0, text="Error")
         else:
             st.info("Documents already loaded. Upload new files to replace them.")
+    # Show processing details
+    if st.session_state.get('processing_status'):
+        st.subheader("Processing Details:")
+        for filename, status in st.session_state['processing_status'].items():
+            if status == "success":
+                st.success(f"✅ {filename}")
+            else:
+                st.error(f"❌ {filename}")
 
 # Internet mode toggle
 st.sidebar.markdown("---")
@@ -278,7 +301,26 @@ if conversation_history:
                 else:
                     st.write("No images were found in the uploaded documents.")
             else:
-                st.write(f"**Answer:** {conv['answer']}")
+                # Highlight relevant text if available
+                answer = conv['answer']
+                highlight = conv.get('highlight')
+                if highlight and highlight in answer:
+                    # Use HTML <mark> for highlighting
+                    answer = answer.replace(highlight, f'<mark>{highlight}</mark>')
+                    st.markdown(f"**Answer:** {answer}", unsafe_allow_html=True)
+                else:
+                    st.write(f"**Answer:** {answer}")
+                # Show source attribution if available
+                doc_name = conv.get('source_document')
+                page_num = conv.get('source_page')
+                if doc_name or page_num:
+                    attribution = "<sub>"
+                    if doc_name:
+                        attribution += f"Source: {doc_name}"
+                    if page_num:
+                        attribution += f" (Page {page_num})"
+                    attribution += "</sub>"
+                    st.markdown(attribution, unsafe_allow_html=True)
 
 # Show main question input only if there is no conversation history
 if not conversation_history:
@@ -406,7 +448,6 @@ with col2:
                 # Read the PDF file and create download button
                 with open(pdf_path, "rb") as pdf_file:
                     pdf_bytes = pdf_file.read()
-                
                 st.download_button(
                     label="Download PDF",
                     data=pdf_bytes,
@@ -415,21 +456,101 @@ with col2:
                 )
         else:
             st.warning("No conversation to export")
+    # Export as Markdown
+    if st.button("Export Markdown"):
+        if conversation_history:
+            md_lines = ["# HERON Conversation Export\n"]
+            for i, conv in enumerate(conversation_history):
+                md_lines.append(f"**Q{i+1}:** {conv['question']}")
+                if isinstance(conv['answer'], list):
+                    md_lines.append(f"**A{i+1}:** [Image(s) attached]")
+                else:
+                    md_lines.append(f"**A{i+1}:** {conv['answer']}")
+                doc_name = conv.get('source_document')
+                page_num = conv.get('source_page')
+                if doc_name or page_num:
+                    attr = "Source: "
+                    if doc_name:
+                        attr += doc_name
+                    if page_num:
+                        attr += f" (Page {page_num})"
+                    md_lines.append(f"<sub>{attr}</sub>")
+                md_lines.append("")
+            md_content = "\n".join(md_lines)
+            st.download_button(
+                label="Download Markdown",
+                data=md_content,
+                file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                mime="text/markdown"
+            )
+        else:
+            st.warning("No conversation to export")
+    # Export as CSV
+    if st.button("Export CSV"):
+        if conversation_history:
+            import csv
+            import io
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(["Question", "Answer", "Source Document", "Page"])
+            for conv in conversation_history:
+                answer = conv['answer'] if not isinstance(conv['answer'], list) else '[Image(s) attached]'
+                writer.writerow([
+                    conv['question'],
+                    answer,
+                    conv.get('source_document', ''),
+                    conv.get('source_page', '')
+                ])
+            st.download_button(
+                label="Download CSV",
+                data=output.getvalue(),
+                file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.warning("No conversation to export")
 
-with col3:
-    if st.button("Performance Stats"):
-        metrics = st.session_state.rag_system.get_performance_metrics()
-        stats = st.session_state.rag_system.question_handler.get_conversation_stats()
-        
-        st.subheader("System Performance")
-        st.metric("Total Queries", metrics.get('total_queries', 0))
-        st.metric("Errors", metrics.get('error_count', 0))
-        if 'last_response_time' in st.session_state.performance_metrics:
-            st.metric("Last Response Time", f"{st.session_state.performance_metrics['last_response_time']:.2f}s")
-        
-        st.subheader("Conversation Stats")
-        st.metric("Total Questions", stats.get('total_questions', 0))
-        st.metric("Error Count", stats.get('error_count', 0))
+# Add session persistence controls below export buttons
+st.markdown("")
+col_save, col_load = st.columns(2)
+with col_save:
+    if st.button("Save Session"):
+        # Prepare session data
+        session_data = {
+            'conversation_history': st.session_state.rag_system.get_conversation_history(),
+            'last_uploaded_files': st.session_state.get('last_uploaded_files', []),
+            'documents_loaded': st.session_state.get('documents_loaded', False),
+            'performance_metrics': st.session_state.get('performance_metrics', {}),
+            'error_count': st.session_state.get('error_count', 0),
+            'last_upload_time': st.session_state.get('last_upload_time', None),
+            'processing_status': st.session_state.get('processing_status', {}),
+            'internet_mode': st.session_state.get('internet_mode', False)
+        }
+        session_json = json.dumps(session_data, indent=2)
+        st.download_button(
+            label="Download Session",
+            data=session_json,
+            file_name=f"heron_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json"
+        )
+with col_load:
+    uploaded_session = st.file_uploader("Load Session", type=["json"], key="session_loader")
+    if uploaded_session is not None:
+        try:
+            session_data = json.load(uploaded_session)
+            # Restore session state
+            st.session_state['last_uploaded_files'] = session_data.get('last_uploaded_files', [])
+            st.session_state['documents_loaded'] = session_data.get('documents_loaded', False)
+            st.session_state['performance_metrics'] = session_data.get('performance_metrics', {})
+            st.session_state['error_count'] = session_data.get('error_count', 0)
+            st.session_state['last_upload_time'] = session_data.get('last_upload_time', None)
+            st.session_state['processing_status'] = session_data.get('processing_status', {})
+            st.session_state['internet_mode'] = session_data.get('internet_mode', False)
+            # Restore conversation history in RAG system
+            st.session_state.rag_system.set_conversation_history(session_data.get('conversation_history', []))
+            st.success("Session loaded! Reload the page if needed.")
+        except Exception as e:
+            st.error(f"Failed to load session: {e}")
 
 # Error display
 if st.session_state.error_count > 0:
