@@ -1126,6 +1126,24 @@ class RAGSystem:
             'mode_description': 'Internet Search' if self.internet_mode else 'Document Search'
         }
 
+    def handle_follow_up(self, follow_up_question: str, normalize_length: bool = True):
+        """Encapsulate all follow-up logic: timing, error handling, metrics, and answer."""
+        import time
+        start_time = time.time()
+        try:
+            answer = self.process_follow_up_with_mode(follow_up_question, normalize_length=normalize_length)
+            response_time = time.time() - start_time
+            if not hasattr(self, 'performance_metrics'):
+                self.performance_metrics = {}
+            self.performance_metrics['last_response_time'] = response_time
+            return answer
+        except Exception as e:
+            if hasattr(self, 'performance_metrics'):
+                self.performance_metrics['error_count'] = self.performance_metrics.get('error_count', 0) + 1
+            import logging
+            logging.getLogger(__name__).error(f"Error generating follow-up: {str(e)}")
+            return f"Error: {str(e)}"
+
 if __name__ == "__main__": 
     rag_system = RAGSystem()
     rag_system.run() 
