@@ -374,7 +374,7 @@ if conversation_history:
         # Increment the input key counter to force clear
         st.session_state.followup_input_key_counter += 1
         # Rerun to update conversation history and clear input
-        st.experimental_rerun()
+        st.rerun()
 
 # Control buttons
 st.markdown("---")
