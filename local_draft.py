@@ -20,6 +20,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import openai
 import pdfplumber
 from abc import ABC, abstractmethod
+from docx import Document as DocxDocument
+from pptx import Presentation
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -441,23 +443,26 @@ class WebFileHandler:
     def _process_single_file(self, uploaded_file):
         """Process a single uploaded file."""
         try:
-            # Save uploaded file temporarily
+            ext = os.path.splitext(uploaded_file.name)[1].lower()
             temp_path = f"temp/{uploaded_file.name}"
             os.makedirs("temp", exist_ok=True)
-            
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
-            
-            # Save the path for later image processing
+
             self.saved_pdf_paths.append(temp_path)
-            
-            # Extract text from PDF (disable image processing for speed)
-            text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
-            
-            if text_content.strip():
-                # Split into chunks
+
+            if ext == ".pdf":
+                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
+            elif ext == ".docx":
+                text_content = extract_text_from_docx(temp_path)
+            elif ext in [".pptx"]:
+                text_content = extract_text_from_pptx(temp_path)
+            else:
+                logger.warning(f"Unsupported file type: {uploaded_file.name}")
+                return None
+
+            if text_content and text_content.strip():
                 chunks = self.text_processor.chunk_text(text_content)
-                
                 documents = []
                 for i, chunk in enumerate(chunks):
                     if chunk.strip():
@@ -470,11 +475,10 @@ class WebFileHandler:
                                 'date': datetime.now().strftime('%Y-%m-%d')
                             }
                         })
-                
                 return documents
             else:
                 return None
-                
+
         except Exception as e:
             logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
             return None
