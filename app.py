@@ -269,7 +269,7 @@ if conversation_history:
         follow_up_question = st.session_state.get(follow_up_input_key, "")
         if follow_up_question.strip():
             generate_follow_up(follow_up_question)
-            st.experimental_rerun()
+            st.rerun()
         # Only increment after rerun, so the key stays in sync
         st.session_state.followup_input_key_counter += 1
     
