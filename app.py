@@ -6,35 +6,38 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from datetime import datetime
+import time
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Set page config
 st.set_page_config(
     page_title="HERON",
+    page_icon="🦅",
     layout="wide"
 )
 
-# Modern centered blue logo and title
-st.markdown(
-    """
-    <div style='text-align: center; margin-bottom: 1.5em;'>
-        <h1 style='margin-bottom: 0; color: #1f77b4; font-family: "Segoe UI", "Arial", sans-serif;'>HERON</h1>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-# Initialize RAG system
+# Initialize RAG system with improved session management
 def initialize_rag_system():
     if 'rag_system' not in st.session_state:
         st.session_state.rag_system = RAGSystem(is_web=True, use_vision_api=False)
         st.session_state.documents_loaded = False
-        st.session_state.answer_given = False  # Track if an answer has been given
+        st.session_state.answer_given = False
+        st.session_state.processing_status = {}
+        st.session_state.last_upload_time = None
+        st.session_state.error_count = 0
+        st.session_state.performance_metrics = {}
 
-# Simple answer generation
+# Simple answer generation with improved error handling
 def generate_answer(question):
     try:
         if not st.session_state.documents_loaded:
             return "No documents loaded. Please upload documents first."
+        
+        start_time = time.time()
         
         # Check if this is an image-related question that requires image processing
         if st.session_state.rag_system.is_image_related_question(question):
@@ -42,7 +45,9 @@ def generate_answer(question):
             pdf_path = st.session_state.rag_system.get_pdf_path_for_question(question)
             if pdf_path:
                 with st.spinner("Processing images for your question..."):
-                    st.session_state.rag_system.process_images_on_demand(pdf_path)
+                    success = st.session_state.rag_system.process_images_on_demand(pdf_path)
+                    if not success:
+                        return "Error processing images. Please try again."
         
         # Check if user is asking to see images
         if any(word in question.lower() for word in ['show', 'display', 'image', 'picture', 'chart', 'graph']):
@@ -52,18 +57,24 @@ def generate_answer(question):
         if st.session_state.rag_system.is_semantic_image_request(question):
             return st.session_state.rag_system.handle_semantic_image_search(question)
         
-        # Use the logic from local_draft
-        answer = st.session_state.rag_system.question_handler.process_question(question)
+        # Use the logic from local_draft with response normalization
+        answer = st.session_state.rag_system.question_handler.process_question(question, normalize_length=True)
         
         # Store in conversation history using logic layer
         st.session_state.rag_system.add_to_conversation_history(question, answer, "initial")
         
+        # Update performance metrics
+        response_time = time.time() - start_time
+        st.session_state.performance_metrics['last_response_time'] = response_time
+        
         return answer
         
     except Exception as e:
+        st.session_state.error_count += 1
+        logger.error(f"Error generating answer: {str(e)}")
         return f"Error: {str(e)}"
 
-# Handle image display requests
+# Handle image display requests with improved error handling
 def handle_image_request(question):
     """Handle requests to show images."""
     try:
@@ -85,14 +96,17 @@ def handle_image_request(question):
             # Show all images
             return list(all_images.values())
     except Exception as e:
-        st.error(f"Error handling image request: {str(e)}")
+        st.session_state.error_count += 1
+        logger.error(f"Error handling image request: {str(e)}")
         return []
 
-# Follow-up question generation
+# Follow-up question generation with improved error handling
 def generate_follow_up(follow_up_question):
     try:
         if not st.session_state.documents_loaded:
             return "No documents loaded. Please upload documents first."
+        
+        start_time = time.time()
         
         # Check if this is an image-related question that requires image processing
         if st.session_state.rag_system.is_image_related_question(follow_up_question):
@@ -100,7 +114,9 @@ def generate_follow_up(follow_up_question):
             pdf_path = st.session_state.rag_system.get_pdf_path_for_question(follow_up_question)
             if pdf_path:
                 with st.spinner("Processing images for your question..."):
-                    st.session_state.rag_system.process_images_on_demand(pdf_path)
+                    success = st.session_state.rag_system.process_images_on_demand(pdf_path)
+                    if not success:
+                        return "Error processing images. Please try again."
         
         # Check if user is asking to see images
         if any(word in follow_up_question.lower() for word in ['show', 'display', 'image', 'picture', 'chart', 'graph']):
@@ -110,17 +126,21 @@ def generate_follow_up(follow_up_question):
         if st.session_state.rag_system.is_semantic_image_request(follow_up_question):
             return st.session_state.rag_system.handle_semantic_image_search(follow_up_question)
         
-        # Use the logic from local_draft
-        answer = st.session_state.rag_system.question_handler.process_follow_up(follow_up_question)
+        # Use the logic from local_draft with response normalization
+        answer = st.session_state.rag_system.question_handler.process_follow_up(follow_up_question, normalize_length=True)
         
         # Store in conversation history using logic layer
         st.session_state.rag_system.add_to_conversation_history(follow_up_question, answer, "follow_up")
         
-        st.session_state[follow_up_key] = ""
+        # Update performance metrics
+        response_time = time.time() - start_time
+        st.session_state.performance_metrics['last_response_time'] = response_time
         
         return answer
         
     except Exception as e:
+        st.session_state.error_count += 1
+        logger.error(f"Error generating follow-up: {str(e)}")
         return f"Error: {str(e)}"
 
 # PDF Export function
@@ -180,13 +200,24 @@ def export_conversation_to_pdf():
         return pdf_path
         
     except Exception as e:
-        st.error(f"Error creating PDF: {str(e)}")
+        logger.error(f"Error creating PDF: {str(e)}")
         return None
+
+# Handle Enter key submission
+def handle_enter_key():
+    """Handle Enter key press for question submission."""
+    if st.session_state.get('question_input', '').strip():
+        st.session_state.submit_question = True
+
+def handle_followup_enter_key():
+    """Handle Enter key press for follow-up question submission."""
+    if st.session_state.get('followup_input', '').strip():
+        st.session_state.submit_followup = True
 
 # Main app
 initialize_rag_system()
 
-# Simple sidebar
+# Simple sidebar with improved file handling
 with st.sidebar:
     st.header("Upload Documents")
     
@@ -194,22 +225,52 @@ with st.sidebar:
         "Upload PDF files",
         type=['pdf'],
         accept_multiple_files=True,
-        key="pdf_uploader"  # Add stable key to prevent reruns
+        key="pdf_uploader"
     )
     
     if uploaded_files:
-        # Only process uploads if not already loaded
-        if not st.session_state.get('documents_loaded'):
-            if st.session_state.rag_system.process_web_uploads(uploaded_files):
-                st.success(f"Processed {len(uploaded_files)} file(s)")
-                st.session_state.documents_loaded = True
-            else:
-                st.error("Failed to process files")
+        # Check if files are new (different from last upload)
+        current_files = [f.name for f in uploaded_files]
+        last_files = st.session_state.get('last_uploaded_files', [])
+        
+        if current_files != last_files or not st.session_state.get('documents_loaded'):
+            st.session_state.last_uploaded_files = current_files
+            st.session_state.last_upload_time = time.time()
+            
+            with st.spinner("Processing documents..."):
+                if st.session_state.rag_system.process_web_uploads(uploaded_files):
+                    st.success(f"Processed {len(uploaded_files)} file(s)")
+                    st.session_state.documents_loaded = True
+                    
+                    # Get processing status
+                    processing_status = st.session_state.rag_system.file_handler.get_processing_status()
+                    st.session_state.processing_status = processing_status
+                    
+                    # Show processing details
+                    if processing_status:
+                        st.subheader("Processing Details:")
+                        for filename, status in processing_status.items():
+                            if status == "success":
+                                st.success(f"✅ {filename}")
+                            else:
+                                st.error(f"❌ {filename}")
+                else:
+                    st.error("Failed to process files")
+                    st.session_state.documents_loaded = False
         else:
             st.info("Documents already loaded. Upload new files to replace them.")
 
+# Performance metrics in sidebar
+if st.session_state.performance_metrics:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Performance")
+    if 'last_response_time' in st.session_state.performance_metrics:
+        st.sidebar.metric("Last Response Time", f"{st.session_state.performance_metrics['last_response_time']:.2f}s")
+    if st.session_state.error_count > 0:
+        st.sidebar.metric("Errors", st.session_state.error_count)
+
 # Main content
-# st.title("HERON")
+st.title("HERON")
 
 # Display conversation history using logic layer
 conversation_history = st.session_state.rag_system.get_conversation_history()
@@ -238,8 +299,19 @@ if conversation_history:
 
 # Show main question input only if there is no conversation history
 if not conversation_history:
-    question = st.text_input("Ask a question about your documents:")
-    if st.button("Get Answer", type="primary"):
+    # Initialize submit flag
+    if 'submit_question' not in st.session_state:
+        st.session_state.submit_question = False
+    
+    question = st.text_input(
+        "Ask a question about your documents:",
+        key="question_input",
+        on_change=handle_enter_key,
+        help="Press Enter to submit or click the button below"
+    )
+    
+    # Handle submission via button or Enter key
+    if st.button("Get Answer", type="primary") or st.session_state.submit_question:
         if st.session_state.documents_loaded:
             with st.spinner("Processing..."):
                 answer = generate_answer(question)
@@ -261,20 +333,29 @@ if not conversation_history:
                 else:
                     st.write(answer)
             st.session_state.answer_given = True
+            st.session_state.submit_question = False  # Reset flag
         else:
             st.error("Please upload documents first")
+
 # Show follow-up input only if there is conversation history
 if conversation_history:
     st.markdown("---")
+    
+    # Initialize submit flag
+    if 'submit_followup' not in st.session_state:
+        st.session_state.submit_followup = False
+    
     def submit_followup():
         follow_up_question = st.session_state["followup_input"]
         if follow_up_question.strip():
-            try:
+            with st.spinner("Processing follow-up..."):
                 follow_up_answer = generate_follow_up(follow_up_question)
+                # If answer is a list (image info), display images
                 if isinstance(follow_up_answer, list):
                     if follow_up_answer:
-                        img_info = follow_up_answer[0]
+                        img_info = follow_up_answer[0]  # Only show the most relevant image
                         if os.path.exists(img_info['path']):
+                            # Display image with enhanced caption
                             caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
                             if 'description' in img_info:
                                 caption += f" - {img_info['description']}"
@@ -283,70 +364,110 @@ if conversation_history:
                             st.image(img_info['path'], caption=caption, use_container_width=True)
                     else:
                         st.write("No images were found in the uploaded documents.")
-                elif isinstance(follow_up_answer, str):
-                    st.write(follow_up_answer)
                 else:
-                    st.write("Unexpected answer type.")
-                # Only clear input if answer is not an error message
-                if not (isinstance(follow_up_answer, str) and follow_up_answer.lower().startswith("error")):
-                    st.session_state["followup_input"] = ""
-            except Exception as e:
-                st.error(f"Error processing follow-up: {e}")
+                    st.write(follow_up_answer)
+            st.session_state["followup_input"] = ""  # Clear after processing
+            st.session_state.submit_followup = False  # Reset flag
+    
     st.text_input(
         "Ask a follow-up question:",
         key="followup_input",
         value=st.session_state.get("followup_input", ""),
-        on_change=submit_followup
+        on_change=handle_followup_enter_key,
+        help="Press Enter to submit"
     )
+    
+    # Handle submission via Enter key
+    if st.session_state.submit_followup:
+        submit_followup()
 
 # Control buttons
 st.markdown("---")
 
-if st.button("Reset"):
-    # Clear session state and conversation history
-    st.session_state.rag_system.clear_conversation_history()
-    
-    # Clear the answer given flag
-    if 'answer_given' in st.session_state:
-        del st.session_state.answer_given
-    
-    # Clean up temporary PDF files
-    if hasattr(st.session_state.rag_system.file_handler, 'get_saved_pdf_paths'):
-        saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
-        for pdf_path in saved_paths:
-            if os.path.exists(pdf_path):
-                try:
-                    os.remove(pdf_path)
-                    print(f"Cleaned up: {pdf_path}")
-                except Exception as e:
-                    print(f"Could not remove {pdf_path}: {e}")
-    
-    # Clean up image files
-    if os.path.exists("images"):
-        import shutil
-        try:
-            shutil.rmtree("images")
-            print("Cleaned up images directory")
-        except Exception as e:
-            print(f"Could not clean up images directory: {e}")
-    
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    st.rerun()
+col1, col2, col3 = st.columns(3)
 
-if st.button("Export PDF"):
-    if conversation_history:
-        pdf_path = export_conversation_to_pdf()
-        if pdf_path:
-            # Read the PDF file and create download button
-            with open(pdf_path, "rb") as pdf_file:
-                pdf_bytes = pdf_file.read()
-            
-            st.download_button(
-                label="Download PDF",
-                data=pdf_bytes,
-                file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                mime="application/pdf"
-            )
-    else:
-        st.warning("No conversation to export") 
+with col1:
+    if st.button("Reset Session", type="secondary"):
+        # Clear session state and conversation history
+        st.session_state.rag_system.clear_conversation_history()
+        
+        # Clear the answer given flag
+        if 'answer_given' in st.session_state:
+            del st.session_state.answer_given
+        
+        # Clean up temporary PDF files
+        if hasattr(st.session_state.rag_system.file_handler, 'get_saved_pdf_paths'):
+            saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
+            for pdf_path in saved_paths:
+                if os.path.exists(pdf_path):
+                    try:
+                        os.remove(pdf_path)
+                        logger.info(f"Cleaned up: {pdf_path}")
+                    except Exception as e:
+                        logger.error(f"Could not remove {pdf_path}: {e}")
+        
+        # Clean up image files
+        if os.path.exists("images"):
+            import shutil
+            try:
+                shutil.rmtree("images")
+                logger.info("Cleaned up images directory")
+            except Exception as e:
+                logger.error(f"Could not clean up images directory: {e}")
+        
+        # Reset performance metrics
+        st.session_state.rag_system.reset_performance_metrics()
+        st.session_state.error_count = 0
+        st.session_state.performance_metrics = {}
+        
+        # Clear upload state
+        st.session_state.documents_loaded = False
+        st.session_state.last_uploaded_files = []
+        st.session_state.processing_status = {}
+        
+        st.rerun()
+
+with col2:
+    if st.button("Export PDF"):
+        if conversation_history:
+            pdf_path = export_conversation_to_pdf()
+            if pdf_path:
+                # Read the PDF file and create download button
+                with open(pdf_path, "rb") as pdf_file:
+                    pdf_bytes = pdf_file.read()
+                
+                st.download_button(
+                    label="Download PDF",
+                    data=pdf_bytes,
+                    file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf"
+                )
+        else:
+            st.warning("No conversation to export")
+
+with col3:
+    if st.button("Performance Stats"):
+        metrics = st.session_state.rag_system.get_performance_metrics()
+        stats = st.session_state.rag_system.question_handler.get_conversation_stats()
+        
+        st.subheader("System Performance")
+        st.metric("Total Queries", metrics.get('total_queries', 0))
+        st.metric("Errors", metrics.get('error_count', 0))
+        if 'last_response_time' in st.session_state.performance_metrics:
+            st.metric("Last Response Time", f"{st.session_state.performance_metrics['last_response_time']:.2f}s")
+        
+        st.subheader("Conversation Stats")
+        st.metric("Total Questions", stats.get('total_questions', 0))
+        st.metric("Error Count", stats.get('error_count', 0))
+
+# Error display
+if st.session_state.error_count > 0:
+    st.error(f"⚠️ {st.session_state.error_count} error(s) encountered. Check the logs for details.")
+
+# Session info
+if st.session_state.documents_loaded:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Session Info")
+    st.sidebar.info(f"Documents loaded: {len(st.session_state.get('last_uploaded_files', []))}")
+    if st.session_state.last_upload_time:
+        st.sidebar.info(f"Last upload: {datetime.fromtimestamp(st.session_state.last_upload_time).strftime('%H:%M:%S')}") 
