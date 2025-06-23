@@ -645,9 +645,9 @@ class ClaudeHandler:
         
         question_lower = question.lower()
         
-        # Short responses for simple questions
-        if any(word in question_lower for word in ['what is', 'define', 'explain briefly', 'summarize']):
-            return 300
+        # Long responses for summarization/overview questions
+        if any(word in question_lower for word in ['what is', 'define', 'explain briefly', 'summarize', 'summary', 'overview', 'recap', 'synthesis', 'synthèse', 'résumé', 'résumer', 'sintesi', 'sintetizza', 'sintetico', 'sintetizzare']):
+            return 1200
         
         # Medium responses for analysis questions
         if any(word in question_lower for word in ['analyze', 'compare', 'discuss', 'evaluate']):
@@ -984,7 +984,7 @@ class RAGSystem:
 
     def reset_performance_metrics(self):
         """Reset performance metrics."""
-        self.performance_metrics = { 
+        self.performance_metrics = {
             'total_queries': 0,
             'avg_response_time': 0,
             'error_count': 0
