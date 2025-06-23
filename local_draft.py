@@ -989,7 +989,7 @@ class RAGSystem:
     def get_performance_metrics(self):
         """Get performance metrics for monitoring."""
         return self.performance_metrics
-
+ 
     def reset_performance_metrics(self):
         """Reset performance metrics."""
         self.performance_metrics = {
