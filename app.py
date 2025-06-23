@@ -350,7 +350,6 @@ if conversation_history:
         if follow_up_question.strip():
             generate_follow_up(follow_up_question)
         st.session_state.followup_input_key_counter += 1
-        st.rerun()
     
     # Use a container to keep input and button together
     followup_container = st.container()
@@ -412,8 +411,6 @@ with col1:
         st.session_state.documents_loaded = False
         st.session_state.last_uploaded_files = []
         st.session_state.processing_status = {}
-        
-        st.rerun()
 
 with col2:
     if st.button("Export PDF"):
