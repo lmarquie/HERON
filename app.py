@@ -345,9 +345,24 @@ if conversation_history:
     if 'submit_followup' not in st.session_state:
         st.session_state.submit_followup = False
     
-    # Handle submission via Enter key first
-    if st.session_state.submit_followup:
-        follow_up_question = st.session_state.get("followup_input", "")
+    # Use a container to keep input and button together
+    followup_container = st.container()
+    with followup_container:
+        col_input, col_button = st.columns([4, 1])
+        with col_input:
+            follow_up_question = st.text_input(
+                "Ask a follow-up question:",
+                key="followup_input",
+                value="",
+                on_change=handle_followup_enter_key,
+                help="Press Enter to submit"
+            )
+        with col_button:
+            submit_btn = st.button("Submit Follow-up", key="submit_followup_btn")
+    
+    # Submission logic: either Enter or button
+    submit_triggered = st.session_state.submit_followup or submit_btn
+    if submit_triggered:
         if follow_up_question.strip():
             with st.spinner("Processing follow-up..."):
                 follow_up_answer = generate_follow_up(follow_up_question)
@@ -367,24 +382,13 @@ if conversation_history:
                         st.write("No images were found in the uploaded documents.")
                 else:
                     st.write(follow_up_answer)
-        
         # Reset flags after processing
         st.session_state.submit_followup = False
-        # Use a different key to clear the input
         st.session_state.followup_input_clear = True
-    
     # Clear input if needed
     if st.session_state.get('followup_input_clear', False):
         st.session_state.followup_input_clear = False
         # The input will be cleared on the next rerun
-    
-    st.text_input(
-        "Ask a follow-up question:",
-        key="followup_input",
-        value="",  # Always start with empty value
-        on_change=handle_followup_enter_key,
-        help="Press Enter to submit"
-    )
 
 # Control buttons
 st.markdown("---")
