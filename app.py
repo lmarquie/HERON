@@ -300,30 +300,27 @@ if not conversation_history:
     
     # Handle submission via button or Enter key
     if st.button("Get Answer", type="primary") or st.session_state.submit_question:
-        if st.session_state.documents_loaded:
-            with st.spinner("Processing..."):
-                answer = generate_answer(question)
-                # If answer is a list (image info), display images
-                if isinstance(answer, list):
-                    if answer:
-                        img_info = answer[0]  # Only show the most relevant image
-                        if os.path.exists(img_info['path']):
-                            # Display image with enhanced caption
-                            caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
-                            if 'description' in img_info:
-                                caption += f" - {img_info['description']}"
-                            if 'similarity_score' in img_info:
-                                caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                            
-                            st.image(img_info['path'], caption=caption, use_container_width=True)
-                    else:
-                        st.write("No images were found in the uploaded documents.")
+        with st.spinner("Processing..."):
+            answer = generate_answer(question)
+            # If answer is a list (image info), display images
+            if isinstance(answer, list):
+                if answer:
+                    img_info = answer[0]  # Only show the most relevant image
+                    if os.path.exists(img_info['path']):
+                        # Display image with enhanced caption
+                        caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                        if 'description' in img_info:
+                            caption += f" - {img_info['description']}"
+                        if 'similarity_score' in img_info:
+                            caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                        
+                        st.image(img_info['path'], caption=caption, use_container_width=True)
                 else:
-                    st.write(answer)
-            st.session_state.answer_given = True
-            st.session_state.submit_question = False  # Reset flag
-        else:
-            st.error("Please upload documents first")
+                    st.write("No images were found in the uploaded documents.")
+            else:
+                st.write(answer)
+        st.session_state.answer_given = True
+        st.session_state.submit_question = False  # Reset flag
 
 # Always show follow-up input if there is any conversation history
 if conversation_history:
