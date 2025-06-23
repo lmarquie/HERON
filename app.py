@@ -342,10 +342,16 @@ if conversation_history:
     st.markdown("---")
     
     # Initialize submit flag and input key counter
-    if 'submit_followup' not in st.session_state:
-        st.session_state.submit_followup = False
     if 'followup_input_key_counter' not in st.session_state:
         st.session_state.followup_input_key_counter = 0
+    
+    def submit_followup():
+        follow_up_input_key = f"followup_input_{st.session_state.followup_input_key_counter}"
+        follow_up_question = st.session_state.get(follow_up_input_key, "")
+        if follow_up_question.strip():
+            generate_follow_up(follow_up_question)
+        st.session_state.followup_input_key_counter += 1
+        st.rerun()
     
     # Use a container to keep input and button together
     followup_container = st.container()
@@ -353,28 +359,16 @@ if conversation_history:
         col_input, col_button = st.columns([4, 1])
         with col_input:
             follow_up_input_key = f"followup_input_{st.session_state.followup_input_key_counter}"
-            follow_up_question = st.text_input(
+            st.text_input(
                 "Ask a follow-up question:",
                 key=follow_up_input_key,
                 value="",
-                on_change=handle_followup_enter_key,
+                on_change=submit_followup,
                 help="Press Enter to submit"
             )
         with col_button:
-            submit_btn = st.button("Submit Follow-up", key="submit_followup_btn")
-    
-    # Submission logic: either Enter or button
-    submit_triggered = st.session_state.submit_followup or submit_btn
-    if submit_triggered:
-        if follow_up_question.strip():
-            # Process the follow-up and add to conversation history
-            generate_follow_up(follow_up_question)
-        # Reset flags after processing
-        st.session_state.submit_followup = False
-        # Increment the input key counter to force clear
-        st.session_state.followup_input_key_counter += 1
-        # Rerun to update conversation history and clear input
-        st.rerun()
+            if st.button("Submit Follow-up", key="submit_followup_btn"):
+                submit_followup()
 
 # Control buttons
 st.markdown("---")
