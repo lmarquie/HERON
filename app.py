@@ -279,13 +279,11 @@ if conversation_history:
     for i, conv in enumerate(conversation_history):
         with st.expander(f"Q{i+1}: {conv['question'][:50]}..."):
             st.write(f"**Question:** {conv['question']}")
-            # If the answer is a list (image info or error), display images, blurbs, or error messages
+            # If the answer is a list (image info), display images
             if isinstance(conv['answer'], list):
                 if conv['answer']:
-                    img_info = conv['answer'][0]  # Only show the most relevant image or error
-                    if img_info.get('error', False):
-                        st.error(img_info.get('message', 'An error occurred while searching for images.'))
-                    elif img_info.get('path') and os.path.exists(img_info['path']):
+                    img_info = conv['answer'][0]  # Only show the most relevant image
+                    if os.path.exists(img_info['path']):
                         # Display image with enhanced caption
                         caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
                         if 'description' in img_info:
@@ -293,11 +291,6 @@ if conversation_history:
                         if 'similarity_score' in img_info:
                             caption += f" (Similarity: {img_info['similarity_score']:.2f})"
                         st.image(img_info['path'], caption=caption, use_container_width=True)
-                        # Always show the blurb/description below the image
-                        blurb = st.session_state.rag_system.get_image_blurb(img_info)
-                        st.markdown(f"**Image summary:** {blurb}")
-                    else:
-                        st.write("No images were found in the uploaded documents.")
                 else:
                     st.write("No images were found in the uploaded documents.")
             else:
@@ -343,21 +336,23 @@ if not conversation_history:
         else:
             st.error("Please upload documents first")
 
-# --- ALWAYS render follow-up input after conversation history, regardless of answer type ---
+# Always show follow-up input if there is any conversation history
 if conversation_history:
     st.markdown("---")
+    
+    # Initialize input key counter
     if 'followup_input_key_counter' not in st.session_state:
         st.session_state.followup_input_key_counter = 0
-    if 'pending_followup' not in st.session_state:
-        st.session_state['pending_followup'] = False
-    if 'pending_followup_question' not in st.session_state:
-        st.session_state['pending_followup_question'] = ''
-
+    
     def submit_followup():
-        follow_up_input_key = f"followup_input_{st.session_state['followup_input_key_counter']}"
-        st.session_state['pending_followup'] = True
-        st.session_state['pending_followup_question'] = st.session_state.get(follow_up_input_key, '')
-
+        follow_up_input_key = f"followup_input_{st.session_state.followup_input_key_counter}"
+        follow_up_question = st.session_state.get(follow_up_input_key, "")
+        if follow_up_question.strip():
+            generate_follow_up(follow_up_question)
+        st.session_state.followup_input_key_counter += 1
+        st.rerun()
+    
+    # Use a container to keep input and button together
     followup_container = st.container()
     with followup_container:
         col_input, col_button = st.columns([4, 1])
@@ -373,15 +368,6 @@ if conversation_history:
         with col_button:
             if st.button("Submit Follow-up", key="submit_followup_btn"):
                 submit_followup()
-
-    # After rendering the input, process pending follow-up if needed
-    if st.session_state.get('pending_followup', False):
-        follow_up_question = st.session_state.get('pending_followup_question', '')
-        if follow_up_question.strip():
-            generate_follow_up(follow_up_question)
-        st.session_state['followup_input_key_counter'] += 1
-        st.session_state['pending_followup'] = False
-        st.session_state['pending_followup_question'] = ''
 
 # Control buttons
 st.markdown("---")
