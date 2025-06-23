@@ -345,8 +345,9 @@ if conversation_history:
     if 'submit_followup' not in st.session_state:
         st.session_state.submit_followup = False
     
-    def submit_followup():
-        follow_up_question = st.session_state["followup_input"]
+    # Handle submission via Enter key first
+    if st.session_state.submit_followup:
+        follow_up_question = st.session_state.get("followup_input", "")
         if follow_up_question.strip():
             with st.spinner("Processing follow-up..."):
                 follow_up_answer = generate_follow_up(follow_up_question)
@@ -366,20 +367,24 @@ if conversation_history:
                         st.write("No images were found in the uploaded documents.")
                 else:
                     st.write(follow_up_answer)
-            st.session_state["followup_input"] = ""  # Clear after processing
-            st.session_state.submit_followup = False  # Reset flag
+        
+        # Reset flags after processing
+        st.session_state.submit_followup = False
+        # Use a different key to clear the input
+        st.session_state.followup_input_clear = True
+    
+    # Clear input if needed
+    if st.session_state.get('followup_input_clear', False):
+        st.session_state.followup_input_clear = False
+        # The input will be cleared on the next rerun
     
     st.text_input(
         "Ask a follow-up question:",
         key="followup_input",
-        value=st.session_state.get("followup_input", ""),
+        value="",  # Always start with empty value
         on_change=handle_followup_enter_key,
         help="Press Enter to submit"
     )
-    
-    # Handle submission via Enter key
-    if st.session_state.submit_followup:
-        submit_followup()
 
 # Control buttons
 st.markdown("---")
