@@ -8,6 +8,8 @@ from reportlab.lib.units import inch
 from datetime import datetime
 import time
 import logging
+from docx import Document as DocxDocument
+from pptx import Presentation
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -175,10 +177,10 @@ with st.sidebar:
     st.header("Upload Documents")
     
     uploaded_files = st.file_uploader(
-        "Upload PDF files",
-        type=['pdf'],
+        "Upload documents",
+        type=['pdf', 'docx', 'pptx', 'ppt'],
         accept_multiple_files=True,
-        key="pdf_uploader"
+        help="Upload PDF, Word, or PowerPoint files to analyze"
     )
     
     if uploaded_files:
@@ -441,4 +443,38 @@ if st.session_state.documents_loaded:
     st.sidebar.subheader("Session Info")
     st.sidebar.info(f"Documents loaded: {len(st.session_state.get('last_uploaded_files', []))}")
     if st.session_state.last_upload_time:
-        st.sidebar.info(f"Last upload: {datetime.fromtimestamp(st.session_state.last_upload_time).strftime('%H:%M:%S')}") 
+        st.sidebar.info(f"Last upload: {datetime.fromtimestamp(st.session_state.last_upload_time).strftime('%H:%M:%S')}")
+
+def extract_text_from_docx(docx_path):
+    doc = DocxDocument(docx_path)
+    return "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+
+def extract_text_from_pptx(pptx_path):
+    prs = Presentation(pptx_path)
+    text_runs = []
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if hasattr(shape, "text"):
+                text_runs.append(shape.text)
+    return "\n".join(text_runs)
+
+def _process_single_file(self, uploaded_file):
+    try:
+        ext = os.path.splitext(uploaded_file.name)[1].lower()
+        temp_path = f"temp/{uploaded_file.name}"
+        os.makedirs("temp", exist_ok=True)
+        with open(temp_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+        self.saved_pdf_paths.append(temp_path)
+
+        if ext == ".pdf":
+            text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
+        elif ext == ".docx":
+            text_content = extract_text_from_docx(temp_path)
+        elif ext in [".pptx", ".ppt"]:
+            text_content = extract_text_from_pptx(temp_path)
+        else:
+            text_content = ""
+
+        # ... (rest of your chunking and document creation logic) 
