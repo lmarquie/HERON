@@ -290,7 +290,6 @@ if conversation_history:
                             caption += f" - {img_info['description']}"
                         if 'similarity_score' in img_info:
                             caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                        
                         st.image(img_info['path'], caption=caption, use_container_width=True)
                 else:
                     st.write("No images were found in the uploaded documents.")
@@ -337,11 +336,11 @@ if not conversation_history:
         else:
             st.error("Please upload documents first")
 
-# Show follow-up input only if there is conversation history
+# Always show follow-up input if there is any conversation history
 if conversation_history:
     st.markdown("---")
     
-    # Initialize submit flag and input key counter
+    # Initialize input key counter
     if 'followup_input_key_counter' not in st.session_state:
         st.session_state.followup_input_key_counter = 0
     
