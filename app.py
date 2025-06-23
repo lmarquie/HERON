@@ -279,11 +279,13 @@ if conversation_history:
     for i, conv in enumerate(conversation_history):
         with st.expander(f"Q{i+1}: {conv['question'][:50]}..."):
             st.write(f"**Question:** {conv['question']}")
-            # If the answer is a list (image info), display images and blurbs
+            # If the answer is a list (image info or error), display images, blurbs, or error messages
             if isinstance(conv['answer'], list):
                 if conv['answer']:
-                    img_info = conv['answer'][0]  # Only show the most relevant image
-                    if os.path.exists(img_info['path']):
+                    img_info = conv['answer'][0]  # Only show the most relevant image or error
+                    if img_info.get('error', False):
+                        st.error(img_info.get('message', 'An error occurred while searching for images.'))
+                    elif img_info.get('path') and os.path.exists(img_info['path']):
                         # Display image with enhanced caption
                         caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
                         if 'description' in img_info:
@@ -294,6 +296,8 @@ if conversation_history:
                         # Always show the blurb/description below the image
                         blurb = st.session_state.rag_system.get_image_blurb(img_info)
                         st.markdown(f"**Image summary:** {blurb}")
+                    else:
+                        st.write("No images were found in the uploaded documents.")
                 else:
                     st.write("No images were found in the uploaded documents.")
             else:
