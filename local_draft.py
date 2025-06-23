@@ -1083,7 +1083,7 @@ class RAGSystem:
             # Use internet mode
             logger.info("Processing question using internet mode")
             answer = self.generate_internet_answer(question)
-            self.add_to_conversation_history(question, answer, "internet")
+            self.add_to_conversation_history(question, answer, "initial", "internet")
             return answer
         else:
             # Use document mode (existing logic)
@@ -1092,7 +1092,7 @@ class RAGSystem:
             
             logger.info("Processing question using document mode")
             answer = self.question_handler.process_question(question, normalize_length=normalize_length)
-            self.add_to_conversation_history(question, answer, "document")
+            self.add_to_conversation_history(question, answer, "initial", "document")
             return answer
 
     def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
@@ -1101,7 +1101,7 @@ class RAGSystem:
             # Use internet mode for follow-up
             logger.info("Processing follow-up using internet mode")
             answer = self.generate_internet_answer(follow_up_question)
-            self.add_to_conversation_history(follow_up_question, answer, "internet_followup")
+            self.add_to_conversation_history(follow_up_question, answer, "follow_up", "internet")
             return answer
         else:
             # Use document mode (existing logic)
@@ -1110,7 +1110,7 @@ class RAGSystem:
             
             logger.info("Processing follow-up using document mode")
             answer = self.question_handler.process_follow_up(follow_up_question, normalize_length=normalize_length)
-            self.add_to_conversation_history(follow_up_question, answer, "document_followup")
+            self.add_to_conversation_history(follow_up_question, answer, "follow_up", "document")
             return answer
 
     def get_mode_status(self) -> Dict:
