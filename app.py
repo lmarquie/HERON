@@ -283,17 +283,22 @@ if conversation_history:
         follow_up_input_key = f"followup_input_{st.session_state.followup_input_key_counter}"
         follow_up_question = st.session_state.get(follow_up_input_key, "")
         if follow_up_question.strip():
+            # Immediately add the user's question with a placeholder answer
+            st.session_state.rag_system.add_to_conversation_history(
+                follow_up_question, "Processing...", question_type="followup_pending", mode="document_followup"
+            )
+            st.session_state.followup_input_key_counter += 1
             # Run follow-up in a background thread for responsiveness
+            def update_answer():
+                answer = st.session_state.rag_system.process_follow_up_with_mode(follow_up_question, True)
+                # Update the last conversation entry with the real answer
+                st.session_state.rag_system.conversation_history[-1]['answer'] = answer
             with st.spinner("Processing follow-up..."):
                 with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(
-                        st.session_state.rag_system.process_follow_up_with_mode,
-                        follow_up_question,
-                        True
-                    )
-                    answer = future.result()
-            # The rest of the UI will update as usual
-        st.session_state.followup_input_key_counter += 1
+                    future = executor.submit(update_answer)
+                    future.result()
+        else:
+            st.session_state.followup_input_key_counter += 1
     
     # Modern chat input
     follow_up_input_key = f"followup_input_{st.session_state.followup_input_key_counter}"
