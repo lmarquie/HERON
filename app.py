@@ -367,28 +367,14 @@ if conversation_history:
     submit_triggered = st.session_state.submit_followup or submit_btn
     if submit_triggered:
         if follow_up_question.strip():
-            with st.spinner("Processing follow-up..."):
-                follow_up_answer = generate_follow_up(follow_up_question)
-                # If answer is a list (image info), display images
-                if isinstance(follow_up_answer, list):
-                    if follow_up_answer:
-                        img_info = follow_up_answer[0]  # Only show the most relevant image
-                        if os.path.exists(img_info['path']):
-                            # Display image with enhanced caption
-                            caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
-                            if 'description' in img_info:
-                                caption += f" - {img_info['description']}"
-                            if 'similarity_score' in img_info:
-                                caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                            st.image(img_info['path'], caption=caption, use_container_width=True)
-                    else:
-                        st.write("No images were found in the uploaded documents.")
-                else:
-                    st.write(follow_up_answer)
+            # Process the follow-up and add to conversation history
+            generate_follow_up(follow_up_question)
         # Reset flags after processing
         st.session_state.submit_followup = False
         # Increment the input key counter to force clear
         st.session_state.followup_input_key_counter += 1
+        # Rerun to update conversation history and clear input
+        st.experimental_rerun()
 
 # Control buttons
 st.markdown("---")
