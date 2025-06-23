@@ -398,24 +398,6 @@ class TextProcessor:
         
         return documents
 
-    def get_image_blurb(self, img_info):
-        """Generate or retrieve a short blurb for the image."""
-        # If a description is already present, use it
-        if 'description' in img_info and img_info['description']:
-            return img_info['description']
-        # Otherwise, try to generate one using Vision API
-        try:
-            img_path = img_info['path']
-            if os.path.exists(img_path):
-                img_pil = Image.open(img_path)
-                blurb = self.analyze_image_simple(img_pil)
-                if blurb:
-                    img_info['description'] = blurb
-                    return blurb
-        except Exception as e:
-            logger.warning(f"Error generating image blurb: {str(e)}")
-        return "(No description available)"
-
 ### =================== Document Loading =================== ###
 class WebFileHandler:
     def __init__(self):
@@ -926,7 +908,7 @@ class RAGSystem:
                 if good_matches:
                     return good_matches
                 else:
-                    return "I found some images but they don't seem to match your request closely enough. Try being more specific about what you're looking for."
+                    return f"I found some images but they don't seem to match your request closely enough. Try being more specific about what you're looking for."
             else:
                 return "I couldn't find any images matching your request. Try rephrasing or being more specific."
                 
@@ -997,21 +979,6 @@ class RAGSystem:
             'avg_response_time': 0,
             'error_count': 0
         }
-
-    def get_all_images_with_blurbs(self):
-        """Get all extracted images info, each with a blurb/description."""
-        if hasattr(self.file_handler, 'text_processor'):
-            images = self.file_handler.text_processor.get_all_images()
-            for img_key, img_info in images.items():
-                # Ensure each image has a blurb
-                self.file_handler.text_processor.get_image_blurb(img_info)
-            return images
-        return {}
-
-    def get_image_blurb(self, img_info):
-        if hasattr(self.file_handler, 'text_processor'):
-            return self.file_handler.text_processor.get_image_blurb(img_info)
-        return "(No description available)"
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
