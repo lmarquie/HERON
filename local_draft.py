@@ -452,7 +452,7 @@ class WebFileHandler:
             self.saved_pdf_paths.append(temp_path)
 
             if ext == ".pdf":
-                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
+                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
             elif ext == ".docx":
                 text_content = extract_text_from_docx(temp_path)
             elif ext in [".pptx"]:
