@@ -341,18 +341,21 @@ if not conversation_history:
 if conversation_history:
     st.markdown("---")
     
-    # Initialize submit flag
+    # Initialize submit flag and input key counter
     if 'submit_followup' not in st.session_state:
         st.session_state.submit_followup = False
+    if 'followup_input_key_counter' not in st.session_state:
+        st.session_state.followup_input_key_counter = 0
     
     # Use a container to keep input and button together
     followup_container = st.container()
     with followup_container:
         col_input, col_button = st.columns([4, 1])
         with col_input:
+            follow_up_input_key = f"followup_input_{st.session_state.followup_input_key_counter}"
             follow_up_question = st.text_input(
                 "Ask a follow-up question:",
-                key="followup_input",
+                key=follow_up_input_key,
                 value="",
                 on_change=handle_followup_enter_key,
                 help="Press Enter to submit"
@@ -384,11 +387,8 @@ if conversation_history:
                     st.write(follow_up_answer)
         # Reset flags after processing
         st.session_state.submit_followup = False
-        st.session_state.followup_input_clear = True
-    # Clear input if needed
-    if st.session_state.get('followup_input_clear', False):
-        st.session_state.followup_input_clear = False
-        # The input will be cleared on the next rerun
+        # Increment the input key counter to force clear
+        st.session_state.followup_input_key_counter += 1
 
 # Control buttons
 st.markdown("---")
