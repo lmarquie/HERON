@@ -448,7 +448,7 @@ with col2:
             st.warning("No conversation to export")
 
 with col3:
-    if st.button("Performance Stats"):
+    if st.button("Performance Stats"): 
         metrics = st.session_state.rag_system.get_performance_metrics()
         stats = st.session_state.rag_system.question_handler.get_conversation_stats()
         
