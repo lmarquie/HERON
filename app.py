@@ -279,7 +279,7 @@ if conversation_history:
     for i, conv in enumerate(conversation_history):
         with st.expander(f"Q{i+1}: {conv['question'][:50]}..."):
             st.write(f"**Question:** {conv['question']}")
-            # If the answer is a list (image info), display images
+            # If the answer is a list (image info), display images and blurbs
             if isinstance(conv['answer'], list):
                 if conv['answer']:
                     img_info = conv['answer'][0]  # Only show the most relevant image
@@ -291,6 +291,9 @@ if conversation_history:
                         if 'similarity_score' in img_info:
                             caption += f" (Similarity: {img_info['similarity_score']:.2f})"
                         st.image(img_info['path'], caption=caption, use_container_width=True)
+                        # Always show the blurb/description below the image
+                        blurb = st.session_state.rag_system.get_image_blurb(img_info)
+                        st.markdown(f"**Image summary:** {blurb}")
                 else:
                     st.write("No images were found in the uploaded documents.")
             else:
@@ -336,14 +339,11 @@ if not conversation_history:
         else:
             st.error("Please upload documents first")
 
-# Always show follow-up input if there is any conversation history
+# --- ALWAYS render follow-up input after conversation history, regardless of answer type ---
 if conversation_history:
     st.markdown("---")
-    
-    # Initialize input key counter
     if 'followup_input_key_counter' not in st.session_state:
         st.session_state.followup_input_key_counter = 0
-    
     def submit_followup():
         follow_up_input_key = f"followup_input_{st.session_state.followup_input_key_counter}"
         follow_up_question = st.session_state.get(follow_up_input_key, "")
@@ -351,8 +351,6 @@ if conversation_history:
             generate_follow_up(follow_up_question)
         st.session_state.followup_input_key_counter += 1
         st.rerun()
-    
-    # Use a container to keep input and button together
     followup_container = st.container()
     with followup_container:
         col_input, col_button = st.columns([4, 1])
