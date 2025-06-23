@@ -571,7 +571,13 @@ class ClaudeHandler:
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json"
         }
-        self.system_prompt = system_prompt or "You are a helpful assistant. Answer questions based on the provided context."
+        # Force citation in every answer
+        self.system_prompt = (
+            system_prompt or
+            "You are a helpful assistant. Answer questions based on the provided context. "
+            "Always cite the document source (filename and page or chunk) for every fact or statement in your answer. "
+            "If you use multiple sources, cite each one clearly."
+        )
         self.response_cache = {}  # Simple cache for repeated queries
 
     def generate_answer(self, question: str, context: str, normalize_length: bool = True) -> str:
@@ -661,8 +667,11 @@ class QuestionHandler:
                 if not results:
                     return "No relevant information found in the documents."
                 
-                # Simple context building
-                context = "\n".join([chunk['text'] for chunk in results])
+                # Build context with metadata for citation
+                context = "\n".join([
+                    f"[source: {chunk['metadata'].get('source', 'unknown')}, chunk: {chunk['metadata'].get('chunk_id', '?')}]\n{chunk['text']}"
+                    for chunk in results
+                ])
                 answer = self.llm.generate_answer(question, context, normalize_length)
                 
                 # Store conversation history
@@ -695,7 +704,10 @@ class QuestionHandler:
             
             # Get document context
             results = self.vector_store.search(follow_up_question, k=k)
-            document_context = "\n".join([chunk['text'] for chunk in results]) if results else ""
+            document_context = "\n".join([
+                f"[source: {chunk['metadata'].get('source', 'unknown')}, chunk: {chunk['metadata'].get('chunk_id', '?')}]\n{chunk['text']}"
+                for chunk in results
+            ]) if results else ""
             
             # Combine contexts
             full_context = f"Conversation History:\n{recent_context}\nDocument Context:\n{document_context}"
