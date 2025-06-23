@@ -30,38 +30,15 @@ def initialize_rag_system():
         st.session_state.last_upload_time = None
         st.session_state.error_count = 0
         st.session_state.performance_metrics = {}
+        st.session_state.internet_mode = False  # Initialize internet mode
 
 # Simple answer generation with improved error handling
 def generate_answer(question):
     try:
-        if not st.session_state.documents_loaded:
-            return "No documents loaded. Please upload documents first."
-        
         start_time = time.time()
         
-        # Check if this is an image-related question that requires image processing
-        if st.session_state.rag_system.is_image_related_question(question):
-            # Process images on demand for the relevant PDF
-            pdf_path = st.session_state.rag_system.get_pdf_path_for_question(question)
-            if pdf_path:
-                with st.spinner("Processing images for your question..."):
-                    success = st.session_state.rag_system.process_images_on_demand(pdf_path)
-                    if not success:
-                        return "Error processing images. Please try again."
-        
-        # Check if user is asking to see images
-        if any(word in question.lower() for word in ['show', 'display', 'image', 'picture', 'chart', 'graph']):
-            return handle_image_request(question)
-        
-        # Check if this might be a semantic image search request
-        if st.session_state.rag_system.is_semantic_image_request(question):
-            return st.session_state.rag_system.handle_semantic_image_search(question)
-        
-        # Use the logic from local_draft with response normalization
-        answer = st.session_state.rag_system.question_handler.process_question(question, normalize_length=True)
-        
-        # Store in conversation history using logic layer
-        st.session_state.rag_system.add_to_conversation_history(question, answer, "initial")
+        # Use the new mode-aware question processing
+        answer = st.session_state.rag_system.process_question_with_mode(question, normalize_length=True)
         
         # Update performance metrics
         response_time = time.time() - start_time
@@ -103,34 +80,10 @@ def handle_image_request(question):
 # Follow-up question generation with improved error handling
 def generate_follow_up(follow_up_question):
     try:
-        if not st.session_state.documents_loaded:
-            return "No documents loaded. Please upload documents first."
-        
         start_time = time.time()
         
-        # Check if this is an image-related question that requires image processing
-        if st.session_state.rag_system.is_image_related_question(follow_up_question):
-            # Process images on demand for the relevant PDF
-            pdf_path = st.session_state.rag_system.get_pdf_path_for_question(follow_up_question)
-            if pdf_path:
-                with st.spinner("Processing images for your question..."):
-                    success = st.session_state.rag_system.process_images_on_demand(pdf_path)
-                    if not success:
-                        return "Error processing images. Please try again."
-        
-        # Check if user is asking to see images
-        if any(word in follow_up_question.lower() for word in ['show', 'display', 'image', 'picture', 'chart', 'graph']):
-            return handle_image_request(follow_up_question)
-        
-        # Check if this might be a semantic image search request
-        if st.session_state.rag_system.is_semantic_image_request(follow_up_question):
-            return st.session_state.rag_system.handle_semantic_image_search(follow_up_question)
-        
-        # Use the logic from local_draft with response normalization
-        answer = st.session_state.rag_system.question_handler.process_follow_up(follow_up_question, normalize_length=True)
-        
-        # Store in conversation history using logic layer
-        st.session_state.rag_system.add_to_conversation_history(follow_up_question, answer, "follow_up")
+        # Use the new mode-aware follow-up processing
+        answer = st.session_state.rag_system.process_follow_up_with_mode(follow_up_question, normalize_length=True)
         
         # Update performance metrics
         response_time = time.time() - start_time
@@ -260,6 +213,33 @@ with st.sidebar:
         else:
             st.info("Documents already loaded. Upload new files to replace them.")
 
+# Internet mode toggle
+st.sidebar.markdown("---")
+st.sidebar.header("🌐 Search Mode")
+internet_mode = st.sidebar.toggle(
+    "Internet Search Mode",
+    value=st.session_state.get('internet_mode', False),
+    help="Enable to search the internet instead of uploaded documents"
+)
+
+# Update RAG system internet mode
+if 'rag_system' in st.session_state:
+    st.session_state.rag_system.set_internet_mode(internet_mode)
+    st.session_state.internet_mode = internet_mode
+
+# Show current mode status
+if 'rag_system' in st.session_state:
+    mode_status = st.session_state.rag_system.get_mode_status()
+    if internet_mode:
+        st.sidebar.success("🌐 Internet Search Mode Active")
+        st.sidebar.info("Searching the web for answers")
+    else:
+        st.sidebar.info("📄 Document Search Mode Active")
+        if mode_status['documents_loaded']:
+            st.sidebar.success(f"📚 {mode_status['total_documents']} documents loaded")
+        else:
+            st.sidebar.warning("No documents loaded")
+
 # Performance metrics in sidebar
 if st.session_state.performance_metrics:
     st.sidebar.markdown("---")
@@ -277,7 +257,11 @@ conversation_history = st.session_state.rag_system.get_conversation_history()
 if conversation_history:
     st.subheader("Conversation History")
     for i, conv in enumerate(conversation_history):
-        with st.expander(f"Q{i+1}: {conv['question'][:50]}..."):
+        # Show mode indicator
+        mode_icon = "🌐" if conv.get('mode') == 'internet' else "📄"
+        mode_text = "Internet" if conv.get('mode') == 'internet' else "Document"
+        
+        with st.expander(f"{mode_icon} Q{i+1}: {conv['question'][:50]}... ({mode_text} Mode)"):
             st.write(f"**Question:** {conv['question']}")
             # If the answer is a list (image info), display images
             if isinstance(conv['answer'], list):
@@ -302,11 +286,16 @@ if not conversation_history:
     if 'submit_question' not in st.session_state:
         st.session_state.submit_question = False
     
+    # Show current mode in the input
+    current_mode = "Internet Search" if st.session_state.get('internet_mode', False) else "Document Search"
+    placeholder_text = f"Ask a question (using {current_mode})..."
+    
     question = st.text_input(
-        "Ask a question about your documents:",
+        "Ask a question:",
         key="question_input",
+        placeholder=placeholder_text,
         on_change=handle_enter_key,
-        help="Press Enter to submit or click the button below"
+        help=f"Press Enter to submit. Currently using {current_mode} mode."
     )
     
     # Handle submission via button or Enter key
