@@ -92,7 +92,6 @@ class TextProcessor:
                     except Exception as e:
                         logger.warning(f"Error processing images on page {page_num + 1}: {str(e)}")
                         continue
-                        
             doc.close()
             final_content = "\n".join(text_content)
             return final_content
@@ -396,7 +395,6 @@ class TextProcessor:
                                     'date': datetime.now().strftime('%Y-%m-%d')
                                 }
                             })
-                
             except Exception as e:
                 logger.error(f"Error preparing document {pdf_path}: {str(e)}")
                 continue
