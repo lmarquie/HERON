@@ -172,7 +172,7 @@ def handle_followup_enter_key():
 initialize_rag_system()
 
 # Main content - Clean, modern chat interface
-st.title("🦅 HERON")
+st.title("HERON")
 
 # Display conversation history using logic layer - Modern chat style
 conversation_history = st.session_state.rag_system.get_conversation_history()
@@ -188,7 +188,7 @@ if conversation_history:
             # Question bubble (user)
             with st.chat_message("user"):
                 st.write(f"{conv['question']}")
-                st.caption(f"{mode_icon} {mode_text} Mode")
+                st.caption(f"{mode_text} Mode")
             
             # Answer bubble (assistant)
             with st.chat_message("assistant"):
@@ -297,10 +297,10 @@ if conversation_history:
 
 # Sidebar - All controls moved here for clean main area
 with st.sidebar:
-    st.header("🦅 HERON Controls")
+    st.header("HERON Controls")
     
     # Document Management Section
-    st.subheader("📚 Documents")
+    st.subheader("Documents")
     
     # Show uploaded documents and allow removal
     if 'last_uploaded_files' in st.session_state and st.session_state['last_uploaded_files']:
@@ -309,9 +309,9 @@ with st.sidebar:
         for doc_name in st.session_state['last_uploaded_files']:
             col1, col2 = st.columns([4, 1])
             with col1:
-                st.write(f"📄 {doc_name}")
+                st.write(doc_name)
             with col2:
-                if st.button(f"❌", key=f"remove_{doc_name}", help="Remove document"):
+                if st.button("Remove", key=f"remove_{doc_name}", help="Remove document"):
                     docs_to_remove.append(doc_name)
         # Remove selected docs
         if docs_to_remove:
@@ -343,17 +343,17 @@ with st.sidebar:
                 if st.session_state.rag_system.process_web_uploads(uploaded_files):
                     progress_bar.progress(2/total_steps, text="Embedding documents...")
                     time.sleep(0.5)
-                    st.success(f"✅ Processed {len(uploaded_files)} file(s)")
+                    st.success(f"Processed {len(uploaded_files)} file(s)")
                     st.session_state.documents_loaded = True
                     processing_status = st.session_state.rag_system.file_handler.get_processing_status()
                     st.session_state.processing_status = processing_status
                     progress_bar.progress(1.0, text="Ready!")
                 else:
-                    st.error("❌ Failed to process files")
+                    st.error("Failed to process files")
                     st.session_state.documents_loaded = False
                     progress_bar.progress(1.0, text="Error")
         else:
-            st.info("📋 Documents already loaded")
+            st.info("Documents already loaded")
     
     # Show processing details
     if st.session_state.get('processing_status'):
@@ -366,7 +366,7 @@ with st.sidebar:
 
     # Search Mode Section
     st.markdown("---")
-    st.subheader("🔍 Search Mode")
+    st.subheader("Search Mode")
     
     internet_mode = st.toggle(
         "Internet Search Mode",
@@ -383,20 +383,20 @@ with st.sidebar:
     if 'rag_system' in st.session_state:
         mode_status = st.session_state.rag_system.get_mode_status()
         if internet_mode:
-            st.success("🌐 Internet Search Active")
+            st.success("Internet Search Active")
         else:
-            st.info("📄 Document Search Active")
+            st.info("Document Search Active")
             if mode_status['documents_loaded']:
-                st.success(f"📚 {mode_status['total_documents']} documents loaded")
+                st.success(f"{mode_status['total_documents']} documents loaded")
             else:
-                st.warning("⚠️ No documents loaded")
+                st.warning("No documents loaded")
 
     # Session Management Section
     st.markdown("---")
-    st.subheader("⚙️ Session")
+    st.subheader("Session")
     
     # Reset Session
-    if st.button("🔄 Reset Session", type="secondary", use_container_width=True):
+    if st.button("Reset Session", type="secondary", use_container_width=True):
         # Clear session state and conversation history
         st.session_state.rag_system.clear_conversation_history()
         
@@ -438,7 +438,7 @@ with st.sidebar:
     # Save/Load Session
     col_save, col_load = st.columns(2)
     with col_save:
-        if st.button("💾 Save", use_container_width=True):
+        if st.button("Save Session", use_container_width=True):
             # Prepare session data
             session_data = {
                 'conversation_history': st.session_state.rag_system.get_conversation_history(),
@@ -452,7 +452,7 @@ with st.sidebar:
             }
             session_json = json.dumps(session_data, indent=2)
             st.download_button(
-                label="📥 Download",
+                label="Download Session",
                 data=session_json,
                 file_name=f"heron_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                 mime="application/json",
@@ -460,7 +460,7 @@ with st.sidebar:
             )
 
     with col_load:
-        uploaded_session = st.file_uploader("📂 Load", type=["json"], key="session_loader")
+        uploaded_session = st.file_uploader("Load Session", type=["json"], key="session_loader")
         if uploaded_session is not None:
             try:
                 session_data = json.load(uploaded_session)
@@ -481,7 +481,7 @@ with st.sidebar:
     # Export Section (only show if there's conversation)
     if conversation_history:
         st.markdown("---")
-        st.subheader("📤 Export")
+        st.subheader("Export")
         
         export_format = st.selectbox(
             "Export format:",
@@ -489,14 +489,14 @@ with st.sidebar:
             help="Choose export format"
         )
         
-        if st.button(f"📥 Export {export_format}", use_container_width=True):
+        if st.button(f"Export {export_format}", use_container_width=True):
             if export_format == "PDF":
                 pdf_path = export_conversation_to_pdf()
                 if pdf_path:
                     with open(pdf_path, "rb") as pdf_file:
                         pdf_bytes = pdf_file.read()
                     st.download_button(
-                        label="📄 Download PDF",
+                        label="Download PDF",
                         data=pdf_bytes,
                         file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                         mime="application/pdf",
@@ -522,7 +522,7 @@ with st.sidebar:
                     md_lines.append("")
                 md_content = "\n".join(md_lines)
                 st.download_button(
-                    label="📝 Download Markdown",
+                    label="Download Markdown",
                     data=md_content,
                     file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
                     mime="text/markdown",
@@ -543,7 +543,7 @@ with st.sidebar:
                         conv.get('source_page', '')
                     ])
                 st.download_button(
-                    label="📊 Download CSV",
+                    label="Download CSV",
                     data=output.getvalue(),
                     file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv",
@@ -552,27 +552,43 @@ with st.sidebar:
 
     # Performance Section
     st.markdown("---")
-    st.subheader("📊 Performance")
+    st.subheader("Performance")
     
-    if st.session_state.performance_metrics:
-        if 'last_response_time' in st.session_state.performance_metrics:
-            st.metric("Last Response", f"{st.session_state.performance_metrics['last_response_time']:.2f}s")
-        if st.session_state.error_count > 0:
-            st.metric("Errors", st.session_state.error_count)
-    
-    if conversation_history:
-        st.metric("Messages", len(conversation_history))
-    if st.session_state.get('documents_loaded'):
-        st.metric("Documents", len(st.session_state.get('last_uploaded_files', [])))
+    # Get actual performance metrics
+    try:
+        metrics = st.session_state.rag_system.get_performance_metrics()
+        stats = st.session_state.rag_system.question_handler.get_conversation_stats()
+        
+        # Display key metrics
+        if metrics:
+            st.metric("Total Queries", metrics.get('total_queries', 0))
+            st.metric("Total Errors", metrics.get('error_count', 0))
+        
+        if stats:
+            st.metric("Total Questions", stats.get('total_questions', 0))
+            st.metric("Conversation Errors", stats.get('error_count', 0))
+        
+        if st.session_state.performance_metrics:
+            if 'last_response_time' in st.session_state.performance_metrics:
+                st.metric("Last Response Time", f"{st.session_state.performance_metrics['last_response_time']:.2f}s")
+        
+        if conversation_history:
+            st.metric("Messages", len(conversation_history))
+        
+        if st.session_state.get('documents_loaded'):
+            st.metric("Documents", len(st.session_state.get('last_uploaded_files', [])))
+            
+    except Exception as e:
+        st.error(f"Error loading performance metrics: {e}")
 
     # Session info
     if st.session_state.documents_loaded:
         st.markdown("---")
-        st.subheader("ℹ️ Info")
-        st.info(f"📚 {len(st.session_state.get('last_uploaded_files', []))} documents loaded")
+        st.subheader("Info")
+        st.info(f"{len(st.session_state.get('last_uploaded_files', []))} documents loaded")
         if st.session_state.last_upload_time:
-            st.info(f"🕒 Last upload: {datetime.fromtimestamp(st.session_state.last_upload_time).strftime('%H:%M:%S')}")
+            st.info(f"Last upload: {datetime.fromtimestamp(st.session_state.last_upload_time).strftime('%H:%M:%S')}")
 
 # Error display (minimal, in main area)
 if st.session_state.error_count > 0:
-    st.error(f"⚠️ {st.session_state.error_count} error(s) encountered. Check the sidebar for details.") 
+    st.error(f"{st.session_state.error_count} error(s) encountered. Check the sidebar for details.") 
