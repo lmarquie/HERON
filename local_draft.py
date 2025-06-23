@@ -18,8 +18,6 @@ import logging
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import openai
-import pdfplumber
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -35,69 +33,34 @@ class TextProcessor:
         self.images_analyzed = set()  # Track which images have been analyzed
         self.processing_lock = threading.Lock()  # Thread safety for image processing
         self.error_count = 0  # Track errors for better error handling
-        self.extracted_tables = []  # Store extracted tables as structured data
 
     def extract_text_from_pdf(self, pdf_path: str, enable_image_processing: bool = False) -> str:
-        """Extract text, tables, and images from PDF, detect tables/graphs, and run OCR on each region (header + body)."""
+        """Extract text and images from PDF, detect tables/graphs, and run OCR on each region (header + body)."""
         try:
             doc = fitz.open(pdf_path)
             text_content = []
-            sectioned_content = []  # (section_title, text)
-            current_section = "Introduction"
-            current_text = []
-            self.extracted_tables = []  # Reset for each PDF
             
             if enable_image_processing:
                 os.makedirs("images", exist_ok=True)
             
-            # --- Table extraction with pdfplumber ---
-            try:
-                with pdfplumber.open(pdf_path) as plumber_pdf:
-                    for page_num, page in enumerate(plumber_pdf.pages):
-                        tables = page.extract_tables()
-                        for t_idx, table in enumerate(tables):
-                            # Convert table to markdown for preview, and plain text for embedding
-                            table_md = self._table_to_markdown(table)
-                            table_txt = self._table_to_text(table)
-                            self.extracted_tables.append({
-                                'page': page_num + 1,
-                                'table_num': t_idx + 1,
-                                'table_markdown': table_md,
-                                'table_text': table_txt,
-                                'source': pdf_path
-                            })
-            except Exception as e:
-                logger.warning(f"pdfplumber table extraction error: {str(e)}")
-            # --- End table extraction ---
-            
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
-                blocks = page.get_text("dict")['blocks']
-                for block in blocks:
-                    if block['type'] == 0:  # text block
-                        for line in block['lines']:
-                            line_text = " ".join([span['text'] for span in line['spans']]).strip()
-                            max_font = max([span['size'] for span in line['spans']])
-                            is_heading = (
-                                max_font > 13 or
-                                line_text.isupper() or
-                                (len(line_text) < 80 and (line_text.endswith(":") or line_text.endswith("."))) or
-                                (line_text and (line_text[0].isdigit() and "." in line_text))
-                            )
-                            if is_heading and len(line_text) > 2:
-                                if current_text:
-                                    sectioned_content.append((current_section, " ".join(current_text)))
-                                    current_text = []
-                                current_section = line_text
-                            else:
-                                current_text.append(line_text)
+                text = page.get_text()
+                text_content.append(f"Page {page_num + 1}: {text}")
+
+                # Only process images if enabled (much faster without this)
                 if enable_image_processing:
                     try:
-                        pix = page.get_pixmap(dpi=150)
+                        # Render page as image with lower DPI for speed
+                        pix = page.get_pixmap(dpi=150)  # Reduced from 200 to 150
                         img_data = pix.tobytes("png")
                         img_array = np.frombuffer(img_data, np.uint8)
-                        if len(img_array) > 25 * 1024 * 1024:
+                        
+                        # Check image size to prevent processing extremely large images
+                        if len(img_array) > 25 * 1024 * 1024:  # Reduced to 25MB limit
                             continue
+                        
+                        # Add error handling for large PNG chunks
                         img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                         if img_cv is not None:
                             detected_regions = self.detect_tables_and_graphs(img_cv)
@@ -107,7 +70,9 @@ class TextProcessor:
                                 img_path = os.path.join("images", img_filename)
                                 cv2.imwrite(img_path, crop)
                                 img_key = f"page_{page_num + 1}_detected_{idx + 1}"
+                                # OCR on the cropped region (body)
                                 ocr_text = self.ocr_image(crop)
+                                # OCR on the header (top 20%)
                                 header_h = max(1, int(h * 0.2))
                                 header_crop = crop[0:header_h, :]
                                 ocr_header = self.ocr_image(header_crop)
@@ -122,32 +87,14 @@ class TextProcessor:
                     except Exception as e:
                         logger.warning(f"Error processing images on page {page_num + 1}: {str(e)}")
                         continue
-            if current_text:
-                sectioned_content.append((current_section, " ".join(current_text)))
+                        
             doc.close()
-            flat_text = "\n".join([f"{sec}\n{text}" for sec, text in sectioned_content])
-            self.sectioned_content = sectioned_content  # Save for chunking
-            return flat_text
+            final_content = "\n".join(text_content)
+            return final_content
         except Exception as e:
             self.error_count += 1
             logger.error(f"Error extracting text from PDF: {str(e)}")
             return f"Error extracting text from PDF: {str(e)}"
-
-    def _table_to_markdown(self, table):
-        if not table or not table[0]:
-            return ""
-        header = table[0]
-        rows = table[1:]
-        md = "| " + " | ".join(header) + " |\n"
-        md += "|" + "---|" * len(header) + "\n"
-        for row in rows:
-            md += "| " + " | ".join(row) + " |\n"
-        return md
-
-    def _table_to_text(self, table):
-        if not table:
-            return ""
-        return "\n".join(["\t".join(row) for row in table])
 
     def detect_tables_and_graphs(self, img_cv):
         """Detect likely tables/graphs in a page image using OpenCV (returns list of bounding boxes)."""
@@ -389,54 +336,35 @@ class TextProcessor:
         return self.extracted_images
 
     def chunk_text(self, text: str) -> List[str]:
-        """Split text into overlapping chunks, context-aware if sectioned_content is available, and add tables as special chunks."""
+        """Split text into overlapping chunks."""
+        if not text.strip():
+            return []
+        
         chunks = []
-        # Add sectioned text chunks
-        if hasattr(self, 'sectioned_content') and self.sectioned_content:
-            for section_title, section_text in self.sectioned_content:
-                start = 0
-                while start < len(section_text):
-                    end = start + self.chunk_size
-                    if end >= len(section_text):
-                        chunk = section_text[start:]
-                        if chunk.strip():
-                            chunks.append(f"[{section_title}]\n{chunk.strip()}")
-                        break
-                    last_period = section_text.rfind('.', start, end)
-                    last_newline = section_text.rfind('\n', start, end)
-                    if last_period > start and last_period > last_newline:
-                        end = last_period + 1
-                    elif last_newline > start:
-                        end = last_newline + 1
-                    chunk = section_text[start:end]
-                    if chunk.strip():
-                        chunks.append(f"[{section_title}]\n{chunk.strip()}")
-                    start = end - self.overlap
-                    if start >= len(section_text):
-                        break
-        # Add table chunks
-        if hasattr(self, 'extracted_tables') and self.extracted_tables:
-            for table in self.extracted_tables:
-                table_chunk = f"[TABLE page {table['page']} table {table['table_num']} from {os.path.basename(table['source'])}]:\n{table['table_text']}"
-                chunks.append(table_chunk)
-        # fallback to old logic if no sectioned_content
-        if not chunks and text.strip():
-            start = 0
-            while start < len(text):
-                end = start + self.chunk_size
-                if end >= len(text):
-                    chunks.append(text[start:])
-                    break
-                last_period = text.rfind('.', start, end)
-                last_newline = text.rfind('\n', start, end)
-                if last_period > start and last_period > last_newline:
-                    end = last_period + 1
-                elif last_newline > start:
-                    end = last_newline + 1
-                chunks.append(text[start:end])
-                start = end - self.overlap
-                if start >= len(text):
-                    break
+        start = 0
+        
+        while start < len(text):
+            end = start + self.chunk_size
+            
+            if end >= len(text):
+                chunks.append(text[start:])
+                break
+            
+            # Try to break at a sentence boundary
+            last_period = text.rfind('.', start, end)
+            last_newline = text.rfind('\n', start, end)
+            
+            if last_period > start and last_period > last_newline:
+                end = last_period + 1
+            elif last_newline > start:
+                end = last_newline + 1
+            
+            chunks.append(text[start:end])
+            start = end - self.overlap
+            
+            if start >= len(text):
+                break
+        
         return chunks
 
     def prepare_documents(self, pdf_paths: List[str]) -> List[Dict]:
@@ -574,62 +502,71 @@ class WebFileHandler:
 
 ### =================== Vector Store =================== ###
 class VectorStore:
-    def __init__(self, dimension: int = 1536):
+    def __init__(self, dimension: int = 768):
         self.documents = []
         self.embeddings = None
         self.index = None
         self.chunk_size = 500
         self.chunk_overlap = 50
-        self.dimension = dimension
+        self.model = None
+        self.initialized = False
+        
+        # Initialize embedding model with retry logic
+        self._initialize_model()
 
-    def get_openai_embedding(self, text, model="text-embedding-ada-002"):
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        response = client.embeddings.create(input=text, model=model)
-        return response.data[0].embedding
+    def _initialize_model(self):
+        """Initialize the embedding model with retry logic."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                self.model = SentenceTransformer('all-MiniLM-L6-v2')
+                self.initialized = True
+                logger.info("Embedding model initialized successfully")
+                break
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1} failed to initialize model: {str(e)}")
+                if attempt == max_retries - 1:
+                    logger.error("Failed to initialize embedding model after all retries")
+                    self.model = None
+                else:
+                    time.sleep(1)  # Wait before retry
 
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store using OpenAI embeddings."""
+        """Add documents to the vector store using local SentenceTransformer."""
         if not documents:
             return
+        
+        if not self.initialized or self.model is None:
+            logger.error("Model not initialized, cannot add documents")
+            return
+        
         try:
             texts = [doc['text'] for doc in documents]
-            embeddings = []
-            for text in texts:
-                emb = self.get_openai_embedding(text)
-                if emb is not None:
-                    embeddings.append(emb)
-            if len(embeddings) != len(documents):
-                logger.warning("Some documents could not be embedded and will be skipped.")
-                # Only keep successfully embedded documents
-                valid_docs = [doc for doc, emb in zip(documents, embeddings) if emb is not None]
-                embeddings = [emb for emb in embeddings if emb is not None]
-            else:
-                valid_docs = documents
-            self.documents.extend(valid_docs)
-            import numpy as np
-            embeddings = np.array(embeddings)
+            embeddings = self.model.encode(texts, show_progress_bar=True, batch_size=32)
+            
+            self.documents.extend(documents)
+            
             if self.embeddings is None:
                 self.embeddings = embeddings
             else:
                 self.embeddings = np.vstack([self.embeddings, embeddings])
+            
             embedding_dim = self.embeddings.shape[1]
-            import faiss
             self.index = faiss.IndexFlatIP(embedding_dim)
             self.index.add(self.embeddings.astype('float32'))
-            logger.info(f"Added {len(valid_docs)} documents to vector store (OpenAI embeddings)")
+            
+            logger.info(f"Added {len(documents)} documents to vector store")
+            
         except Exception as e:
             logger.error(f"Error adding documents to vector store: {str(e)}")
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
-        """Search for similar documents using OpenAI embeddings."""
-        if not self.documents or self.index is None:
+        """Search for similar documents using local SentenceTransformer."""
+        if not self.documents or self.index is None or not self.initialized:
             return []
+        
         try:
-            query_embedding = self.get_openai_embedding(query)
-            if query_embedding is None:
-                return []
-            import numpy as np
-            query_embedding = np.array([query_embedding])
+            query_embedding = self.model.encode([query])
             scores, indices = self.index.search(query_embedding.astype('float32'), k)
             results = []
             for i, idx in enumerate(indices[0]):
@@ -716,9 +653,9 @@ class ClaudeHandler:
         
         question_lower = question.lower()
         
-        # Long responses for summarization/overview questions
-        if any(word in question_lower for word in ['what is', 'define', 'explain briefly', 'summarize', 'summary', 'overview', 'recap', 'synthesis', 'synthèse', 'résumé', 'résumer', 'sintesi', 'sintetizza', 'sintetico', 'sintetizzare']):
-            return 1200
+        # Short responses for simple questions
+        if any(word in question_lower for word in ['what is', 'define', 'explain briefly', 'summarize']):
+            return 300
         
         # Medium responses for analysis questions
         if any(word in question_lower for word in ['analyze', 'compare', 'discuss', 'evaluate']):
