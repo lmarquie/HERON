@@ -396,13 +396,15 @@ if conversation_history:
             if st.button("Submit Follow-up", key="submit_followup_btn"):
                 submit_followup()
 
-# Control buttons
+# Control buttons - Organized into sections
 st.markdown("---")
 
-col1, col2, col3 = st.columns(3)
+# Session Management Section
+st.subheader("Session Management")
+session_col1, session_col2, session_col3 = st.columns(3)
 
-with col1:
-    if st.button("Reset Session", type="secondary"):
+with session_col1:
+    if st.button("🔄 Reset Session", type="secondary", use_container_width=True):
         # Clear session state and conversation history
         st.session_state.rag_system.clear_conversation_history()
         
@@ -440,25 +442,71 @@ with col1:
         st.session_state.last_uploaded_files = []
         st.session_state.processing_status = {}
 
-with col2:
-    if st.button("Export PDF"):
-        if conversation_history:
+with session_col2:
+    if st.button("💾 Save Session", use_container_width=True):
+        # Prepare session data
+        session_data = {
+            'conversation_history': st.session_state.rag_system.get_conversation_history(),
+            'last_uploaded_files': st.session_state.get('last_uploaded_files', []),
+            'documents_loaded': st.session_state.get('documents_loaded', False),
+            'performance_metrics': st.session_state.get('performance_metrics', {}),
+            'error_count': st.session_state.get('error_count', 0),
+            'last_upload_time': st.session_state.get('last_upload_time', None),
+            'processing_status': st.session_state.get('processing_status', {}),
+            'internet_mode': st.session_state.get('internet_mode', False)
+        }
+        session_json = json.dumps(session_data, indent=2)
+        st.download_button(
+            label="📥 Download Session",
+            data=session_json,
+            file_name=f"heron_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json",
+            use_container_width=True
+        )
+
+with session_col3:
+    uploaded_session = st.file_uploader("📂 Load Session", type=["json"], key="session_loader")
+    if uploaded_session is not None:
+        try:
+            session_data = json.load(uploaded_session)
+            # Restore session state
+            st.session_state['last_uploaded_files'] = session_data.get('last_uploaded_files', [])
+            st.session_state['documents_loaded'] = session_data.get('documents_loaded', False)
+            st.session_state['performance_metrics'] = session_data.get('performance_metrics', {})
+            st.session_state['error_count'] = session_data.get('error_count', 0)
+            st.session_state['last_upload_time'] = session_data.get('last_upload_time', None)
+            st.session_state['processing_status'] = session_data.get('processing_status', {})
+            st.session_state['internet_mode'] = session_data.get('internet_mode', False)
+            # Restore conversation history in RAG system
+            st.session_state.rag_system.set_conversation_history(session_data.get('conversation_history', []))
+            st.success("Session loaded! Reload the page if needed.")
+        except Exception as e:
+            st.error(f"Failed to load session: {e}")
+
+# Export Section
+if conversation_history:
+    st.subheader("Export Conversation")
+    export_col1, export_col2, export_col3 = st.columns(3)
+    
+    with export_col1:
+        if st.button("📄 Export PDF", use_container_width=True):
             pdf_path = export_conversation_to_pdf()
             if pdf_path:
                 # Read the PDF file and create download button
                 with open(pdf_path, "rb") as pdf_file:
                     pdf_bytes = pdf_file.read()
                 st.download_button(
-                    label="Download PDF",
+                    label="📥 Download PDF",
                     data=pdf_bytes,
                     file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                    mime="application/pdf"
+                    mime="application/pdf",
+                    use_container_width=True
                 )
-        else:
-            st.warning("No conversation to export")
-    # Export as Markdown
-    if st.button("Export Markdown"):
-        if conversation_history:
+            else:
+                st.warning("No conversation to export")
+    
+    with export_col2:
+        if st.button("📝 Export Markdown", use_container_width=True):
             md_lines = ["# HERON Conversation Export\n"]
             for i, conv in enumerate(conversation_history):
                 md_lines.append(f"**Q{i+1}:** {conv['question']}")
@@ -478,16 +526,15 @@ with col2:
                 md_lines.append("")
             md_content = "\n".join(md_lines)
             st.download_button(
-                label="Download Markdown",
+                label="📥 Download Markdown",
                 data=md_content,
                 file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                mime="text/markdown"
+                mime="text/markdown",
+                use_container_width=True
             )
-        else:
-            st.warning("No conversation to export")
-    # Export as CSV
-    if st.button("Export CSV"):
-        if conversation_history:
+    
+    with export_col3:
+        if st.button("📊 Export CSV", use_container_width=True):
             import csv
             import io
             output = io.StringIO()
@@ -502,55 +549,42 @@ with col2:
                     conv.get('source_page', '')
                 ])
             st.download_button(
-                label="Download CSV",
+                label="📥 Download CSV",
                 data=output.getvalue(),
                 file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
+                mime="text/csv",
+                use_container_width=True
             )
-        else:
-            st.warning("No conversation to export")
 
-# Add session persistence controls below export buttons
-st.markdown("")
-col_save, col_load = st.columns(2)
-with col_save:
-    if st.button("Save Session"):
-        # Prepare session data
-        session_data = {
-            'conversation_history': st.session_state.rag_system.get_conversation_history(),
-            'last_uploaded_files': st.session_state.get('last_uploaded_files', []),
-            'documents_loaded': st.session_state.get('documents_loaded', False),
-            'performance_metrics': st.session_state.get('performance_metrics', {}),
-            'error_count': st.session_state.get('error_count', 0),
-            'last_upload_time': st.session_state.get('last_upload_time', None),
-            'processing_status': st.session_state.get('processing_status', {}),
-            'internet_mode': st.session_state.get('internet_mode', False)
-        }
-        session_json = json.dumps(session_data, indent=2)
-        st.download_button(
-            label="Download Session",
-            data=session_json,
-            file_name=f"heron_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-            mime="application/json"
-        )
-with col_load:
-    uploaded_session = st.file_uploader("Load Session", type=["json"], key="session_loader")
-    if uploaded_session is not None:
-        try:
-            session_data = json.load(uploaded_session)
-            # Restore session state
-            st.session_state['last_uploaded_files'] = session_data.get('last_uploaded_files', [])
-            st.session_state['documents_loaded'] = session_data.get('documents_loaded', False)
-            st.session_state['performance_metrics'] = session_data.get('performance_metrics', {})
-            st.session_state['error_count'] = session_data.get('error_count', 0)
-            st.session_state['last_upload_time'] = session_data.get('last_upload_time', None)
-            st.session_state['processing_status'] = session_data.get('processing_status', {})
-            st.session_state['internet_mode'] = session_data.get('internet_mode', False)
-            # Restore conversation history in RAG system
-            st.session_state.rag_system.set_conversation_history(session_data.get('conversation_history', []))
-            st.success("Session loaded! Reload the page if needed.")
-        except Exception as e:
-            st.error(f"Failed to load session: {e}")
+# Performance Section
+st.subheader("System Performance")
+perf_col1, perf_col2, perf_col3 = st.columns(3)
+
+with perf_col1:
+    if st.button("📈 Performance Stats", use_container_width=True):
+        metrics = st.session_state.rag_system.get_performance_metrics()
+        stats = st.session_state.rag_system.question_handler.get_conversation_stats()
+        
+        st.metric("Total Queries", metrics.get('total_queries', 0))
+        st.metric("Errors", metrics.get('error_count', 0))
+        if 'last_response_time' in st.session_state.performance_metrics:
+            st.metric("Last Response Time", f"{st.session_state.performance_metrics['last_response_time']:.2f}s")
+        
+        st.metric("Total Questions", stats.get('total_questions', 0))
+        st.metric("Error Count", stats.get('error_count', 0))
+
+with perf_col2:
+    if st.session_state.performance_metrics:
+        if 'last_response_time' in st.session_state.performance_metrics:
+            st.metric("Last Response Time", f"{st.session_state.performance_metrics['last_response_time']:.2f}s")
+        if st.session_state.error_count > 0:
+            st.metric("Total Errors", st.session_state.error_count)
+
+with perf_col3:
+    if conversation_history:
+        st.metric("Conversation Length", len(conversation_history))
+    if st.session_state.get('documents_loaded'):
+        st.metric("Documents Loaded", len(st.session_state.get('last_uploaded_files', [])))
 
 # Error display
 if st.session_state.error_count > 0:
