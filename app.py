@@ -344,13 +344,16 @@ if conversation_history:
     st.markdown("---")
     if 'followup_input_key_counter' not in st.session_state:
         st.session_state.followup_input_key_counter = 0
+    if 'pending_followup' not in st.session_state:
+        st.session_state['pending_followup'] = False
+    if 'pending_followup_question' not in st.session_state:
+        st.session_state['pending_followup_question'] = ''
+
     def submit_followup():
-        follow_up_input_key = f"followup_input_{st.session_state.followup_input_key_counter}"
-        follow_up_question = st.session_state.get(follow_up_input_key, "")
-        if follow_up_question.strip():
-            generate_follow_up(follow_up_question)
-        st.session_state.followup_input_key_counter += 1
-        st.rerun()
+        follow_up_input_key = f"followup_input_{st.session_state['followup_input_key_counter']}"
+        st.session_state['pending_followup'] = True
+        st.session_state['pending_followup_question'] = st.session_state.get(follow_up_input_key, '')
+
     followup_container = st.container()
     with followup_container:
         col_input, col_button = st.columns([4, 1])
@@ -366,6 +369,15 @@ if conversation_history:
         with col_button:
             if st.button("Submit Follow-up", key="submit_followup_btn"):
                 submit_followup()
+
+    # After rendering the input, process pending follow-up if needed
+    if st.session_state.get('pending_followup', False):
+        follow_up_question = st.session_state.get('pending_followup_question', '')
+        if follow_up_question.strip():
+            generate_follow_up(follow_up_question)
+        st.session_state['followup_input_key_counter'] += 1
+        st.session_state['pending_followup'] = False
+        st.session_state['pending_followup_question'] = ''
 
 # Control buttons
 st.markdown("---")
