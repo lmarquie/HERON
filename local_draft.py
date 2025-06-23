@@ -2,32 +2,26 @@
 import os
 import faiss
 import fitz  # PyMuPDF
-import time
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
 import requests
 import numpy as np
-from config import OPENAI_API_KEY
 from PIL import Image
 import io
 import base64
 import cv2
 import pytesseract
 from difflib import SequenceMatcher
-import openai
+from config import OPENAI_API_KEY
+import logging
+import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-### =================== Input Interface =================== ###
-class InputInterface:
-    def __init__(self):
-        self.download_dir = "local_documents"
-        os.makedirs(self.download_dir, exist_ok=True)
-
-    def get_user_question(self) -> str:
-        return input("\nEnter your question: ").strip()
-
-    def display_answer(self, answer: str):
-        print("\nAnswer:", answer)
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
@@ -37,11 +31,12 @@ class TextProcessor:
         self.extracted_images = {}  # Store images for display
         self.image_descriptions = {}  # Store semantic descriptions for search
         self.images_analyzed = set()  # Track which images have been analyzed
+        self.processing_lock = threading.Lock()  # Thread safety for image processing
+        self.error_count = 0  # Track errors for better error handling
 
     def extract_text_from_pdf(self, pdf_path: str, enable_image_processing: bool = False) -> str:
         """Extract text and images from PDF, detect tables/graphs, and run OCR on each region (header + body)."""
         try:
-            print(f"Processing PDF: {pdf_path}")
             doc = fitz.open(pdf_path)
             text_content = []
             
@@ -55,18 +50,17 @@ class TextProcessor:
 
                 # Only process images if enabled (much faster without this)
                 if enable_image_processing:
-                    # Render page as image with lower DPI for speed
-                    pix = page.get_pixmap(dpi=150)  # Reduced from 200 to 150
-                    img_data = pix.tobytes("png")
-                    img_array = np.frombuffer(img_data, np.uint8)
-                    
-                    # Check image size to prevent processing extremely large images
-                    if len(img_array) > 25 * 1024 * 1024:  # Reduced to 25MB limit
-                        print(f"Warning: Page {page_num + 1} image too large ({len(img_array) / 1024 / 1024:.1f}MB), skipping image processing")
-                        continue
-                    
-                    # Add error handling for large PNG chunks
                     try:
+                        # Render page as image with lower DPI for speed
+                        pix = page.get_pixmap(dpi=150)  # Reduced from 200 to 150
+                        img_data = pix.tobytes("png")
+                        img_array = np.frombuffer(img_data, np.uint8)
+                        
+                        # Check image size to prevent processing extremely large images
+                        if len(img_array) > 25 * 1024 * 1024:  # Reduced to 25MB limit
+                            continue
+                        
+                        # Add error handling for large PNG chunks
                         img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                         if img_cv is not None:
                             detected_regions = self.detect_tables_and_graphs(img_cv)
@@ -91,33 +85,36 @@ class TextProcessor:
                                     'ocr_header': ocr_header,
                                 }
                     except Exception as e:
-                        print(f"Warning: Could not process images on page {page_num + 1}: {e}")
-                        # Continue processing text even if image processing fails
+                        logger.warning(f"Error processing images on page {page_num + 1}: {str(e)}")
                         continue
                         
             doc.close()
             final_content = "\n".join(text_content)
-            print(f"PDF processing completed. Total content length: {len(final_content)}")
             return final_content
         except Exception as e:
-            print(f"Error extracting text from PDF: {str(e)}")
+            self.error_count += 1
+            logger.error(f"Error extracting text from PDF: {str(e)}")
             return f"Error extracting text from PDF: {str(e)}"
 
     def detect_tables_and_graphs(self, img_cv):
         """Detect likely tables/graphs in a page image using OpenCV (returns list of bounding boxes)."""
-        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blur, 50, 150, apertureSize=3)
-        # Find contours
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        regions = []
-        for cnt in contours:
-            x, y, w, h = cv2.boundingRect(cnt)
-            # Heuristic: Only keep large regions (likely tables/graphs)
-            if w > 100 and h > 60 and w*h > 10000:
-                regions.append((x, y, w, h))
-        # Optionally, merge overlapping/close rectangles here
-        return regions
+        try:
+            gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+            blur = cv2.GaussianBlur(gray, (5, 5), 0)
+            edges = cv2.Canny(blur, 50, 150, apertureSize=3)
+            # Find contours
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            regions = []
+            for cnt in contours:
+                x, y, w, h = cv2.boundingRect(cnt)
+                # Heuristic: Only keep large regions (likely tables/graphs)
+                if w > 100 and h > 60 and w*h > 10000:
+                    regions.append((x, y, w, h))
+            # Optionally, merge overlapping/close rectangles here
+            return regions
+        except Exception as e:
+            logger.warning(f"Error detecting tables/graphs: {str(e)}")
+            return []
 
     def ocr_image(self, img_cv):
         """Run OCR on a cropped image region using Tesseract if available, else fallback to empty string."""
@@ -127,30 +124,31 @@ class TextProcessor:
             text = pytesseract.image_to_string(img_rgb)
             return text.strip()
         except Exception as e:
-            print(f"OCR failed: {e}")
+            logger.warning(f"OCR error: {str(e)}")
             return ""
 
     def ensure_images_analyzed(self):
         """Analyze all images that have not yet been analyzed with Vision API."""
-        for img_key, img_info in list(self.extracted_images.items()):
-            if img_key in self.images_analyzed:
-                continue
-            try:
-                img_path = img_info['path']
-                if os.path.exists(img_path):
-                    img_pil = Image.open(img_path)
-                    img_analysis = self.analyze_image_detailed(img_pil)
-                    if img_analysis:
-                        self.image_descriptions[img_key] = img_analysis
-                    else:
-                        # If not a figure/graph, remove from extracted images
-                        del self.extracted_images[img_key]
-                        if os.path.exists(img_path):
-                            os.remove(img_path)
-                self.images_analyzed.add(img_key)
-            except Exception as e:
-                print(f"Error analyzing image {img_key}: {e}")
-                continue
+        with self.processing_lock:
+            for img_key, img_info in list(self.extracted_images.items()):
+                if img_key in self.images_analyzed:
+                    continue
+                try:
+                    img_path = img_info['path']
+                    if os.path.exists(img_path):
+                        img_pil = Image.open(img_path)
+                        img_analysis = self.analyze_image_detailed(img_pil)
+                        if img_analysis:
+                            self.image_descriptions[img_key] = img_analysis
+                        else:
+                            # If not a figure/graph, remove from extracted images
+                            del self.extracted_images[img_key]
+                            if os.path.exists(img_path):
+                                os.remove(img_path)
+                    self.images_analyzed.add(img_key)
+                except Exception as e:
+                    logger.warning(f"Error analyzing image {img_key}: {str(e)}")
+                    continue
 
     def analyze_image_detailed(self, img_pil):
         """Enhanced image analysis using Vision API for semantic search - focused on figures and graphs."""
@@ -212,7 +210,7 @@ class TextProcessor:
                 return None
                 
         except Exception as e:
-            print(f"Error analyzing image: {e}")
+            logger.warning(f"Vision API error: {str(e)}")
             return None
 
     def analyze_image_simple(self, img_pil):
@@ -269,7 +267,7 @@ class TextProcessor:
                 return None
                 
         except Exception as e:
-            print(f"Error analyzing image: {e}")
+            logger.warning(f"Simple Vision API error: {str(e)}")
             return None
 
     def fuzzy_score(self, a, b):
@@ -294,19 +292,6 @@ class TextProcessor:
             return [best_img_info]
         return []
 
-    def cosine_similarity(self, vec1, vec2):
-        """Calculate cosine similarity between two vectors."""
-        try:
-            vec1 = np.array(vec1)
-            vec2 = np.array(vec2)
-            dot_product = np.dot(vec1, vec2)
-            norm1 = np.linalg.norm(vec1)
-            norm2 = np.linalg.norm(vec2)
-            return dot_product / (norm1 * norm2)
-        except Exception as e:
-            print(f"Error calculating cosine similarity: {e}")
-            return 0.0
-
     def is_blank_image(self, img_pil):
         """Check if image is mostly blank/white space."""
         try:
@@ -328,7 +313,6 @@ class TextProcessor:
             return non_white_percentage < 5
             
         except Exception as e:
-            print(f"Error checking if image is blank: {e}")
             return False  # If we can't check, assume it's not blank
 
     def get_image_path(self, page_num, image_num=None):
@@ -409,170 +393,94 @@ class TextProcessor:
                             })
                 
             except Exception as e:
-                print(f"Error processing {pdf_path}: {str(e)}")
+                logger.error(f"Error preparing document {pdf_path}: {str(e)}")
                 continue
         
         return documents
 
 ### =================== Document Loading =================== ###
-class LocalFileHandler:
+class WebFileHandler:
     def __init__(self):
-        self.text_processor = TextProcessor()
-
-    def select_folder_interactive(self):
-        """Allow user to select a folder interactively"""
-        print("\nPlease select a folder containing your documents:")
-        print("1. Enter folder path manually")
-        print("2. Browse current directory")
-        
-        choice = input("Enter your choice (1-2): ")
-        
-        if choice == "1":
-            folder_path = input("Enter the folder path: ").strip()
-            if os.path.exists(folder_path) and os.path.isdir(folder_path):
-                return {
-                    'name': os.path.basename(folder_path),
-                    'path': folder_path
-                }
-            else:
-                print("Invalid folder path. Please try again.")
-                return self.select_folder_interactive()
-        
-        elif choice == "2":
-            current_dir = os.getcwd()
-            print(f"\nCurrent directory: {current_dir}")
-            print("\nAvailable folders:")
-            
-            folders = [item for item in os.listdir(current_dir) 
-                      if os.path.isdir(os.path.join(current_dir, item))]
-            
-            if not folders:
-                print("No folders found in current directory.")
-                return self.select_folder_interactive()
-            
-            for i, folder in enumerate(folders, 1):
-                print(f"{i}. {folder}")
-            
-            try:
-                folder_choice = int(input(f"\nSelect folder (1-{len(folders)}): "))
-                if 1 <= folder_choice <= len(folders):
-                    selected_folder = folders[folder_choice - 1]
-                    folder_path = os.path.join(current_dir, selected_folder)
-                    return {
-                        'name': selected_folder,
-                        'path': folder_path
-                    }
-                else:
-                    print("Invalid choice. Please try again.")
-                    return self.select_folder_interactive()
-            except ValueError:
-                print("Invalid input. Please try again.")
-                return self.select_folder_interactive()
-        
-        else:
-            print("Invalid choice. Please try again.")
-            return self.select_folder_interactive()
-
-    def process_selected_folder(self, folder_path):
-        """Process all files in the selected folder using TextProcessor with image recognition"""
-        try:
-            print(f"\nScanning folder: {folder_path}")
-            files = []
-            for item in os.listdir(folder_path):
-                full_path = os.path.join(folder_path, item)
-                if os.path.isfile(full_path):
-                    files.append({
-                        'name': item,
-                        'path': full_path
-                    })
-
-            if not files:
-                print("No files found in the selected folder.")
-                return []
-
-            print(f"\nFound {len(files)} files. Processing with image recognition...")
-            documents = []
-            for file in files:
-                if file['name'].endswith(('.txt', '.pdf')):
-                    try:
-                        if file['name'].endswith('.pdf'):
-                            # Use TextProcessor for PDF processing with image recognition
-                            content = self.text_processor.extract_text_from_pdf(file['path'])
-                        else:
-                            # For text files, use simple text extraction
-                            with open(file['path'], 'r', encoding='utf-8') as f:
-                                content = f.read()
-
-                        documents.append({
-                            'text': content,
-                            'metadata': {
-                                'source': file['name'],
-                                'path': file['path'],
-                                'date': datetime.now().isoformat()
-                            }
-                        })
-                        print(f"✓ Processed: {file['name']}")
-                    except Exception as e:
-                        print(f" Error processing {file['name']}: {str(e)}")
-
-            return documents
-        except Exception as e:
-            print(f" Error processing folder: {str(e)}")
-            return []
-
-class WebFileHandler(LocalFileHandler):
-    def __init__(self):
-        super().__init__()
         self.text_processor = TextProcessor()
         self.saved_pdf_paths = []  # Track saved PDF paths for later image processing
+        self.processing_status = {}  # Track processing status per file
+        self.executor = ThreadPoolExecutor(max_workers=3)  # Limit concurrent processing
 
     def process_uploaded_files(self, uploaded_files):
-        """Process files uploaded through Streamlit."""
+        """Process files uploaded through Streamlit with improved error handling."""
         documents = []
         self.saved_pdf_paths = []  # Reset for new uploads
+        self.processing_status = {}
         
+        # Process files in parallel for better performance
+        futures = []
         for uploaded_file in uploaded_files:
+            future = self.executor.submit(self._process_single_file, uploaded_file)
+            futures.append((uploaded_file.name, future))
+        
+        # Collect results
+        for filename, future in futures:
             try:
-                # Save uploaded file temporarily
-                temp_path = f"temp/{uploaded_file.name}"
-                os.makedirs("temp", exist_ok=True)
-                
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                
-                # Save the path for later image processing
-                self.saved_pdf_paths.append(temp_path)
-                
-                # Extract text from PDF (disable image processing for speed)
-                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
-                
-                if text_content.strip():
-                    # Split into chunks
-                    chunks = self.text_processor.chunk_text(text_content)
-                    
-                    for i, chunk in enumerate(chunks):
-                        if chunk.strip():
-                            documents.append({
-                                'text': chunk.strip(),
-                                'metadata': {
-                                    'source': uploaded_file.name,
-                                    'chunk_id': i,
-                                    'total_chunks': len(chunks),
-                                    'date': datetime.now().strftime('%Y-%m-%d')
-                                }
-                            })
-                
-                # Don't remove temp file - keep it for potential image processing
-                
+                result = future.result(timeout=60)  # 60 second timeout per file
+                if result:
+                    documents.extend(result)
+                    self.processing_status[filename] = "success"
+                else:
+                    self.processing_status[filename] = "failed"
             except Exception as e:
-                print(f"Error processing {uploaded_file.name}: {str(e)}")
-                continue
+                logger.error(f"Error processing {filename}: {str(e)}")
+                self.processing_status[filename] = "failed"
         
         return documents
+
+    def _process_single_file(self, uploaded_file):
+        """Process a single uploaded file."""
+        try:
+            # Save uploaded file temporarily
+            temp_path = f"temp/{uploaded_file.name}"
+            os.makedirs("temp", exist_ok=True)
+            
+            with open(temp_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            
+            # Save the path for later image processing
+            self.saved_pdf_paths.append(temp_path)
+            
+            # Extract text from PDF (disable image processing for speed)
+            text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
+            
+            if text_content.strip():
+                # Split into chunks
+                chunks = self.text_processor.chunk_text(text_content)
+                
+                documents = []
+                for i, chunk in enumerate(chunks):
+                    if chunk.strip():
+                        documents.append({
+                            'text': chunk.strip(),
+                            'metadata': {
+                                'source': uploaded_file.name,
+                                'chunk_id': i,
+                                'total_chunks': len(chunks),
+                                'date': datetime.now().strftime('%Y-%m-%d')
+                            }
+                        })
+                
+                return documents
+            else:
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
+            return None
 
     def get_saved_pdf_paths(self):
         """Get the paths of saved PDF files for image processing."""
         return self.saved_pdf_paths
+
+    def get_processing_status(self):
+        """Get the processing status of uploaded files."""
+        return self.processing_status
 
 ### =================== Vector Store =================== ###
 class VectorStore:
@@ -582,47 +490,65 @@ class VectorStore:
         self.index = None
         self.chunk_size = 500
         self.chunk_overlap = 50
-        # Restore local embedding model
-        try:
-            self.model = SentenceTransformer('all-MiniLM-L6-v2')
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            self.model = None
+        self.model = None
+        self.initialized = False
+        
+        # Initialize embedding model with retry logic
+        self._initialize_model()
+
+    def _initialize_model(self):
+        """Initialize the embedding model with retry logic."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                self.model = SentenceTransformer('all-MiniLM-L6-v2')
+                self.initialized = True
+                logger.info("Embedding model initialized successfully")
+                break
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1} failed to initialize model: {str(e)}")
+                if attempt == max_retries - 1:
+                    logger.error("Failed to initialize embedding model after all retries")
+                    self.model = None
+                else:
+                    time.sleep(1)  # Wait before retry
 
     def add_documents(self, documents: List[Dict]):
         """Add documents to the vector store using local SentenceTransformer."""
         if not documents:
             return
-        if self.model is None:
-            print("Error: No embedding model available")
+        
+        if not self.initialized or self.model is None:
+            logger.error("Model not initialized, cannot add documents")
             return
-        print(f"Adding {len(documents)} documents to vector store...")
-        texts = [doc['text'] for doc in documents]
-        print("Converting text to vector embeddings...")
+        
         try:
-            embeddings = self.model.encode(texts, show_progress_bar=True)
+            texts = [doc['text'] for doc in documents]
+            embeddings = self.model.encode(texts, show_progress_bar=True, batch_size=32)
+            
+            self.documents.extend(documents)
+            
+            if self.embeddings is None:
+                self.embeddings = embeddings
+            else:
+                self.embeddings = np.vstack([self.embeddings, embeddings])
+            
+            embedding_dim = self.embeddings.shape[1]
+            self.index = faiss.IndexFlatIP(embedding_dim)
+            self.index.add(self.embeddings.astype('float32'))
+            
+            logger.info(f"Added {len(documents)} documents to vector store")
+            
         except Exception as e:
-            print(f"Error generating embeddings: {e}")
-            return
-        import numpy as np
-        self.documents.extend(documents)
-        if self.embeddings is None:
-            self.embeddings = embeddings
-        else:
-            self.embeddings = np.vstack([self.embeddings, embeddings])
-        embedding_dim = self.embeddings.shape[1]
-        import faiss
-        self.index = faiss.IndexFlatIP(embedding_dim)
-        self.index.add(self.embeddings.astype('float32'))
-        print(f"Successfully added {len(documents)} documents. Total documents: {len(self.documents)}")
+            logger.error(f"Error adding documents to vector store: {str(e)}")
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
         """Search for similar documents using local SentenceTransformer."""
-        if not self.documents or self.index is None or self.model is None:
+        if not self.documents or self.index is None or not self.initialized:
             return []
+        
         try:
             query_embedding = self.model.encode([query])
-            import numpy as np
             scores, indices = self.index.search(query_embedding.astype('float32'), k)
             results = []
             for i, idx in enumerate(indices[0]):
@@ -634,7 +560,7 @@ class VectorStore:
                     })
             return results
         except Exception as e:
-            print(f"Error during search: {e}")
+            logger.error(f"Error searching vector store: {str(e)}")
             return []
 
 ### =================== Claude Handler =================== ###
@@ -645,10 +571,19 @@ class ClaudeHandler:
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json"
         }
-        self.system_prompt = system_prompt or "You are a helpful assistant. Answer questions based on and ONLY based on the provided context."
+        self.system_prompt = system_prompt or "You are a helpful assistant. Answer questions based on the provided context."
+        self.response_cache = {}  # Simple cache for repeated queries
 
-    def generate_answer(self, question: str, context: str) -> str:
+    def generate_answer(self, question: str, context: str, normalize_length: bool = True) -> str:
         try:
+            # Check cache first
+            cache_key = f"{question[:100]}_{hash(context[:500])}"
+            if cache_key in self.response_cache:
+                return self.response_cache[cache_key]
+            
+            # Determine response length based on question type
+            max_tokens = self._get_response_length(question, normalize_length)
+            
             messages = [
                 {
                     "role": "system",
@@ -664,7 +599,7 @@ class ClaudeHandler:
                 "model": "gpt-4-turbo-preview",
                 "messages": messages,
                 "temperature": 0.3,
-                "max_tokens": 1000
+                "max_tokens": max_tokens
             }
 
             response = requests.post(
@@ -676,10 +611,38 @@ class ClaudeHandler:
 
             response.raise_for_status()
             response_data = response.json()
-            return response_data["choices"][0]["message"]["content"]
+            answer = response_data["choices"][0]["message"]["content"]
+            
+            # Cache the response
+            self.response_cache[cache_key] = answer
+            
+            return answer
 
         except Exception as e:
+            logger.error(f"Error generating answer: {str(e)}")
             return f"Error generating answer: {str(e)}"
+
+    def _get_response_length(self, question: str, normalize_length: bool) -> int:
+        """Determine appropriate response length based on question type."""
+        if not normalize_length:
+            return 1000
+        
+        question_lower = question.lower()
+        
+        # Short responses for simple questions
+        if any(word in question_lower for word in ['what is', 'define', 'explain briefly', 'summarize']):
+            return 300
+        
+        # Medium responses for analysis questions
+        if any(word in question_lower for word in ['analyze', 'compare', 'discuss', 'evaluate']):
+            return 600
+        
+        # Long responses for complex questions
+        if any(word in question_lower for word in ['detailed', 'comprehensive', 'thorough']):
+            return 1000
+        
+        # Default medium length
+        return 500
 
 ### =================== Question Handler =================== ###
 class QuestionHandler:
@@ -687,78 +650,181 @@ class QuestionHandler:
         self.vector_store = vector_store
         self.llm = ClaudeHandler()
         self.conversation_history = []
+        self.error_count = 0
+        self.max_retries = 3
 
-    def process_question(self, question: str, query_type: str = "document", k: int = 5) -> str:
-        results = self.vector_store.search(question, k=k)
-        
-        if not results:
-            return "No relevant information found in the documents."
-        
-        # Simple context building
-        context = "\n".join([chunk['text'] for chunk in results])
-        answer = self.llm.generate_answer(question, context)
-        
-        # Store conversation history
-        self.conversation_history.append({
-            'question': question,
-            'answer': answer,
-            'context': context
-        })
-        
-        return answer
+    def process_question(self, question: str, query_type: str = "document", k: int = 5, normalize_length: bool = True) -> str:
+        for attempt in range(self.max_retries):
+            try:
+                results = self.vector_store.search(question, k=k)
+                
+                if not results:
+                    return "No relevant information found in the documents."
+                
+                # Simple context building
+                context = "\n".join([chunk['text'] for chunk in results])
+                answer = self.llm.generate_answer(question, context, normalize_length)
+                
+                # Store conversation history
+                self.conversation_history.append({
+                    'question': question,
+                    'answer': answer,
+                    'context': context,
+                    'timestamp': datetime.now().isoformat()
+                })
+                
+                return answer
+                
+            except Exception as e:
+                self.error_count += 1
+                logger.error(f"Error processing question (attempt {attempt + 1}): {str(e)}")
+                if attempt == self.max_retries - 1:
+                    return f"Error processing question after {self.max_retries} attempts: {str(e)}"
+                time.sleep(1)  # Wait before retry
 
-    def process_follow_up(self, follow_up_question: str, k: int = 5) -> str:
+    def process_follow_up(self, follow_up_question: str, k: int = 5, normalize_length: bool = True) -> str:
         """Process a follow-up question using conversation history and document context."""
         if not self.conversation_history:
             return "No previous conversation to follow up on. Please ask a question first."
         
-        # Get recent conversation context
-        recent_context = ""
-        for i, conv in enumerate(self.conversation_history[-3:]):  # Last 3 exchanges
-            recent_context += f"Previous Q: {conv['question']}\nPrevious A: {conv['answer']}\n\n"
-        
-        # Get document context
-        results = self.vector_store.search(follow_up_question, k=k)
-        document_context = "\n".join([chunk['text'] for chunk in results]) if results else ""
-        
-        # Combine contexts
-        full_context = f"Conversation History:\n{recent_context}\nDocument Context:\n{document_context}"
-        
-        # Generate follow-up answer
-        answer = self.llm.generate_answer(follow_up_question, full_context)
-        
-        # Store in conversation history
-        self.conversation_history.append({
-            'question': follow_up_question,
-            'answer': answer,
-            'context': full_context
-        })
-        
-        return answer
+        try:
+            # Get recent conversation context
+            recent_context = ""
+            for i, conv in enumerate(self.conversation_history[-3:]):  # Last 3 exchanges
+                recent_context += f"Previous Q: {conv['question']}\nPrevious A: {conv['answer']}\n\n"
+            
+            # Get document context
+            results = self.vector_store.search(follow_up_question, k=k)
+            document_context = "\n".join([chunk['text'] for chunk in results]) if results else ""
+            
+            # Combine contexts
+            full_context = f"Conversation History:\n{recent_context}\nDocument Context:\n{document_context}"
+            
+            # Generate follow-up answer
+            answer = self.llm.generate_answer(follow_up_question, full_context, normalize_length)
+            
+            # Store in conversation history
+            self.conversation_history.append({
+                'question': follow_up_question,
+                'answer': answer,
+                'context': full_context,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            return answer
+            
+        except Exception as e:
+            self.error_count += 1
+            logger.error(f"Error processing follow-up question: {str(e)}")
+            return f"Error processing follow-up question: {str(e)}"
 
     def clear_conversation_history(self):
         """Clear the conversation history."""
         self.conversation_history = []
 
+    def get_conversation_stats(self):
+        """Get conversation statistics."""
+        return {
+            'total_questions': len(self.conversation_history),
+            'error_count': self.error_count,
+            'last_question_time': self.conversation_history[-1]['timestamp'] if self.conversation_history else None
+        }
+
+### =================== Session Manager =================== ###
+class SessionManager:
+    def __init__(self):
+        self.sessions = {}
+        self.session_timeout = 3600  # 1 hour timeout
+        self.cleanup_interval = 300  # Clean up every 5 minutes
+        self.last_cleanup = time.time()
+
+    def create_session(self, session_id: str) -> Dict:
+        """Create a new session."""
+        self.sessions[session_id] = {
+            'created_at': time.time(),
+            'last_activity': time.time(),
+            'rag_system': None,
+            'documents_loaded': False,
+            'conversation_history': []
+        }
+        return self.sessions[session_id]
+
+    def get_session(self, session_id: str) -> Optional[Dict]:
+        """Get an existing session."""
+        self._cleanup_expired_sessions()
+        
+        if session_id in self.sessions:
+            self.sessions[session_id]['last_activity'] = time.time()
+            return self.sessions[session_id]
+        return None
+
+    def update_session(self, session_id: str, updates: Dict):
+        """Update session data."""
+        if session_id in self.sessions:
+            self.sessions[session_id].update(updates)
+            self.sessions[session_id]['last_activity'] = time.time()
+
+    def delete_session(self, session_id: str):
+        """Delete a session."""
+        if session_id in self.sessions:
+            del self.sessions[session_id]
+
+    def _cleanup_expired_sessions(self):
+        """Clean up expired sessions."""
+        current_time = time.time()
+        if current_time - self.last_cleanup > self.cleanup_interval:
+            expired_sessions = []
+            for session_id, session_data in self.sessions.items():
+                if current_time - session_data['last_activity'] > self.session_timeout:
+                    expired_sessions.append(session_id)
+            
+            for session_id in expired_sessions:
+                del self.sessions[session_id]
+            
+            self.last_cleanup = current_time
+
 ### =================== Main RAG System =================== ###
 class RAGSystem:
-    def __init__(self, settings=None, is_web=False, use_vision_api=True):
-        self.file_handler = WebFileHandler() if is_web else LocalFileHandler()
+    def __init__(self, settings=None, is_web=False, use_vision_api=True, session_id: str = None):
+        self.file_handler = WebFileHandler() if is_web else None
         self.vector_store = VectorStore()
         self.question_handler = QuestionHandler(self.vector_store)
         self.is_web = is_web
         self.conversation_history = []
+        self.session_id = session_id
+        self.session_manager = SessionManager()
+        self.error_handling_enabled = True
+        self.performance_metrics = {
+            'total_queries': 0,
+            'avg_response_time': 0,
+            'error_count': 0
+        }
 
     def process_web_uploads(self, uploaded_files):
-        """Process files uploaded through the web interface"""
+        """Process files uploaded through the web interface with improved error handling."""
         if not self.is_web:
             return False
             
-        documents = self.file_handler.process_uploaded_files(uploaded_files)
-        if documents:
-            self.vector_store.add_documents(documents)
-            return True
-        return False
+        try:
+            start_time = time.time()
+            documents = self.file_handler.process_uploaded_files(uploaded_files)
+            
+            if documents:
+                self.vector_store.add_documents(documents)
+                
+                # Update performance metrics
+                processing_time = time.time() - start_time
+                self.performance_metrics['total_queries'] += 1
+                
+                return True
+            else:
+                logger.warning("No documents were successfully processed")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error processing web uploads: {str(e)}")
+            self.performance_metrics['error_count'] += 1
+            return False
 
     def get_image_path(self, page_num, image_num=None):
         """Get image path for display - delegates to TextProcessor."""
@@ -774,21 +840,25 @@ class RAGSystem:
 
     def search_images_semantically(self, query: str, top_k: int = 3, min_score: int = 180):
         """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header. Only return if score is high enough."""
-        query_lc = query.lower()
-        best_score = -1
-        best_img_info = None
-        for img_info in self.file_handler.text_processor.extracted_images.values():
-            ocr_header = img_info.get('ocr_header', '').lower()
-            ocr_text = img_info.get('ocr_text', '').lower()
-            header_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_header)
-            body_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_text)
-            combined_score = header_score * 2 + body_score  # Prioritize header
-            if combined_score > best_score:
-                best_score = combined_score
-                best_img_info = img_info
-        if best_img_info and best_score >= min_score:
-            return [best_img_info]
-        return []
+        try:
+            query_lc = query.lower()
+            best_score = -1
+            best_img_info = None
+            for img_info in self.file_handler.text_processor.extracted_images.values():
+                ocr_header = img_info.get('ocr_header', '').lower()
+                ocr_text = img_info.get('ocr_text', '').lower()
+                header_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_header)
+                body_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_text)
+                combined_score = header_score * 2 + body_score  # Prioritize header
+                if combined_score > best_score:
+                    best_score = combined_score
+                    best_img_info = img_info
+            if best_img_info and best_score >= min_score:
+                return [best_img_info]
+            return []
+        except Exception as e:
+            logger.error(f"Error in semantic image search: {str(e)}")
+            return []
 
     def is_semantic_image_request(self, question: str):
         """Determine if the question is asking for semantic image search."""
@@ -814,7 +884,7 @@ class RAGSystem:
         return has_semantic_keywords and is_asking_for_specific
 
     def handle_semantic_image_search(self, question: str):
-        """Handle semantic image search requests."""
+        """Handle semantic image search requests with improved error handling."""
         try:
             # Search for semantically similar images
             matching_images = self.search_images_semantically(question, top_k=3)
@@ -831,6 +901,7 @@ class RAGSystem:
                 return "I couldn't find any images matching your request. Try rephrasing or being more specific."
                 
         except Exception as e:
+            logger.error(f"Error in semantic image search: {str(e)}")
             return f"Error searching for images: {str(e)}"
 
     def add_to_conversation_history(self, question, answer, question_type="initial"):
@@ -838,7 +909,8 @@ class RAGSystem:
         self.conversation_history.append({
             'question': question,
             'answer': answer,
-            'type': question_type
+            'type': question_type,
+            'timestamp': datetime.now().isoformat()
         })
 
     def get_conversation_history(self):
@@ -850,15 +922,13 @@ class RAGSystem:
         self.conversation_history = []
 
     def process_images_on_demand(self, pdf_path: str):
-        """Process images from a specific PDF only when needed."""
+        """Process images from a specific PDF only when needed with improved error handling."""
         try:
-            print(f"Processing images on demand for: {pdf_path}")
             # Process images with the text processor
-            self.file_handler.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
-            print("Image processing completed")
+            result = self.file_handler.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
             return True
         except Exception as e:
-            print(f"Error processing images on demand: {e}")
+            logger.error(f"Error processing images on demand: {str(e)}")
             return False
 
     def is_image_related_question(self, question: str) -> bool:
@@ -885,6 +955,18 @@ class RAGSystem:
                 # In a more sophisticated version, you could analyze which PDF is most relevant
                 return saved_paths[0]
         return None
+
+    def get_performance_metrics(self):
+        """Get performance metrics for monitoring."""
+        return self.performance_metrics
+
+    def reset_performance_metrics(self):
+        """Reset performance metrics."""
+        self.performance_metrics = {
+            'total_queries': 0,
+            'avg_response_time': 0,
+            'error_count': 0
+        }
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
