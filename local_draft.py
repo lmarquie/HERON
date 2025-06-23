@@ -92,6 +92,7 @@ class TextProcessor:
                     except Exception as e:
                         logger.warning(f"Error processing images on page {page_num + 1}: {str(e)}")
                         continue
+                        
             doc.close()
             final_content = "\n".join(text_content)
             return final_content
@@ -395,6 +396,7 @@ class TextProcessor:
                                     'date': datetime.now().strftime('%Y-%m-%d')
                                 }
                             })
+                
             except Exception as e:
                 logger.error(f"Error preparing document {pdf_path}: {str(e)}")
                 continue
@@ -1081,7 +1083,7 @@ class RAGSystem:
             # Use internet mode
             logger.info("Processing question using internet mode")
             answer = self.generate_internet_answer(question)
-            self.add_to_conversation_history(question, answer, "initial", "internet")
+            self.add_to_conversation_history(question, answer, "internet")
             return answer
         else:
             # Use document mode (existing logic)
@@ -1090,7 +1092,7 @@ class RAGSystem:
             
             logger.info("Processing question using document mode")
             answer = self.question_handler.process_question(question, normalize_length=normalize_length)
-            self.add_to_conversation_history(question, answer, "initial", "document")
+            self.add_to_conversation_history(question, answer, "document")
             return answer
 
     def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
@@ -1099,7 +1101,7 @@ class RAGSystem:
             # Use internet mode for follow-up
             logger.info("Processing follow-up using internet mode")
             answer = self.generate_internet_answer(follow_up_question)
-            self.add_to_conversation_history(follow_up_question, answer, "follow_up", "internet")
+            self.add_to_conversation_history(follow_up_question, answer, "internet_followup")
             return answer
         else:
             # Use document mode (existing logic)
@@ -1108,7 +1110,7 @@ class RAGSystem:
             
             logger.info("Processing follow-up using document mode")
             answer = self.question_handler.process_follow_up(follow_up_question, normalize_length=normalize_length)
-            self.add_to_conversation_history(follow_up_question, answer, "follow_up", "document")
+            self.add_to_conversation_history(follow_up_question, answer, "document_followup")
             return answer
 
     def get_mode_status(self) -> Dict:
