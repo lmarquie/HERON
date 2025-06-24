@@ -273,7 +273,6 @@ with st.sidebar:
         """,
         unsafe_allow_html=True
     )
-    st.header("HERON Controls")
     
     # Document Management Section
     st.subheader("Documents")
