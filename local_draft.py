@@ -22,6 +22,7 @@ import pdfplumber
 from abc import ABC, abstractmethod
 from docx import Document as DocxDocument
 from pptx import Presentation
+import streamlit as st
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -412,12 +413,14 @@ class WebFileHandler:
         self.saved_pdf_paths = []  # Track saved PDF paths for later image processing
         self.processing_status = {}  # Track processing status per file
         self.executor = ThreadPoolExecutor(max_workers=3)  # Limit concurrent processing
+        self.images_processed = False  # Track if images have been processed
 
     def process_uploaded_files(self, uploaded_files):
         """Process files uploaded through Streamlit with improved error handling."""
         documents = []
         self.saved_pdf_paths = []  # Reset for new uploads
         self.processing_status = {}
+        self.images_processed = False  # Reset image processing flag
         
         # Process files in parallel for better performance
         futures = []
@@ -452,7 +455,8 @@ class WebFileHandler:
             self.saved_pdf_paths.append(temp_path)
 
             if ext == ".pdf":
-                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
+                # Only extract text, not images (faster upload)
+                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
             elif ext == ".docx":
                 text_content = extract_text_from_docx(temp_path)
             elif ext in [".pptx"]:
@@ -482,6 +486,23 @@ class WebFileHandler:
         except Exception as e:
             logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
             return None
+
+    def process_images_on_demand(self):
+        """Process images from all saved PDFs when requested."""
+        if self.images_processed:
+            return True  # Already processed
+            
+        try:
+            for pdf_path in self.saved_pdf_paths:
+                if os.path.exists(pdf_path):
+                    # Process images with the text processor
+                    self.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
+            
+            self.images_processed = True
+            return True
+        except Exception as e:
+            logger.error(f"Error processing images on demand: {str(e)}")
+            return False
 
     def get_saved_pdf_paths(self):
         """Get the paths of saved PDF files for image processing."""
@@ -957,8 +978,13 @@ class RAGSystem:
         return has_semantic_keywords and is_asking_for_specific
 
     def handle_semantic_image_search(self, question: str):
-        """Handle semantic image search requests with improved error handling."""
+        """Handle semantic image search requests with on-demand image processing."""
         try:
+            # First, ensure images are processed if this is an image request
+            if not hasattr(self.file_handler, 'images_processed') or not self.file_handler.images_processed:
+                with st.spinner("Scanning document for images..."):
+                    self.process_images_on_demand()
+            
             # Search for semantically similar images
             matching_images = self.search_images_semantically(question, top_k=3)
             
@@ -995,15 +1021,11 @@ class RAGSystem:
         """Clear the conversation history"""
         self.conversation_history = []
 
-    def process_images_on_demand(self, pdf_path: str):
-        """Process images from a specific PDF only when needed with improved error handling."""
-        try:
-            # Process images with the text processor
-            result = self.file_handler.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
-            return True
-        except Exception as e:
-            logger.error(f"Error processing images on demand: {str(e)}")
-            return False
+    def process_images_on_demand(self):
+        """Process images from all saved PDFs when requested."""
+        if hasattr(self.file_handler, 'process_images_on_demand'):
+            return self.file_handler.process_images_on_demand()
+        return False
 
     def is_image_related_question(self, question: str) -> bool:
         """Check if a question is related to images, charts, graphs, etc."""
