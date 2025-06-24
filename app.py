@@ -10,6 +10,7 @@ import time
 import logging
 import json
 import concurrent.futures
+import re
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -186,40 +187,33 @@ if conversation_history:
                 if source and page and chunk_text:
                     if question_type == 'source_request':
                         # Automatically show source for source requests
-                        if not page:
-                            st.warning("No page number found in chunk metadata. Cannot render source.")
-                            st.info("This might be because the document doesn't have page numbers or the chunk metadata is incomplete.")
-                        else:
-                            pdf_path = source
-                            if not os.path.exists(pdf_path):
-                                # Try temp directory
-                                temp_path = os.path.join("temp", source)
+                        pdf_path = source
+                        if not os.path.exists(pdf_path):
+                            # Try temp directory
+                            temp_path = os.path.join("temp", source)
+                            if os.path.exists(temp_path):
+                                pdf_path = temp_path
+                            else:
+                                # Try with just the filename
+                                filename = os.path.basename(source)
+                                temp_path = os.path.join("temp", filename)
                                 if os.path.exists(temp_path):
                                     pdf_path = temp_path
-                                else:
-                                    # Try with just the filename
-                                    filename = os.path.basename(source)
-                                    temp_path = os.path.join("temp", filename)
-                                    if os.path.exists(temp_path):
-                                        pdf_path = temp_path
-                            
-                            st.info(f"Looking for PDF at: {pdf_path}")
-                            
-                            if os.path.exists(pdf_path):
-                                st.info(f"Found PDF, rendering chunk from page {page}")
-                                img_path = render_chunk_source_image(pdf_path, page, chunk_text)
-                                if os.path.exists(img_path):
-                                    st.image(img_path, caption=f"Page {page} (highlighted chunk)", use_container_width=True)
-                                else:
-                                    st.warning(f"Could not render source image. Expected path: {img_path}")
+                        
+                        if os.path.exists(pdf_path):
+                            img_path = render_chunk_source_image(pdf_path, page, chunk_text)
+                            if os.path.exists(img_path):
+                                st.image(img_path, caption=f"Page {page} (highlighted chunk)", use_container_width=True)
                             else:
-                                st.warning(f"Source PDF not found: {source}")
-                                st.info("Available files in temp directory:")
-                                if os.path.exists("temp"):
-                                    for file in os.listdir("temp"):
-                                        st.text(f"  - {file}")
-                                else:
-                                    st.text("  - temp directory doesn't exist")
+                                st.warning(f"Could not render source image. Expected path: {img_path}")
+                        else:
+                            st.warning(f"Source PDF not found: {source}")
+                            st.info("Available files in temp directory:")
+                            if os.path.exists("temp"):
+                                for file in os.listdir("temp"):
+                                    st.text(f"  - {file}")
+                            else:
+                                st.text("  - temp directory doesn't exist")
                     else:
                         # Show button for other cases
                         show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
@@ -276,6 +270,20 @@ def submit_chat_message():
                     # Get the most recent conversation entry with chunk metadata
                     most_recent = question_handler_history[-1]
                     if most_recent.get('source') and most_recent.get('chunk_text'):
+                        # Extract page number from chunk text if not in metadata
+                        page_num = most_recent.get('page')
+                        chunk_text = most_recent.get('chunk_text', '')
+                        st.info(f"Chunk text preview: {chunk_text[:200]}...")
+                        
+                        if not page_num:
+                            page_match = re.search(r'Page (\d+):', chunk_text)
+                            if page_match:
+                                page_num = int(page_match.group(1))
+                                st.info(f"Extracted page number: {page_num}")
+                            else:
+                                page_num = 1  # Default to page 1 if no page info found
+                                st.info("No page number found, using page 1")
+                        
                         answer = f"Showing source from: {most_recent.get('source')}, Chunk {most_recent.get('chunk_id', '?')}"
                         # Create the entry manually to include chunk metadata
                         entry = {
@@ -285,8 +293,8 @@ def submit_chat_message():
                             'mode': 'document',
                             'timestamp': datetime.now().isoformat(),
                             'source': most_recent.get('source'),
-                            'page': most_recent.get('page'),
-                            'chunk_text': most_recent.get('chunk_text')
+                            'page': page_num,
+                            'chunk_text': chunk_text
                         }
                         st.session_state.rag_system.conversation_history.append(entry)
                     else:
