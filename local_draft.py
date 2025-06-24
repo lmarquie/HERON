@@ -937,15 +937,25 @@ class RAGSystem:
             return self.file_handler.text_processor.get_all_images()
         return {}
 
-    def add_to_conversation_history(self, question, answer, question_type="initial", mode="document"):
+    def add_to_conversation_history(self, question, answer, question_type="initial", mode="document", source=None, page=None, chunk_text=None):
         """Add to conversation history with mode tracking."""
-        self.conversation_history.append({
+        entry = {
             'question': question,
             'answer': answer,
             'question_type': question_type,
             'mode': mode,  # Track which mode was used
             'timestamp': datetime.now().isoformat()
-        })
+        }
+        
+        # Add chunk metadata if provided (for source requests)
+        if source:
+            entry['source'] = source
+        if page:
+            entry['page'] = page
+        if chunk_text:
+            entry['chunk_text'] = chunk_text
+            
+        self.conversation_history.append(entry)
 
     def get_conversation_history(self):
         """Get the conversation history"""
