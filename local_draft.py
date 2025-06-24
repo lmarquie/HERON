@@ -50,6 +50,9 @@ class TextProcessor:
             doc = fitz.open(pdf_path)
             text_content = []
             
+            # Disable image processing for now
+            enable_image_processing = False
+            
             if enable_image_processing:
                 os.makedirs("images", exist_ok=True)
             
@@ -512,6 +515,9 @@ class WebFileHandler:
 
     def process_images_on_demand(self):
         """Process images from all saved PDFs when requested."""
+        # Disable image processing for now
+        return False
+        
         if self.images_processed:
             return True  # Already processed
             
@@ -1059,9 +1065,23 @@ class RAGSystem:
 
     def process_images_on_demand(self):
         """Process images from all saved PDFs when requested."""
-        if hasattr(self.file_handler, 'process_images_on_demand'):
-            return self.file_handler.process_images_on_demand()
+        # Disable image processing for now
         return False
+        
+        if self.images_processed:
+            return True  # Already processed
+            
+        try:
+            for pdf_path in self.saved_pdf_paths:
+                if os.path.exists(pdf_path):
+                    # Process images with the text processor
+                    self.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
+            
+            self.images_processed = True
+            return True
+        except Exception as e:
+            logger.error(f"Error processing images on demand: {str(e)}")
+            return False
 
     def is_image_related_question(self, question: str) -> bool:
         """Check if a question is related to images, charts, graphs, etc."""
