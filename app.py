@@ -186,36 +186,40 @@ if conversation_history:
                 if source and page and chunk_text:
                     if question_type == 'source_request':
                         # Automatically show source for source requests
-                        pdf_path = source
-                        if not os.path.exists(pdf_path):
-                            # Try temp directory
-                            temp_path = os.path.join("temp", source)
-                            if os.path.exists(temp_path):
-                                pdf_path = temp_path
-                            else:
-                                # Try with just the filename
-                                filename = os.path.basename(source)
-                                temp_path = os.path.join("temp", filename)
+                        if not page:
+                            st.warning("No page number found in chunk metadata. Cannot render source.")
+                            st.info("This might be because the document doesn't have page numbers or the chunk metadata is incomplete.")
+                        else:
+                            pdf_path = source
+                            if not os.path.exists(pdf_path):
+                                # Try temp directory
+                                temp_path = os.path.join("temp", source)
                                 if os.path.exists(temp_path):
                                     pdf_path = temp_path
-                        
-                        st.info(f"Looking for PDF at: {pdf_path}")
-                        
-                        if os.path.exists(pdf_path):
-                            st.info(f"Found PDF, rendering chunk from page {page}")
-                            img_path = render_chunk_source_image(pdf_path, page, chunk_text)
-                            if os.path.exists(img_path):
-                                st.image(img_path, caption=f"Page {page} (highlighted chunk)", use_container_width=True)
+                                else:
+                                    # Try with just the filename
+                                    filename = os.path.basename(source)
+                                    temp_path = os.path.join("temp", filename)
+                                    if os.path.exists(temp_path):
+                                        pdf_path = temp_path
+                            
+                            st.info(f"Looking for PDF at: {pdf_path}")
+                            
+                            if os.path.exists(pdf_path):
+                                st.info(f"Found PDF, rendering chunk from page {page}")
+                                img_path = render_chunk_source_image(pdf_path, page, chunk_text)
+                                if os.path.exists(img_path):
+                                    st.image(img_path, caption=f"Page {page} (highlighted chunk)", use_container_width=True)
+                                else:
+                                    st.warning(f"Could not render source image. Expected path: {img_path}")
                             else:
-                                st.warning(f"Could not render source image. Expected path: {img_path}")
-                        else:
-                            st.warning(f"Source PDF not found: {source}")
-                            st.info("Available files in temp directory:")
-                            if os.path.exists("temp"):
-                                for file in os.listdir("temp"):
-                                    st.text(f"  - {file}")
-                            else:
-                                st.text("  - temp directory doesn't exist")
+                                st.warning(f"Source PDF not found: {source}")
+                                st.info("Available files in temp directory:")
+                                if os.path.exists("temp"):
+                                    for file in os.listdir("temp"):
+                                        st.text(f"  - {file}")
+                                else:
+                                    st.text("  - temp directory doesn't exist")
                     else:
                         # Show button for other cases
                         show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
