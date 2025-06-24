@@ -1060,16 +1060,26 @@ class RAGSystem:
         
         # Comprehensive list of image-related keywords
         image_keywords = [
+            # Generic image requests
+            'show me an image', 'show me a', 'show an image', 'show a', 'display an image', 'display a',
+            'find an image', 'find a', 'get an image', 'get a', 'show me the', 'show the',
+            
+            # Specific image types
             'show', 'display', 'image', 'picture', 'chart', 'graph', 'table', 'figure',
             'diagram', 'visual', 'plot', 'graphic', 'photo', 'screenshot', 'illustration',
             'revenue chart', 'profit graph', 'sales figure', 'data visualization',
             'bar chart', 'line graph', 'pie chart', 'scatter plot', 'histogram',
             'dashboard', 'kpi', 'key performance indicator', 'visualization',
             'chart', 'graph', 'figure', 'diagram', 'plot', 'graphic',
+            
+            # Business/financial content
             'revenue', 'profit', 'growth', 'sales', 'earnings', 'income',
             'metrics', 'performance', 'financial', 'business', 'quarterly', 'annual',
             'trend', 'comparison', 'analysis', 'statistics', 'figures',
-            'what does the', 'can you show', 'find the', 'locate the', 'where is the'
+            
+            # Generic requests
+            'what does the', 'can you show', 'find the', 'locate the', 'where is the',
+            'show me something', 'show me anything', 'what images', 'what charts'
         ]
         
         return any(keyword in question_lower for keyword in image_keywords)
@@ -1077,8 +1087,8 @@ class RAGSystem:
     def get_pdf_path_for_question(self, question: str) -> str:
         """Get the PDF path that should be processed for an image question."""
         # Get saved PDF paths from the file handler
-        if hasattr(self.file_handler, 'get_saved_pdf_paths'):
-            saved_paths = self.file_handler.get_saved_pdf_paths()
+        if hasattr(self.file_handler, 'saved_pdf_paths'):
+            saved_paths = self.file_handler.saved_pdf_paths
             if saved_paths:
                 # For now, return the first PDF
                 # In a more sophisticated version, you could analyze which PDF is most relevant
@@ -1143,6 +1153,12 @@ class RAGSystem:
             if self.is_image_related_question(question):
                 logger.info("Image-related question detected - triggering comprehensive image processing")
                 
+                # Check if this is a generic request (like "show me an image from [document]")
+                if self.is_generic_image_request(question):
+                    logger.info("Generic image request detected - using generic handler")
+                    return self.handle_generic_image_request(question)
+                
+                # Otherwise, use semantic search
                 # Get the PDF path and process images on-demand
                 pdf_path = self.get_pdf_path_for_question(question)
                 if pdf_path and os.path.exists(pdf_path):
@@ -1160,57 +1176,84 @@ class RAGSystem:
             logger.error(f"Error processing question with mode: {str(e)}")
             return f"Error processing question: {str(e)}"
 
-    def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
-        """Process follow-up question using either document mode or internet mode."""
-        # Check for image/graph requests first
-        if self.is_image_related_question(follow_up_question) or self.is_semantic_image_request(follow_up_question):
-            logger.info("Processing follow-up image/graph request")
-            answer = self.handle_semantic_image_search(follow_up_question)
-            self.add_to_conversation_history(follow_up_question, answer, "image_search_followup")
-            return answer
-            
-        if self.internet_mode:
-            # Use internet mode for follow-up
-            logger.info("Processing follow-up using internet mode")
-            answer = self.generate_internet_answer(follow_up_question)
-            self.add_to_conversation_history(follow_up_question, answer, "internet_followup")
-            return answer
-        else:
-            # Use document mode (existing logic)
-            if not self.vector_store.is_ready():
-                return "No documents loaded. Please upload documents first or enable internet mode."
-            
-            logger.info("Processing follow-up using document mode")
-            answer = self.question_handler.process_follow_up(follow_up_question, normalize_length=normalize_length)
-            self.add_to_conversation_history(follow_up_question, answer, "document_followup")
-            return answer
+    def is_generic_image_request(self, question: str) -> bool:
+        """Check if this is a generic image request that should return any image from a document."""
+        question_lower = question.lower()
+        
+        # Generic patterns that should return any image
+        generic_patterns = [
+            'show me an image from',
+            'show me a picture from',
+            'show an image from',
+            'show a picture from',
+            'display an image from',
+            'display a picture from',
+            'find an image from',
+            'find a picture from',
+            'get an image from',
+            'get a picture from',
+            'show me any image from',
+            'show me any picture from',
+            'literally any',
+            'any picture',
+            'any image'
+        ]
+        
+        return any(pattern in question_lower for pattern in generic_patterns)
 
-    def get_mode_status(self) -> Dict:
-        """Get current mode status and information."""
-        return {
-            'internet_mode': self.internet_mode,
-            'documents_loaded': self.vector_store.is_ready(),
-            'total_documents': len(self.vector_store.documents) if self.vector_store.documents else 0,
-            'mode_description': 'Internet Search' if self.internet_mode else 'Document Search'
-        }
-
-    def handle_follow_up(self, follow_up_question: str, normalize_length: bool = True):
-        """Encapsulate all follow-up logic: timing, error handling, metrics, and answer."""
-        import time
-        start_time = time.time()
+    def handle_generic_image_request(self, question: str):
+        """Handle generic image requests like 'show me an image from [document]'."""
         try:
-            answer = self.process_follow_up_with_mode(follow_up_question, normalize_length=normalize_length)
-            response_time = time.time() - start_time
-            if not hasattr(self, 'performance_metrics'):
-                self.performance_metrics = {}
-            self.performance_metrics['last_response_time'] = response_time
-            return answer
+            # Extract document name from question
+            question_lower = question.lower()
+            
+            # Look for document references
+            if 'from the' in question_lower or 'from' in question_lower:
+                # Try to extract document name
+                parts = question_lower.split('from')
+                if len(parts) > 1:
+                    doc_part = parts[1].strip()
+                    # Remove common words
+                    doc_part = doc_part.replace('the ', '').replace('document', '').replace('file', '').strip()
+                    
+                    # Find matching document
+                    if hasattr(self.file_handler, 'saved_pdf_paths'):
+                        for pdf_path in self.file_handler.saved_pdf_paths:
+                            if doc_part in pdf_path.lower():
+                                # Process images for this specific document
+                                logger.info(f"Processing images for generic request from {pdf_path}")
+                                self.process_images_on_demand(pdf_path)
+                                
+                                # Get all images from this document
+                                all_images = self.get_all_images()
+                                doc_images = []
+                                
+                                for img_key, img_info in all_images.items():
+                                    if doc_part in img_info.get('path', '').lower():
+                                        doc_images.append(img_info)
+                                
+                                if doc_images:
+                                    # Return the first few images as a list for display
+                                    return doc_images[:3]  # Return first 3 images
+                                else:
+                                    return f"No images found in the {doc_part} document after processing."
+            
+            # If no specific document mentioned, process all documents and return any images
+            logger.info("Processing images for generic request across all documents")
+            if hasattr(self.file_handler, 'saved_pdf_paths'):
+                for pdf_path in self.file_handler.saved_pdf_paths:
+                    self.process_images_on_demand(pdf_path)
+            
+            all_images = self.get_all_images()
+            if all_images:
+                # Return first few images as a list for display
+                return list(all_images.values())[:3]  # Return first 3 images
+            else:
+                return "No images found in any of the uploaded documents."
+                
         except Exception as e:
-            if hasattr(self, 'performance_metrics'):
-                self.performance_metrics['error_count'] = self.performance_metrics.get('error_count', 0) + 1
-            import logging
-            logging.getLogger(__name__).error(f"Error generating follow-up: {str(e)}")
-            return f"Error: {str(e)}"
+            logger.error(f"Error handling generic image request: {str(e)}")
+            return f"Error processing image request: {str(e)}"
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
