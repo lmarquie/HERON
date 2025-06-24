@@ -1233,6 +1233,11 @@ Respond with ONLY the category name: image_request, text_question, or negative_i
             logger.error(f"Error generating internet answer: {str(e)}")
             return f"Error accessing internet: {str(e)}"
 
+    def set_internet_mode(self, enabled: bool):
+        """Toggle internet mode on/off."""
+        self.internet_mode = enabled
+        logger.info(f"Internet mode {'enabled' if enabled else 'disabled'}")
+
 if __name__ == "__main__": 
     rag_system = RAGSystem()
     rag_system.run() 
