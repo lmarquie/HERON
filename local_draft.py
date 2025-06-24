@@ -32,7 +32,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 1200, overlap: int = 30):  # Optimized for speed
+    def __init__(self, chunk_size: int = 1500, overlap: int = 30):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.extracted_images = {}  # Store images for display
@@ -58,41 +58,39 @@ class TextProcessor:
                 # Only process images if enabled (much faster without this)
                 if enable_image_processing:
                     try:
-                        # Render page as image with very low DPI for speed
-                        pix = page.get_pixmap(dpi=72)  # Reduced to 72 DPI for maximum speed
+                        # Render page as image with lower DPI for speed
+                        pix = page.get_pixmap(dpi=150)  # Reduced from 200 to 150
                         img_data = pix.tobytes("png")
                         img_array = np.frombuffer(img_data, np.uint8)
                         
                         # Check image size to prevent processing extremely large images
-                        if len(img_array) > 5 * 1024 * 1024:  # Reduced to 5MB limit for speed
+                        if len(img_array) > 25 * 1024 * 1024:  # Reduced to 25MB limit
                             continue
                         
                         # Add error handling for large PNG chunks
                         img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                         if img_cv is not None:
-                            # Only process if image is reasonably sized
-                            if img_cv.shape[0] > 100 and img_cv.shape[1] > 100:
-                                detected_regions = self.detect_tables_and_graphs(img_cv)
-                                for idx, (x, y, w, h) in enumerate(detected_regions):
-                                    crop = img_cv[y:y+h, x:x+w]
-                                    img_filename = f"page_{page_num + 1}_detected_{idx + 1}.png"
-                                    img_path = os.path.join("images", img_filename)
-                                    cv2.imwrite(img_path, crop)
-                                    img_key = f"page_{page_num + 1}_detected_{idx + 1}"
-                                    # OCR on the cropped region (body)
-                                    ocr_text = self.ocr_image(crop)
-                                    # OCR on the header (top 20%)
-                                    header_h = max(1, int(h * 0.2))
-                                    header_crop = crop[0:header_h, :]
-                                    ocr_header = self.ocr_image(header_crop)
-                                    self.extracted_images[img_key] = {
-                                        'path': img_path,
-                                        'page': page_num + 1,
-                                        'image_num': idx + 1,
-                                        'description': 'Detected table/graph region (OpenCV)',
-                                        'ocr_text': ocr_text,
-                                        'ocr_header': ocr_header,
-                                    }
+                            detected_regions = self.detect_tables_and_graphs(img_cv)
+                            for idx, (x, y, w, h) in enumerate(detected_regions):
+                                crop = img_cv[y:y+h, x:x+w]
+                                img_filename = f"page_{page_num + 1}_detected_{idx + 1}.png"
+                                img_path = os.path.join("images", img_filename)
+                                cv2.imwrite(img_path, crop)
+                                img_key = f"page_{page_num + 1}_detected_{idx + 1}"
+                                # OCR on the cropped region (body)
+                                ocr_text = self.ocr_image(crop)
+                                # OCR on the header (top 20%)
+                                header_h = max(1, int(h * 0.2))
+                                header_crop = crop[0:header_h, :]
+                                ocr_header = self.ocr_image(header_crop)
+                                self.extracted_images[img_key] = {
+                                    'path': img_path,
+                                    'page': page_num + 1,
+                                    'image_num': idx + 1,
+                                    'description': 'Detected table/graph region (OpenCV)',
+                                    'ocr_text': ocr_text,
+                                    'ocr_header': ocr_header,
+                                }
                     except Exception as e:
                         logger.warning(f"Error processing images on page {page_num + 1}: {str(e)}")
                         continue
@@ -108,30 +106,18 @@ class TextProcessor:
     def detect_tables_and_graphs(self, img_cv):
         """Detect likely tables/graphs in a page image using OpenCV (returns list of bounding boxes)."""
         try:
-            # Convert to grayscale
             gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-            
-            # Use simpler, faster detection method
-            # Look for regions with high edge density (likely tables/graphs)
-            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-            
-            # Find contours more efficiently
+            blur = cv2.GaussianBlur(gray, (5, 5), 0)
+            edges = cv2.Canny(blur, 50, 150, apertureSize=3)
+            # Find contours
             contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
             regions = []
             for cnt in contours:
                 x, y, w, h = cv2.boundingRect(cnt)
-                
-                # More aggressive filtering for speed - only keep large, likely regions
-                if w > 200 and h > 100 and w*h > 20000:  # Increased minimum size
-                    # Check aspect ratio to avoid very long/skinny regions
-                    aspect_ratio = w / h
-                    if 0.2 < aspect_ratio < 5.0:  # Reasonable aspect ratio
-                        regions.append((x, y, w, h))
-            
-            # Limit to top 5 regions to avoid processing too many
-            regions = regions[:5]
-            
+                # Heuristic: Only keep large regions (likely tables/graphs)
+                if w > 100 and h > 60 and w*h > 10000:
+                    regions.append((x, y, w, h))
+            # Optionally, merge overlapping/close rectangles here
             return regions
         except Exception as e:
             logger.warning(f"Error detecting tables/graphs: {str(e)}")
@@ -140,20 +126,9 @@ class TextProcessor:
     def ocr_image(self, img_cv):
         """Run OCR on a cropped image region using Tesseract if available, else fallback to empty string."""
         try:
-            # Resize image to smaller size for faster OCR
-            height, width = img_cv.shape[:2]
-            if width > 800 or height > 600:
-                scale = min(800/width, 600/height)
-                new_width = int(width * scale)
-                new_height = int(height * scale)
-                img_cv = cv2.resize(img_cv, (new_width, new_height))
-            
             # Convert to RGB for pytesseract
             img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
-            
-            # Use faster OCR configuration
-            config = '--oem 1 --psm 6'  # Fast mode
-            text = pytesseract.image_to_string(img_rgb, config=config)
+            text = pytesseract.image_to_string(img_rgb)
             return text.strip()
         except Exception as e:
             logger.warning(f"OCR error: {str(e)}")
@@ -185,13 +160,13 @@ class TextProcessor:
     def analyze_image_detailed(self, img_pil):
         """Enhanced image analysis using Vision API for semantic search - focused on figures and graphs."""
         try:
-            # Resize image to reduce API costs and speed - make it even smaller
-            max_size = 400  # Reduced from 512 for speed
+            # Resize image to reduce API costs and speed
+            max_size = 512
             img_pil.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
             
             # Convert to base64
             buffer = io.BytesIO()
-            img_pil.save(buffer, format='JPEG', quality=85)  # Use JPEG instead of PNG for smaller size
+            img_pil.save(buffer, format='PNG')
             img_base64 = base64.b64encode(buffer.getvalue()).decode()
             
             # Enhanced Vision API call focused on figures and graphs
@@ -208,25 +183,25 @@ class TextProcessor:
                         "content": [
                             {
                                 "type": "text",
-                                "text": "Analyze this image and determine if it contains figures, graphs, charts, tables, or data visualizations. If it does, provide a brief description including: 1) Type of visual 2) Main subject/topic 3) Key data points. If this is NOT a figure/graph/chart, respond with 'NOT_A_FIGURE'. Be concise."
+                                "text": "Analyze this image and determine if it contains figures, graphs, charts, tables, or data visualizations. If it does, provide a detailed description including: 1) Type of visual (chart, graph, table, diagram, etc.) 2) Main subject/topic 3) Key data points or information shown 4) Any text or labels visible 5) Business context if applicable (revenue, growth, metrics, etc.). If this is NOT a figure/graph/chart (e.g., it's just text, a photo, or decorative element), respond with 'NOT_A_FIGURE'. Be specific and searchable."
                             },
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": f"data:image/jpeg;base64,{img_base64}"
+                                    "url": f"data:image/png;base64,{img_base64}"
                                 }
                             }
                         ]
                     }
                 ],
-                "max_tokens": 150  # Reduced for speed
+                "max_tokens": 200
             }
             
             response = requests.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=10  # Reduced timeout
+                timeout=15
             )
             
             if response.status_code == 200:
@@ -306,36 +281,23 @@ class TextProcessor:
         """Return a fuzzy match ratio between two strings (0-100)."""
         return int(SequenceMatcher(None, a, b).ratio() * 100)
 
-    def search_images_semantically(self, query: str, top_k: int = 5, min_score: int = 150):
+    def search_images_semantically(self, query: str, top_k: int = 3, min_score: int = 180):
         """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header. Only return if score is high enough."""
-        try:
-            query_lc = query.lower()
-            best_matches = []
-            
-            for img_info in self.extracted_images.values():
-                ocr_header = img_info.get('ocr_header', '').lower()
-                ocr_text = img_info.get('ocr_text', '').lower()
-                description = img_info.get('description', '').lower()
-                
-                # Calculate multiple similarity scores
-                header_score = self.fuzzy_score(query_lc, ocr_header)
-                body_score = self.fuzzy_score(query_lc, ocr_text)
-                desc_score = self.fuzzy_score(query_lc, description)
-                
-                # Weighted combination (prioritize header and description)
-                combined_score = (header_score * 3 + body_score * 1 + desc_score * 2) / 6
-                
-                if combined_score >= min_score:
-                    img_info['similarity_score'] = combined_score
-                    best_matches.append(img_info)
-            
-            # Sort by similarity score and return top matches
-            best_matches.sort(key=lambda x: x.get('similarity_score', 0), reverse=True)
-            return best_matches[:top_k]
-            
-        except Exception as e:
-            logger.error(f"Error in semantic image search: {str(e)}")
-            return []
+        query_lc = query.lower()
+        best_score = -1
+        best_img_info = None
+        for img_info in self.extracted_images.values():
+            ocr_header = img_info.get('ocr_header', '').lower()
+            ocr_text = img_info.get('ocr_text', '').lower()
+            header_score = self.fuzzy_score(query_lc, ocr_header)
+            body_score = self.fuzzy_score(query_lc, ocr_text)
+            combined_score = header_score * 2 + body_score  # Prioritize header
+            if combined_score > best_score:
+                best_score = combined_score
+                best_img_info = img_info
+        if best_img_info and best_score >= min_score:
+            return [best_img_info]
+        return []
 
     def is_blank_image(self, img_pil):
         """Check if image is mostly blank/white space."""
@@ -449,7 +411,7 @@ class WebFileHandler:
         self.text_processor = TextProcessor()
         self.saved_pdf_paths = []  # Track saved PDF paths for later image processing
         self.processing_status = {}  # Track processing status per file
-        self.executor = ThreadPoolExecutor(max_workers=6)  # Increased for better performance
+        self.executor = ThreadPoolExecutor(max_workers=3)  # Limit concurrent processing
 
     def process_uploaded_files(self, uploaded_files):
         """Process files uploaded through Streamlit with improved error handling."""
@@ -490,8 +452,7 @@ class WebFileHandler:
             self.saved_pdf_paths.append(temp_path)
 
             if ext == ".pdf":
-                # Disable image processing by default for speed - can be enabled on-demand
-                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
+                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
             elif ext == ".docx":
                 text_content = extract_text_from_docx(temp_path)
             elif ext in [".pptx"]:
@@ -594,32 +555,17 @@ class VectorStore:
             return
         
         try:
-            logger.info(f"Processing {len(documents)} documents...")
-            start_time = time.time()
-            
             texts = [doc['text'] for doc in documents]
             
-            # Process in larger batches for better performance
-            batch_size = 200  # Increased batch size
-            all_embeddings = []
+            # Get all embeddings in a single batch call
+            embeddings = self.get_openai_embeddings_batch(texts)
             
-            for i in range(0, len(texts), batch_size):
-                batch_texts = texts[i:i + batch_size]
-                logger.info(f"Getting embeddings for batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1} ({len(batch_texts)} texts)")
-                
-                batch_embeddings = self.get_openai_embeddings_batch(batch_texts)
-                if batch_embeddings:
-                    all_embeddings.extend(batch_embeddings)
-                else:
-                    logger.error(f"Failed to get embeddings for batch {i//batch_size + 1}")
-                    return
-            
-            if len(all_embeddings) != len(documents):
+            if embeddings is None or len(embeddings) != len(documents):
                 logger.error("Failed to get embeddings for all documents")
                 return
             
             self.documents.extend(documents)
-            embeddings = np.array(all_embeddings)
+            embeddings = np.array(embeddings)
             
             if self.embeddings is None:
                 self.embeddings = embeddings
@@ -630,8 +576,7 @@ class VectorStore:
             self.index = faiss.IndexFlatIP(embedding_dim)
             self.index.add(self.embeddings.astype('float32'))
             
-            total_time = time.time() - start_time
-            logger.info(f"Added {len(documents)} documents in {total_time:.2f}s")
+            logger.info(f"Added {len(documents)} documents to vector store (OpenAI embeddings - batch)")
             
         except Exception as e:
             logger.error(f"Error adding documents to vector store: {str(e)}")
@@ -966,33 +911,24 @@ class RAGSystem:
             return self.file_handler.text_processor.get_all_images()
         return {}
 
-    def search_images_semantically(self, query: str, top_k: int = 5, min_score: int = 150):
+    def search_images_semantically(self, query: str, top_k: int = 3, min_score: int = 180):
         """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header. Only return if score is high enough."""
         try:
             query_lc = query.lower()
-            best_matches = []
-            
+            best_score = -1
+            best_img_info = None
             for img_info in self.file_handler.text_processor.extracted_images.values():
                 ocr_header = img_info.get('ocr_header', '').lower()
                 ocr_text = img_info.get('ocr_text', '').lower()
-                description = img_info.get('description', '').lower()
-                
-                # Calculate multiple similarity scores
                 header_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_header)
                 body_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_text)
-                desc_score = self.file_handler.text_processor.fuzzy_score(query_lc, description)
-                
-                # Weighted combination (prioritize header and description)
-                combined_score = (header_score * 3 + body_score * 1 + desc_score * 2) / 6
-                
-                if combined_score >= min_score:
-                    img_info['similarity_score'] = combined_score
-                    best_matches.append(img_info)
-            
-            # Sort by similarity score and return top matches
-            best_matches.sort(key=lambda x: x.get('similarity_score', 0), reverse=True)
-            return best_matches[:top_k]
-            
+                combined_score = header_score * 2 + body_score  # Prioritize header
+                if combined_score > best_score:
+                    best_score = combined_score
+                    best_img_info = img_info
+            if best_img_info and best_score >= min_score:
+                return [best_img_info]
+            return []
         except Exception as e:
             logger.error(f"Error in semantic image search: {str(e)}")
             return []
@@ -1060,20 +996,10 @@ class RAGSystem:
         self.conversation_history = []
 
     def process_images_on_demand(self, pdf_path: str):
-        """Process images from a specific PDF only when needed with comprehensive analysis."""
+        """Process images from a specific PDF only when needed with improved error handling."""
         try:
-            logger.info(f"Starting comprehensive image processing for {pdf_path}")
-            start_time = time.time()
-            
-            # Process images with full capabilities
+            # Process images with the text processor
             result = self.file_handler.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
-            
-            # Ensure all images are analyzed with Vision API
-            self.file_handler.text_processor.ensure_images_analyzed()
-            
-            processing_time = time.time() - start_time
-            logger.info(f"Comprehensive image processing completed in {processing_time:.2f}s")
-            
             return True
         except Exception as e:
             logger.error(f"Error processing images on demand: {str(e)}")
@@ -1083,28 +1009,12 @@ class RAGSystem:
         """Check if a question is related to images, charts, graphs, etc."""
         question_lower = question.lower()
         
-        # Comprehensive list of image-related keywords
+        # Keywords that suggest image-related questions
         image_keywords = [
-            # Generic image requests
-            'show me an image', 'show me a', 'show an image', 'show a', 'display an image', 'display a',
-            'find an image', 'find a', 'get an image', 'get a', 'show me the', 'show the',
-            
-            # Specific image types
             'show', 'display', 'image', 'picture', 'chart', 'graph', 'table', 'figure',
             'diagram', 'visual', 'plot', 'graphic', 'photo', 'screenshot', 'illustration',
             'revenue chart', 'profit graph', 'sales figure', 'data visualization',
-            'bar chart', 'line graph', 'pie chart', 'scatter plot', 'histogram',
-            'dashboard', 'kpi', 'key performance indicator', 'visualization',
-            'chart', 'graph', 'figure', 'diagram', 'plot', 'graphic',
-            
-            # Business/financial content
-            'revenue', 'profit', 'growth', 'sales', 'earnings', 'income',
-            'metrics', 'performance', 'financial', 'business', 'quarterly', 'annual',
-            'trend', 'comparison', 'analysis', 'statistics', 'figures',
-            
-            # Generic requests
-            'what does the', 'can you show', 'find the', 'locate the', 'where is the',
-            'show me something', 'show me anything', 'what images', 'what charts'
+            'bar chart', 'line graph', 'pie chart', 'scatter plot', 'histogram'
         ]
         
         return any(keyword in question_lower for keyword in image_keywords)
@@ -1112,8 +1022,8 @@ class RAGSystem:
     def get_pdf_path_for_question(self, question: str) -> str:
         """Get the PDF path that should be processed for an image question."""
         # Get saved PDF paths from the file handler
-        if hasattr(self.file_handler, 'saved_pdf_paths'):
-            saved_paths = self.file_handler.saved_pdf_paths
+        if hasattr(self.file_handler, 'get_saved_pdf_paths'):
+            saved_paths = self.file_handler.get_saved_pdf_paths()
             if saved_paths:
                 # For now, return the first PDF
                 # In a more sophisticated version, you could analyze which PDF is most relevant
@@ -1172,103 +1082,54 @@ class RAGSystem:
             return f"Error accessing internet: {str(e)}"
 
     def process_question_with_mode(self, question: str, normalize_length: bool = True) -> str:
-        """Process a question using the appropriate mode (document or internet)."""
-        try:
-            # Check if this is an image-related question
-            if self.is_image_related_question(question):
-                logger.info("Image-related question detected - triggering comprehensive image processing")
-                
-                # Check if this is a generic request (like "show me an image from [document]")
-                if self.is_generic_image_request(question):
-                    logger.info("Generic image request detected - using generic handler")
-                    return self.handle_generic_image_request(question)
-                
-                # Otherwise, use semantic search
-                # Get the PDF path and process images on-demand
-                pdf_path = self.get_pdf_path_for_question(question)
-                if pdf_path and os.path.exists(pdf_path):
-                    logger.info(f"Processing images for {pdf_path}")
-                    self.process_images_on_demand(pdf_path)
-                else:
-                    logger.warning("No PDF path found for image processing")
+        """Process question using either document mode or internet mode."""
+        # Check for image/graph requests first
+        if self.is_image_related_question(question) or self.is_semantic_image_request(question):
+            logger.info("Processing image/graph request")
+            answer = self.handle_semantic_image_search(question)
+            self.add_to_conversation_history(question, answer, "image_search")
+            return answer
             
-            if self.internet_mode:
-                return self.generate_internet_answer(question)
-            else:
-                return self.question_handler.process_question(question, normalize_length=normalize_length)
-                
-        except Exception as e:
-            logger.error(f"Error processing question with mode: {str(e)}")
-            return f"Error processing question: {str(e)}"
+        if self.internet_mode:
+            # Use internet mode
+            logger.info("Processing question using internet mode")
+            answer = self.generate_internet_answer(question)
+            self.add_to_conversation_history(question, answer, "internet")
+            return answer
+        else:
+            # Use document mode (existing logic)
+            if not self.vector_store.is_ready():
+                return "No documents loaded. Please upload documents first or enable internet mode."
+            
+            logger.info("Processing question using document mode")
+            answer = self.question_handler.process_question(question, normalize_length=normalize_length)
+            self.add_to_conversation_history(question, answer, "document")
+            return answer
 
-    def is_generic_image_request(self, question: str) -> bool:
-        """Check if this is a generic image request that should return any image from a document."""
-        question_lower = question.lower()
-        
-        # Generic patterns that should return any image
-        generic_patterns = [
-            'show me an image from',
-            'show me a picture from',
-            'show an image from',
-            'show a picture from',
-            'display an image from',
-            'display a picture from',
-            'find an image from',
-            'find a picture from',
-            'get an image from',
-            'get a picture from',
-            'show me any image from',
-            'show me any picture from',
-            'literally any',
-            'any picture',
-            'any image'
-        ]
-        
-        return any(pattern in question_lower for pattern in generic_patterns)
-
-    def handle_generic_image_request(self, question: str):
-        """Handle generic image requests like 'show me an image from [document]'."""
-        try:
-            # Extract document name from question
-            question_lower = question.lower()
+    def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
+        """Process follow-up question using either document mode or internet mode."""
+        # Check for image/graph requests first
+        if self.is_image_related_question(follow_up_question) or self.is_semantic_image_request(follow_up_question):
+            logger.info("Processing follow-up image/graph request")
+            answer = self.handle_semantic_image_search(follow_up_question)
+            self.add_to_conversation_history(follow_up_question, answer, "image_search_followup")
+            return answer
             
-            # Look for document references
-            if 'from the' in question_lower or 'from' in question_lower:
-                # Try to extract document name
-                parts = question_lower.split('from')
-                if len(parts) > 1:
-                    doc_part = parts[1].strip()
-                    # Remove common words
-                    doc_part = doc_part.replace('the ', '').replace('document', '').replace('file', '').strip()
-                    
-                    # Find matching document
-                    if hasattr(self.file_handler, 'saved_pdf_paths'):
-                        for pdf_path in self.file_handler.saved_pdf_paths:
-                            if doc_part in pdf_path.lower():
-                                # Process images for this specific document ONLY
-                                logger.info(f"Processing images for generic request from {pdf_path}")
-                                self.process_images_on_demand(pdf_path)
-                                
-                                # Get all images from this document
-                                all_images = self.get_all_images()
-                                doc_images = []
-                                
-                                for img_key, img_info in all_images.items():
-                                    if doc_part in img_info.get('path', '').lower():
-                                        doc_images.append(img_info)
-                                
-                                if doc_images:
-                                    # Return the first few images as a list for display
-                                    return doc_images[:3]  # Return first 3 images
-                                else:
-                                    return f"No images found in the {doc_part} document after processing."
+        if self.internet_mode:
+            # Use internet mode for follow-up
+            logger.info("Processing follow-up using internet mode")
+            answer = self.generate_internet_answer(follow_up_question)
+            self.add_to_conversation_history(follow_up_question, answer, "internet_followup")
+            return answer
+        else:
+            # Use document mode (existing logic)
+            if not self.vector_store.is_ready():
+                return "No documents loaded. Please upload documents first or enable internet mode."
             
-            # If no specific document mentioned, return error instead of processing all
-            return "Please specify which document you want images from (e.g., 'show me an image from the ionq document')"
-                
-        except Exception as e:
-            logger.error(f"Error handling generic image request: {str(e)}")
-            return f"Error processing image request: {str(e)}"
+            logger.info("Processing follow-up using document mode")
+            answer = self.question_handler.process_follow_up(follow_up_question, normalize_length=normalize_length)
+            self.add_to_conversation_history(follow_up_question, answer, "document_followup")
+            return answer
 
     def get_mode_status(self) -> Dict:
         """Get current mode status and information."""
@@ -1296,34 +1157,6 @@ class RAGSystem:
             import logging
             logging.getLogger(__name__).error(f"Error generating follow-up: {str(e)}")
             return f"Error: {str(e)}"
-
-    def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
-        """Process follow-up question using either document mode or internet mode."""
-        # Check for image/graph requests first
-        if self.is_image_related_question(follow_up_question):
-            logger.info("Processing follow-up image/graph request")
-            if self.is_generic_image_request(follow_up_question):
-                answer = self.handle_generic_image_request(follow_up_question)
-            else:
-                answer = self.handle_semantic_image_search(follow_up_question)
-            self.add_to_conversation_history(follow_up_question, answer, "image_search_followup")
-            return answer
-            
-        if self.internet_mode:
-            # Use internet mode for follow-up
-            logger.info("Processing follow-up using internet mode")
-            answer = self.generate_internet_answer(follow_up_question)
-            self.add_to_conversation_history(follow_up_question, answer, "internet_followup")
-            return answer
-        else:
-            # Use document mode (existing logic)
-            if not self.vector_store.is_ready():
-                return "No documents loaded. Please upload documents first or enable internet mode."
-            
-            logger.info("Processing follow-up using document mode")
-            answer = self.question_handler.process_follow_up(follow_up_question, normalize_length=normalize_length)
-            self.add_to_conversation_history(follow_up_question, answer, "document_followup")
-            return answer
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
