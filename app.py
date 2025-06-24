@@ -1,7 +1,6 @@
 import streamlit as st
 import os
 from local_draft import RAGSystem, WebFileHandler
-from config import PERFORMANCE_CONFIG
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -23,6 +22,35 @@ st.set_page_config(
     layout="wide"
 )
 
+# Performance Configuration
+PERFORMANCE_CONFIG = {
+    # Text Processing
+    'chunk_size': 1000,  # Reduced from 1500 for better performance
+    'chunk_overlap': 50,  # Increased from 30 for better context
+    'enable_image_processing': False,  # Disable by default for speed
+    'image_dpi': 120,  # Reduced from 150 for faster processing
+    'max_image_size_mb': 10,  # Reduced from 25MB
+    
+    # Vector Store
+    'embedding_batch_size': 100,  # Process embeddings in batches
+    'max_documents_before_rebuild': 1000,  # Rebuild index periodically
+    'use_faiss_gpu': False,  # Set to True if GPU available
+    
+    # File Processing
+    'max_file_size_mb': 50,  # Limit file size for processing
+    'max_workers': 4,  # Number of parallel workers
+    'processing_timeout': 120,  # Timeout for file processing
+    
+    # Search
+    'search_k': 5,  # Number of results to retrieve
+    'min_similarity_score': 0.3,  # Minimum similarity score for results
+    
+    # Caching
+    'enable_embedding_cache': True,  # Cache embeddings
+    'enable_response_cache': True,  # Cache responses
+    'cache_size_limit': 1000,  # Maximum cache size
+}
+
 # Initialize RAG system with improved session management
 def initialize_rag_system():
     if 'rag_system' not in st.session_state:
@@ -42,10 +70,6 @@ def generate_answer(question):
         
         # Use the new mode-aware question processing
         answer = st.session_state.rag_system.process_question_with_mode(question, normalize_length=True)
-        
-        # ADD THIS: Add to conversation history so follow-up input appears
-        current_mode = "internet" if st.session_state.get('internet_mode', False) else "document"
-        st.session_state.rag_system.add_to_conversation_history(question, answer, "initial", current_mode)
         
         # Update performance metrics
         response_time = time.time() - start_time
