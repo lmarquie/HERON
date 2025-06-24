@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 from local_draft import RAGSystem, WebFileHandler
+from config import PERFORMANCE_CONFIG
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -315,7 +316,6 @@ with st.sidebar:
         # Apply settings button
         if st.button("Apply Performance Settings", type="secondary"):
             # Update performance config
-            from config import PERFORMANCE_CONFIG
             PERFORMANCE_CONFIG.update({
                 'chunk_size': chunk_size,
                 'chunk_overlap': chunk_overlap,
