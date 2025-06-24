@@ -53,32 +53,6 @@ def generate_answer(question):
         logger.error(f"Error generating answer: {str(e)}")
         return f"Error: {str(e)}"
 
-# Handle image display requests with improved error handling
-def handle_image_request(question):
-    """Handle requests to show images."""
-    try:
-        all_images = st.session_state.rag_system.get_all_images()
-        
-        if not all_images:
-            return []
-        
-        # Extract page number if mentioned
-        import re
-        page_match = re.search(r'page\s+(\d+)', question.lower())
-        
-        if page_match:
-            page_num = int(page_match.group(1))
-            # Show images from specific page
-            page_images = [img_info for img_info in all_images.values() if img_info['page'] == page_num]
-            return page_images
-        else:
-            # Show all images
-            return list(all_images.values())
-    except Exception as e:
-        st.session_state.error_count += 1
-        logger.error(f"Error handling image request: {str(e)}")
-        return []
-
 # Follow-up question generation with improved error handling
 def generate_follow_up(follow_up_question):
     return st.session_state.rag_system.handle_follow_up(follow_up_question)
