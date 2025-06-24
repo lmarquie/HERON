@@ -23,6 +23,8 @@ from abc import ABC, abstractmethod
 from docx import Document as DocxDocument
 from pptx import Presentation
 import streamlit as st
+import openpyxl
+import pandas as pd
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -473,12 +475,15 @@ class WebFileHandler:
             self.saved_pdf_paths.append(temp_path)
 
             if ext == ".pdf":
-                # Only extract text, not images (faster upload)
                 text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
-            elif ext == ".docx":
+            elif ext in [".doc", ".docx"]:
                 text_content = extract_text_from_docx(temp_path)
-            elif ext in [".pptx"]:
+            elif ext in [".ppt", ".pptx"]:
                 text_content = extract_text_from_pptx(temp_path)
+            elif ext == ".xlsx":
+                text_content = extract_text_from_xlsx(temp_path)
+            elif ext == ".xls":
+                text_content = extract_text_from_xls(temp_path)
             else:
                 logger.warning(f"Unsupported file type: {uploaded_file.name}")
                 return None
@@ -1217,6 +1222,51 @@ class RAGSystem:
             import logging
             logging.getLogger(__name__).error(f"Error generating follow-up: {str(e)}")
             return f"Error: {str(e)}"
+
+# --- Add helper functions for text extraction ---
+def extract_text_from_docx(path):
+    try:
+        doc = DocxDocument(path)
+        return '\n'.join([p.text for p in doc.paragraphs if p.text.strip()])
+    except Exception as e:
+        return f"Error extracting text from Word: {str(e)}"
+
+def extract_text_from_pptx(path):
+    try:
+        prs = Presentation(path)
+        text_runs = []
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text"):
+                    text_runs.append(shape.text)
+        return '\n'.join([t for t in text_runs if t.strip()])
+    except Exception as e:
+        return f"Error extracting text from PowerPoint: {str(e)}"
+
+def extract_text_from_xlsx(path):
+    try:
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        text = []
+        for ws in wb.worksheets:
+            for row in ws.iter_rows(values_only=True):
+                row_text = ' '.join([str(cell) for cell in row if cell is not None])
+                if row_text.strip():
+                    text.append(row_text)
+        return '\n'.join(text)
+    except Exception as e:
+        # Fallback to pandas for .xls or if openpyxl fails
+        try:
+            df = pd.read_excel(path, engine='openpyxl')
+            return df.to_string(index=False)
+        except Exception as e2:
+            return f"Error extracting text from Excel: {str(e)}; {str(e2)}"
+
+def extract_text_from_xls(path):
+    try:
+        df = pd.read_excel(path)
+        return df.to_string(index=False)
+    except Exception as e:
+        return f"Error extracting text from Excel: {str(e)}"
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
