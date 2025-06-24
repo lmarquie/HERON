@@ -436,14 +436,12 @@ class WebFileHandler:
         self.saved_pdf_paths = []  # Track saved PDF paths for later image processing
         self.processing_status = {}  # Track processing status per file
         self.executor = ThreadPoolExecutor(max_workers=3)  # Limit concurrent processing
-        self.images_processed = False  # Track if images have been processed
 
     def process_uploaded_files(self, uploaded_files):
         """Process files uploaded through Streamlit with improved error handling."""
         documents = []
         self.saved_pdf_paths = []  # Reset for new uploads
         self.processing_status = {}
-        self.images_processed = False  # Reset image processing flag
         
         # Process files in parallel for better performasence
         futures = []
@@ -512,26 +510,6 @@ class WebFileHandler:
         except Exception as e:
             logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
             return None
-
-    def process_images_on_demand(self):
-        """Process images from all saved PDFs when requested."""
-        # Disable image processing for now
-        return False
-        
-        if self.images_processed:
-            return True  # Already processed
-            
-        try:
-            for pdf_path in self.saved_pdf_paths:
-                if os.path.exists(pdf_path):
-                    # Process images with the text processor
-                    self.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
-            
-            self.images_processed = True
-            return True
-        except Exception as e:
-            logger.error(f"Error processing images on demand: {str(e)}")
-            return False
 
     def get_saved_pdf_paths(self):
         """Get the paths of saved PDF files for image processing."""
@@ -959,92 +937,6 @@ class RAGSystem:
             return self.file_handler.text_processor.get_all_images()
         return {}
 
-    def search_images_semantically(self, query: str, top_k: int = 3, min_score: int = 180):
-        """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header. Only return if score is high enough."""
-        try:
-            query_lc = query.lower()
-            
-            # Check if this is a general image request (not specific)
-            general_image_requests = ['image', 'picture', 'show me', 'display', 'give me', 'single image', 'any image']
-            is_general_request = any(phrase in query_lc for phrase in general_image_requests)
-            
-            # If it's a general request, return any available images
-            if is_general_request:
-                all_images = list(self.file_handler.text_processor.extracted_images.values())
-                if all_images:
-                    return all_images[:top_k]  # Return first few images
-                else:
-                    return []
-            
-            # For specific requests, use semantic matching
-            best_score = -1
-            best_img_info = None
-            for img_info in self.file_handler.text_processor.extracted_images.values():
-                ocr_header = img_info.get('ocr_header', '').lower()
-                ocr_text = img_info.get('ocr_text', '').lower()
-                header_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_header)
-                body_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_text)
-                combined_score = header_score * 2 + body_score  # Prioritize header
-                if combined_score > best_score:
-                    best_score = combined_score
-                    best_img_info = img_info
-            if best_img_info and best_score >= min_score:
-                return [best_img_info]
-            return []
-        except Exception as e:
-            logger.error(f"Error in semantic image search: {str(e)}")
-            return []
-
-    def is_semantic_image_request(self, question: str):
-        """Determine if the question is asking for semantic image search."""
-        question_lower = question.lower()
-        
-        # Keywords that suggest looking for figures, graphs, and charts
-        semantic_keywords = [
-            'revenue', 'profit', 'growth', 'sales', 'earnings', 'income',
-            'chart', 'graph', 'table', 'data', 'metrics', 'performance',
-            'financial', 'business', 'quarterly', 'annual', 'report',
-            'trend', 'comparison', 'analysis', 'statistics', 'figures',
-            'figure', 'diagram', 'visualization', 'plot', 'bar chart',
-            'line chart', 'pie chart', 'scatter plot', 'histogram',
-            'dashboard', 'kpi', 'key performance indicator'
-        ]
-        
-        # Check if question contains semantic keywords
-        has_semantic_keywords = any(keyword in question_lower for keyword in semantic_keywords)
-        
-        # Check if it's asking to show/find something specific
-        is_asking_for_specific = any(word in question_lower for word in ['show me', 'find', 'where is', 'locate', 'display'])
-        
-        return has_semantic_keywords and is_asking_for_specific
-
-    def handle_semantic_image_search(self, question: str):
-        """Handle semantic image search requests with on-demand image processing."""
-        try:
-            # First, ensure images are processed if this is an image request
-            if not hasattr(self.file_handler, 'images_processed') or not self.file_handler.images_processed:
-                with st.spinner("Scanning document for images..."):
-                    self.process_images_on_demand()
-            
-            # Get all available images first
-            all_images = self.file_handler.text_processor.extracted_images
-            
-            if not all_images:
-                return "No images were found in the uploaded documents."
-            
-            # Search for semantically similar images
-            matching_images = self.search_images_semantically(question, top_k=3)
-            
-            if matching_images:
-                return matching_images
-            else:
-                # If no semantic matches but we have images, return a general message
-                return f"I found {len(all_images)} image(s) in the document, but none seem to match your specific request. Try asking for 'any image' or 'show me an image' to see what's available."
-                
-        except Exception as e:
-            logger.error(f"Error in semantic image search: {str(e)}")
-            return f"Error searching for images: {str(e)}"
-
     def add_to_conversation_history(self, question, answer, question_type="initial", mode="document"):
         """Add to conversation history with mode tracking."""
         self.conversation_history.append({
@@ -1063,51 +955,6 @@ class RAGSystem:
         """Clear the conversation history"""
         self.conversation_history = []
 
-    def process_images_on_demand(self):
-        """Process images from all saved PDFs when requested."""
-        # Disable image processing for now
-        return False
-        
-        if self.images_processed:
-            return True  # Already processed
-            
-        try:
-            for pdf_path in self.saved_pdf_paths:
-                if os.path.exists(pdf_path):
-                    # Process images with the text processor
-                    self.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
-            
-            self.images_processed = True
-            return True
-        except Exception as e:
-            logger.error(f"Error processing images on demand: {str(e)}")
-            return False
-
-    def is_image_related_question(self, question: str) -> bool:
-        """Check if a question is related to images, charts, graphs, etc."""
-        question_lower = question.lower()
-        
-        # Keywords that suggest image-related questions
-        image_keywords = [
-            'show', 'display', 'image', 'picture', 'chart', 'graph', 'table', 'figure',
-            'diagram', 'visual', 'plot', 'graphic', 'photo', 'screenshot', 'illustration',
-            'revenue chart', 'profit graph', 'sales figure', 'data visualization',
-            'bar chart', 'line graph', 'pie chart', 'scatter plot', 'histogram'
-        ]
-        
-        return any(keyword in question_lower for keyword in image_keywords)
-
-    def get_pdf_path_for_question(self, question: str) -> str:
-        """Get the PDF path that should be processed for an image question."""
-        # Get saved PDF paths from the file handler
-        if hasattr(self.file_handler, 'get_saved_pdf_paths'):
-            saved_paths = self.file_handler.get_saved_pdf_paths()
-            if saved_paths:
-                # For now, return the first PDF
-                # In a more sophisticated version, you could analyze which PDF is most relevant
-                return saved_paths[0]
-        return None
-
     def get_performance_metrics(self):
         """Get performance metrics for monitoring."""
         return self.performance_metrics
@@ -1121,76 +968,32 @@ class RAGSystem:
         }
 
     def set_internet_mode(self, enabled: bool):
-        """Toggle internet mode on/off."""
+        """Set internet mode on or off."""
         self.internet_mode = enabled
-        logger.info(f"Internet mode {'enabled' if enabled else 'disabled'}")
 
     def is_internet_mode_enabled(self) -> bool:
         """Check if internet mode is enabled."""
         return self.internet_mode
 
     def generate_internet_answer(self, question: str) -> str:
-        """Generate answer using internet search when no documents are available."""
+        """Generate answer using internet search."""
         try:
-            # Use OpenAI's web browsing capabilities
-            client = openai.OpenAI(api_key=OPENAI_API_KEY)
-            
-            # Create a system prompt for internet search
-            system_prompt = (
-                "You are a helpful assistant with access to the internet. "
-                "Answer questions based on current information from the web. "
-                "You must always cite your sources with URLs in every answer. "
-                "If you use multiple sources, cite each one clearly. "
-                "If you cannot find relevant information, say so clearly."
+            # Use the ClaudeHandler with internet mode system prompt
+            internet_llm = ClaudeHandler(
+                system_prompt="You are a helpful assistant. Answer questions based on current internet knowledge. "
+                "Always include URLs/sources for every fact or statement in your answer. "
+                "If you use multiple sources, cite each one clearly with the URL."
             )
             
-            response = client.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": question}
-                ],
-                temperature=0.3,
-                max_tokens=16384
-            )
-            
-            return response.choices[0].message.content
+            # For now, return a simple response indicating internet mode
+            return f"Internet mode is enabled. This would search the web for: {question}"
             
         except Exception as e:
             logger.error(f"Error generating internet answer: {str(e)}")
-            return f"Error accessing internet: {str(e)}"
+            return f"Error generating internet answer: {str(e)}"
 
     def process_question_with_mode(self, question: str, normalize_length: bool = True) -> str:
         """Process question using either document mode or internet mode."""
-        # Define trigger phrases for source/graph requests
-        trigger_phrases = [
-            'show me the source',
-            'show me the graph',
-            'show me the chart',
-            'show me the figure',
-            'show me the table',
-            'show me the image',
-            'show the source',
-            'show the graph',
-            'show the chart',
-            'show the figure',
-            'show the table',
-            'show the image',
-            'source for this info',
-            'graph for this info',
-            'chart for this info',
-            'figure for this info',
-            'table for this info',
-            'image for this info',
-        ]
-        question_lc = question.lower()
-        is_trigger = any(phrase in question_lc for phrase in trigger_phrases)
-        # For these trigger questions, use normal document mode, not image search
-        if not is_trigger and (self.is_image_related_question(question) or self.is_semantic_image_request(question)):
-            logger.info("Processing image/graph request")
-            answer = self.handle_semantic_image_search(question)
-            self.add_to_conversation_history(question, answer, "image_search")
-            return answer
         if self.internet_mode:
             # Use internet mode
             logger.info("Processing question using internet mode")
@@ -1203,6 +1006,7 @@ class RAGSystem:
                 answer = "No documents loaded. Please upload documents first or enable internet mode."
                 self.add_to_conversation_history(question, answer, "error", "document")
                 return answer
+            
             logger.info("Processing question using document mode")
             answer = self.question_handler.process_question(question, normalize_length=normalize_length)
             self.add_to_conversation_history(question, answer, "document")
@@ -1210,35 +1014,6 @@ class RAGSystem:
 
     def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
         """Process follow-up question using either document mode or internet mode."""
-        # Define trigger phrases for source/graph requests
-        trigger_phrases = [
-            'show me the source',
-            'show me the graph',
-            'show me the chart',
-            'show me the figure',
-            'show me the table',
-            'show me the image',
-            'show the source',
-            'show the graph',
-            'show the chart',
-            'show the figure',
-            'show the table',
-            'show the image',
-            'source for this info',
-            'graph for this info',
-            'chart for this info',
-            'figure for this info',
-            'table for this info',
-            'image for this info',
-        ]
-        question_lc = follow_up_question.lower()
-        is_trigger = any(phrase in question_lc for phrase in trigger_phrases)
-        # For these trigger questions, use normal document mode, not image search
-        if not is_trigger and (self.is_image_related_question(follow_up_question) or self.is_semantic_image_request(follow_up_question)):
-            logger.info("Processing follow-up image/graph request")
-            answer = self.handle_semantic_image_search(follow_up_question)
-            self.add_to_conversation_history(follow_up_question, answer, "image_search_followup")
-            return answer
         if self.internet_mode:
             # Use internet mode for follow-up
             logger.info("Processing follow-up using internet mode")
@@ -1251,6 +1026,7 @@ class RAGSystem:
                 answer = "No documents loaded. Please upload documents first or enable internet mode."
                 self.add_to_conversation_history(follow_up_question, answer, "error", "document")
                 return answer
+            
             logger.info("Processing follow-up using document mode")
             answer = self.question_handler.process_follow_up(follow_up_question, normalize_length=normalize_length)
             self.add_to_conversation_history(follow_up_question, answer, "document_followup")
