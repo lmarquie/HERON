@@ -177,14 +177,15 @@ if conversation_history:
                             attribution += f" (Page {page_num})"
                         st.caption(attribution)
 
-                # Show 'Show Source' button if chunk metadata is present
+                # Show 'Show Source' button if chunk metadata is present, or auto-show for source requests
                 source = conv.get('source')
                 page = conv.get('page')
                 chunk_text = conv.get('chunk_text')
+                question_type = conv.get('question_type', '')
+                
                 if source and page and chunk_text:
-                    show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
-                    if show_source:
-                        # Try to find the actual PDF path (uploaded file may be in temp/)
+                    if question_type == 'source_request':
+                        # Automatically show source for source requests
                         pdf_path = source
                         if not os.path.exists(pdf_path):
                             # Try temp directory
@@ -199,6 +200,25 @@ if conversation_history:
                                 st.warning("Could not render source image.")
                         else:
                             st.warning("Source PDF not found.")
+                    else:
+                        # Show button for other cases
+                        show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
+                        if show_source:
+                            # Try to find the actual PDF path (uploaded file may be in temp/)
+                            pdf_path = source
+                            if not os.path.exists(pdf_path):
+                                # Try temp directory
+                                temp_path = os.path.join("temp", source)
+                                if os.path.exists(temp_path):
+                                    pdf_path = temp_path
+                            if os.path.exists(pdf_path):
+                                img_path = render_chunk_source_image(pdf_path, page, chunk_text)
+                                if os.path.exists(img_path):
+                                    st.image(img_path, caption=f"Page {page} (highlighted chunk)", use_container_width=True)
+                                else:
+                                    st.warning("Could not render source image.")
+                            else:
+                                st.warning("Source PDF not found.")
 
 # Always show chat input (permanent chat interface)
 # Initialize input key counter
@@ -216,20 +236,37 @@ def submit_chat_message():
             st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
             st.rerun()
         else:
-            # Check if this is actually a follow-up question (has previous conversation)
-            # Get the current conversation history to check if there are real Q&A pairs
-            current_history = st.session_state.rag_system.get_conversation_history()
-            has_real_conversation = any(
-                conv.get('question_type') not in ['error'] 
-                for conv in current_history
-            )
+            # Check if this is a source/graph request
+            question_lower = chat_question.lower()
+            trigger_phrases = [
+                'show me the source', 'show me the graph', 'show me the chart', 'show me the figure',
+                'show me the table', 'show me the image', 'show the source', 'show the graph',
+                'show the chart', 'show the figure', 'show the table', 'show the image',
+                'source for this', 'graph for this', 'chart for this', 'figure for this',
+                'table for this', 'image for this'
+            ]
             
-            if has_real_conversation:
-                # Use follow-up processing for actual follow-up questions
-                answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+            is_source_request = any(phrase in question_lower for phrase in trigger_phrases)
+            
+            if is_source_request:
+                # For source requests, just add a placeholder answer and let the UI handle showing the source
+                answer = "Showing source for the previous answer..."
+                st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "source_request", "document")
             else:
-                # Use regular question processing for new questions
-                answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+                # Check if this is actually a follow-up question (has previous conversation)
+                # Get the current conversation history to check if there are real Q&A pairs
+                current_history = st.session_state.rag_system.get_conversation_history()
+                has_real_conversation = any(
+                    conv.get('question_type') not in ['error'] 
+                    for conv in current_history
+                )
+                
+                if has_real_conversation:
+                    # Use follow-up processing for actual follow-up questions
+                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+                else:
+                    # Use regular question processing for new questions
+                    answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             st.rerun()
     # Only increment after rerun, so the key stays in sync
     st.session_state.chat_input_key_counter += 1
