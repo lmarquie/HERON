@@ -321,7 +321,7 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Session")
     
-    # Improved layout: Reset full width, Save and Load side by side
+    # Only show the Reset button, full width
     if st.button("Reset", type="secondary", use_container_width=True):
         st.session_state.rag_system.clear_conversation_history()
         if 'answer_given' in st.session_state:
@@ -348,44 +348,6 @@ with st.sidebar:
         st.session_state.last_uploaded_files = []
         st.session_state.processing_status = {}
         st.success("Session reset!")
-
-    col_save, col_load = st.columns([1, 1])
-    with col_save:
-        if st.button("Save", use_container_width=True):
-            session_data = {
-                'conversation_history': st.session_state.rag_system.get_conversation_history(),
-                'last_uploaded_files': st.session_state.get('last_uploaded_files', []),
-                'documents_loaded': st.session_state.get('documents_loaded', False),
-                'performance_metrics': st.session_state.get('performance_metrics', {}),
-                'error_count': st.session_state.get('error_count', 0),
-                'last_upload_time': st.session_state.get('last_upload_time', None),
-                'processing_status': st.session_state.get('processing_status', {}),
-                'internet_mode': st.session_state.get('internet_mode', False)
-            }
-            session_json = json.dumps(session_data, indent=2)
-            st.download_button(
-                label="Download",
-                data=session_json,
-                file_name=f"heron_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json",
-                use_container_width=True
-            )
-    with col_load:
-        uploaded_session = st.file_uploader("Load", type=["json"], key="session_loader")
-        if uploaded_session is not None:
-            try:
-                session_data = json.load(uploaded_session)
-                st.session_state['last_uploaded_files'] = session_data.get('last_uploaded_files', [])
-                st.session_state['documents_loaded'] = session_data.get('documents_loaded', False)
-                st.session_state['performance_metrics'] = session_data.get('performance_metrics', {})
-                st.session_state['error_count'] = session_data.get('error_count', 0)
-                st.session_state['last_upload_time'] = session_data.get('last_upload_time', None)
-                st.session_state['processing_status'] = session_data.get('processing_status', {})
-                st.session_state['internet_mode'] = session_data.get('internet_mode', False)
-                st.session_state.rag_system.set_conversation_history(session_data.get('conversation_history', []))
-                st.success("Session loaded!")
-            except Exception as e:
-                st.error(f"Load failed: {e}")
 
     # Compact Performance Section
     if conversation_history or st.session_state.get('performance_metrics'):
