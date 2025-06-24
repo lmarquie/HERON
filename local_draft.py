@@ -405,36 +405,30 @@ class TextProcessor:
         
         for pdf_path in pdf_paths:
             try:
-                # Extract text from PDF
-                text_content = self.extract_text_from_pdf(pdf_path)
-                
-                if text_content.strip():
-                    # Split into chunks
-                    chunks = self.chunk_text(text_content)
-                    
-                    for i, chunk in enumerate(chunks):
-                        if chunk.strip():
-                            # Extract page number from chunk text
-                            page_num = None
-                            page_match = re.search(r'Page (\d+):', chunk)
-                            if page_match:
-                                page_num = int(page_match.group(1))
-                            
-                            documents.append({
-                                'text': chunk.strip(),
-                                'metadata': {
-                                    'source': pdf_path,
-                                    'chunk_id': i,
-                                    'total_chunks': len(chunks),
-                                    'date': datetime.now().strftime('%Y-%m-%d'),
-                                    'page': page_num
-                                }
-                            })
-                
+                # Extract text from PDF, but also get per-page text
+                doc = fitz.open(pdf_path)
+                for page_num in range(len(doc)):
+                    page = doc.load_page(page_num)
+                    text = page.get_text()
+                    if text.strip():
+                        # Chunk this page's text
+                        chunks = self.chunk_text(text)
+                        for i, chunk in enumerate(chunks):
+                            if chunk.strip():
+                                documents.append({
+                                    'text': chunk.strip(),
+                                    'metadata': {
+                                        'source': pdf_path,
+                                        'chunk_id': i,
+                                        'total_chunks': len(chunks),
+                                        'date': datetime.now().strftime('%Y-%m-%d'),
+                                        'page': page_num + 1
+                                    }
+                                })
+                doc.close()
             except Exception as e:
                 logger.error(f"Error preparing document {pdf_path}: {str(e)}")
                 continue
-        
         return documents
 
 ### =================== Document Loading =================== ###
