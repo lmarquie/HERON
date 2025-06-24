@@ -274,8 +274,8 @@ with st.sidebar:
     
     # File uploader
     uploaded_files = st.file_uploader(
-        "Upload PDF files",
-        type=['pdf'],
+        "Upload files",
+        type=['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'],
         accept_multiple_files=True,
         key="pdf_uploader"
     )
