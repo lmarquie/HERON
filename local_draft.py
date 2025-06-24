@@ -1238,6 +1238,10 @@ Respond with ONLY the category name: image_request, text_question, or negative_i
         self.internet_mode = enabled
         logger.info(f"Internet mode {'enabled' if enabled else 'disabled'}")
 
+    def get_performance_metrics(self):
+        """Get performance metrics for monitoring."""
+        return getattr(self, 'performance_metrics', {})
+
 if __name__ == "__main__": 
     rag_system = RAGSystem()
     rag_system.run() 
