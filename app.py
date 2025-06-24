@@ -192,15 +192,30 @@ if conversation_history:
                             temp_path = os.path.join("temp", source)
                             if os.path.exists(temp_path):
                                 pdf_path = temp_path
+                            else:
+                                # Try with just the filename
+                                filename = os.path.basename(source)
+                                temp_path = os.path.join("temp", filename)
+                                if os.path.exists(temp_path):
+                                    pdf_path = temp_path
+                        
+                        st.info(f"Looking for PDF at: {pdf_path}")
+                        
                         if os.path.exists(pdf_path):
+                            st.info(f"Found PDF, rendering chunk from page {page}")
                             img_path = render_chunk_source_image(pdf_path, page, chunk_text)
                             if os.path.exists(img_path):
                                 st.image(img_path, caption=f"Page {page} (highlighted chunk)", use_container_width=True)
                             else:
-                                st.warning("Could not render source image.")
+                                st.warning(f"Could not render source image. Expected path: {img_path}")
                         else:
                             st.warning(f"Source PDF not found: {source}")
-                            st.info("The original PDF file may have been moved or deleted. Try uploading the document again.")
+                            st.info("Available files in temp directory:")
+                            if os.path.exists("temp"):
+                                for file in os.listdir("temp"):
+                                    st.text(f"  - {file}")
+                            else:
+                                st.text("  - temp directory doesn't exist")
                     else:
                         # Show button for other cases
                         show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
