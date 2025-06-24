@@ -22,35 +22,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Performance Configuration
-PERFORMANCE_CONFIG = {
-    # Text Processing
-    'chunk_size': 1000,  # Reduced from 1500 for better performance
-    'chunk_overlap': 50,  # Increased from 30 for better context
-    'enable_image_processing': False,  # Disable by default for speed
-    'image_dpi': 120,  # Reduced from 150 for faster processing
-    'max_image_size_mb': 10,  # Reduced from 25MB
-    
-    # Vector Store
-    'embedding_batch_size': 100,  # Process embeddings in batches
-    'max_documents_before_rebuild': 1000,  # Rebuild index periodically
-    'use_faiss_gpu': False,  # Set to True if GPU available
-    
-    # File Processing
-    'max_file_size_mb': 50,  # Limit file size for processing
-    'max_workers': 4,  # Number of parallel workers
-    'processing_timeout': 120,  # Timeout for file processing
-    
-    # Search
-    'search_k': 5,  # Number of results to retrieve
-    'min_similarity_score': 0.3,  # Minimum similarity score for results
-    
-    # Caching
-    'enable_embedding_cache': True,  # Cache embeddings
-    'enable_response_cache': True,  # Cache responses
-    'cache_size_limit': 1000,  # Maximum cache size
-}
-
 # Initialize RAG system with improved session management
 def initialize_rag_system():
     if 'rag_system' not in st.session_state:
@@ -243,46 +214,47 @@ if conversation_history:
                             attribution += f" (Page {page_num})"
                         st.caption(attribution)
 
-# Always show question input (not just when no conversation history)
-# Initialize submit flag
-if 'submit_question' not in st.session_state:
-    st.session_state.submit_question = False
-
-# Show current mode in the input
-current_mode = "Internet Search" if st.session_state.get('internet_mode', False) else "Document Search"
-placeholder_text = f"Ask a question (using {current_mode})..."
-
-question = st.text_input(
-    "Ask a question:",
-    key="question_input",
-    placeholder=placeholder_text,
-    on_change=handle_enter_key,
-    help=f"Press Enter to submit. Currently using {current_mode} mode."
-)
-
-# Handle submission via button or Enter key
-if st.button("Get Answer", type="primary") or st.session_state.submit_question:
-    with st.spinner("Processing..."):
-        answer = generate_answer(question)
-        # If answer is a list (image info), display images
-        if isinstance(answer, list):
-            if answer:
-                img_info = answer[0]  # Only show the most relevant image
-                if os.path.exists(img_info['path']):
-                    # Display image with enhanced caption
-                    caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
-                    if 'description' in img_info:
-                        caption += f" - {img_info['description']}"
-                    if 'similarity_score' in img_info:
-                        caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                    
-                    st.image(img_info['path'], caption=caption, use_container_width=True)
+# Show main question input only if there is no conversation history
+if not conversation_history:
+    # Initialize submit flag
+    if 'submit_question' not in st.session_state:
+        st.session_state.submit_question = False
+    
+    # Show current mode in the input
+    current_mode = "Internet Search" if st.session_state.get('internet_mode', False) else "Document Search"
+    placeholder_text = f"Ask a question (using {current_mode})..."
+    
+    question = st.text_input(
+        "Ask a question:",
+        key="question_input",
+        placeholder=placeholder_text,
+        on_change=handle_enter_key,
+        help=f"Press Enter to submit. Currently using {current_mode} mode."
+    )
+    
+    # Handle submission via button or Enter key
+    if st.button("Get Answer", type="primary") or st.session_state.submit_question:
+        with st.spinner("Processing..."):
+            answer = generate_answer(question)
+            # If answer is a list (image info), display images
+            if isinstance(answer, list):
+                if answer:
+                    img_info = answer[0]  # Only show the most relevant image
+                    if os.path.exists(img_info['path']):
+                        # Display image with enhanced caption
+                        caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                        if 'description' in img_info:
+                            caption += f" - {img_info['description']}"
+                        if 'similarity_score' in img_info:
+                            caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                        
+                        st.image(img_info['path'], caption=caption, use_container_width=True)
+                else:
+                    st.write("No images were found in the uploaded documents.")
             else:
-                st.write("No images were found in the uploaded documents.")
-        else:
-            st.write(answer)
-    st.session_state.answer_given = True
-    st.session_state.submit_question = False  # Reset flag
+                st.write(answer)
+        st.session_state.answer_given = True
+        st.session_state.submit_question = False  # Reset flag
 
 # Always show follow-up input if there is any conversation history
 if conversation_history:
@@ -315,46 +287,7 @@ if conversation_history:
 with st.sidebar:
     st.header("HERON Controls")
     
-    # Performance Configuration Section
-    st.markdown("---")
-    st.subheader("Performance Settings")
-    
-    # Performance mode selector
-    performance_mode = st.selectbox(
-        "Performance Mode:",
-        ["Balanced", "Fast", "High Quality"],
-        help="Choose performance mode for document processing"
-    )
-    
-    # Show current performance settings
-    if st.checkbox("Show Advanced Settings", help="Configure detailed performance parameters"):
-        st.write("**Text Processing:**")
-        chunk_size = st.slider("Chunk Size", 500, 2000, 1000, help="Smaller chunks = faster processing")
-        chunk_overlap = st.slider("Chunk Overlap", 10, 100, 50, help="Higher overlap = better context")
-        
-        st.write("**File Processing:**")
-        max_workers = st.slider("Max Workers", 1, 8, 4, help="Number of parallel processing threads")
-        max_file_size = st.slider("Max File Size (MB)", 10, 100, 50, help="Skip files larger than this")
-        
-        st.write("**Vector Search:**")
-        search_k = st.slider("Search Results (k)", 3, 10, 5, help="Number of results to retrieve")
-        batch_size = st.slider("Embedding Batch Size", 50, 200, 100, help="Larger batches = faster processing")
-        
-        # Apply settings button
-        if st.button("Apply Performance Settings", type="secondary"):
-            # Update performance config
-            PERFORMANCE_CONFIG.update({
-                'chunk_size': chunk_size,
-                'chunk_overlap': chunk_overlap,
-                'max_workers': max_workers,
-                'max_file_size_mb': max_file_size,
-                'search_k': search_k,
-                'embedding_batch_size': batch_size
-            })
-            st.success("Performance settings updated!")
-    
     # Document Management Section
-    st.markdown("---")
     st.subheader("Documents")
     
     # Show uploaded documents and allow removal
@@ -609,26 +542,6 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Performance")
     
-    # Memory monitoring
-    if st.checkbox("Show Memory Usage", help="Monitor memory consumption"):
-        try:
-            memory_usage = st.session_state.rag_system.get_memory_usage()
-            if memory_usage:
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Memory (RSS)", f"{memory_usage.get('rss_mb', 0):.1f} MB")
-                    st.metric("Documents", memory_usage.get('documents_count', 0))
-                with col2:
-                    st.metric("Memory (VMS)", f"{memory_usage.get('vms_mb', 0):.1f} MB")
-                    st.metric("Cache Size", memory_usage.get('embedding_cache_size', 0))
-                
-                # Memory cleanup button
-                if st.button("Cleanup Memory", type="secondary", help="Free up memory"):
-                    st.session_state.rag_system.cleanup_memory()
-                    st.success("Memory cleanup completed!")
-        except Exception as e:
-            st.error(f"Error getting memory usage: {e}")
-    
     # Get actual performance metrics
     try:
         metrics = st.session_state.rag_system.get_performance_metrics()
@@ -640,7 +553,7 @@ with st.sidebar:
             st.metric("Total Errors", metrics.get('error_count', 0))
         
         if stats:
-            st.metric("Total Questions", stats.get('total_questions', 0)) 
+            st.metric("Total Questions", stats.get('total_questions', 0))
             st.metric("Conversation Errors", stats.get('error_count', 0))
         
         if st.session_state.performance_metrics:
