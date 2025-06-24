@@ -284,21 +284,39 @@ class TextProcessor:
 
     def search_images_semantically(self, query: str, top_k: int = 3, min_score: int = 180):
         """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header. Only return if score is high enough."""
-        query_lc = query.lower()
-        best_score = -1
-        best_img_info = None
-        for img_info in self.extracted_images.values():
-            ocr_header = img_info.get('ocr_header', '').lower()
-            ocr_text = img_info.get('ocr_text', '').lower()
-            header_score = self.fuzzy_score(query_lc, ocr_header)
-            body_score = self.fuzzy_score(query_lc, ocr_text)
-            combined_score = header_score * 2 + body_score  # Prioritize header
-            if combined_score > best_score:
-                best_score = combined_score
-                best_img_info = img_info
-        if best_img_info and best_score >= min_score:
-            return [best_img_info]
-        return []
+        try:
+            query_lc = query.lower()
+            
+            # Check if this is a general image request (not specific)
+            general_image_requests = ['image', 'picture', 'show me', 'display', 'give me', 'single image', 'any image']
+            is_general_request = any(phrase in query_lc for phrase in general_image_requests)
+            
+            # If it's a general request, return any available images
+            if is_general_request:
+                all_images = list(self.extracted_images.values())
+                if all_images:
+                    return all_images[:top_k]  # Return first few images
+                else:
+                    return []
+            
+            # For specific requests, use semantic matching
+            best_score = -1
+            best_img_info = None
+            for img_info in self.extracted_images.values():
+                ocr_header = img_info.get('ocr_header', '').lower()
+                ocr_text = img_info.get('ocr_text', '').lower()
+                header_score = self.fuzzy_score(query_lc, ocr_header)
+                body_score = self.fuzzy_score(query_lc, ocr_text)
+                combined_score = header_score * 2 + body_score  # Prioritize header
+                if combined_score > best_score:
+                    best_score = combined_score
+                    best_img_info = img_info
+            if best_img_info and best_score >= min_score:
+                return [best_img_info]
+            return []
+        except Exception as e:
+            logger.error(f"Error in semantic image search: {str(e)}")
+            return []
 
     def is_blank_image(self, img_pil):
         """Check if image is mostly blank/white space."""
@@ -936,6 +954,20 @@ class RAGSystem:
         """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header. Only return if score is high enough."""
         try:
             query_lc = query.lower()
+            
+            # Check if this is a general image request (not specific)
+            general_image_requests = ['image', 'picture', 'show me', 'display', 'give me', 'single image', 'any image']
+            is_general_request = any(phrase in query_lc for phrase in general_image_requests)
+            
+            # If it's a general request, return any available images
+            if is_general_request:
+                all_images = list(self.file_handler.text_processor.extracted_images.values())
+                if all_images:
+                    return all_images[:top_k]  # Return first few images
+                else:
+                    return []
+            
+            # For specific requests, use semantic matching
             best_score = -1
             best_img_info = None
             for img_info in self.file_handler.text_processor.extracted_images.values():
@@ -985,19 +1017,20 @@ class RAGSystem:
                 with st.spinner("Scanning document for images..."):
                     self.process_images_on_demand()
             
+            # Get all available images first
+            all_images = self.file_handler.text_processor.extracted_images
+            
+            if not all_images:
+                return "No images were found in the uploaded documents."
+            
             # Search for semantically similar images
             matching_images = self.search_images_semantically(question, top_k=3)
             
             if matching_images:
-                # Filter out low similarity scores
-                good_matches = [img for img in matching_images if img.get('similarity_score', 0) > 0.3]
-                
-                if good_matches:
-                    return good_matches
-                else:
-                    return f"I found some images but they don't seem to match your request closely enough. Try being more specific about what you're looking for."
+                return matching_images
             else:
-                return "I couldn't find any images matching your request. Try rephrasing or being more specific."
+                # If no semantic matches but we have images, return a general message
+                return f"I found {len(all_images)} image(s) in the document, but none seem to match your specific request. Try asking for 'any image' or 'show me an image' to see what's available."
                 
         except Exception as e:
             logger.error(f"Error in semantic image search: {str(e)}")
