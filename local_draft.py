@@ -204,7 +204,7 @@ class TextProcessor:
                 "https://api.openai.com/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=15
+                timeout=100
             )
             
             if response.status_code == 200:
@@ -267,7 +267,7 @@ class TextProcessor:
                 "https://api.openai.com/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=10
+                timeout=100
             )
             
             if response.status_code == 200:
@@ -451,7 +451,7 @@ class WebFileHandler:
         # Collect results
         for filename, future in futures:
             try:
-                result = future.result(timeout=60)  # 60 second timeout per file
+                result = future.result(timeout=100)  # 60 second timeout per file
                 if result:
                     documents.extend(result)
                     self.processing_status[filename] = "success"
