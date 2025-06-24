@@ -23,6 +23,7 @@ from abc import ABC, abstractmethod
 from docx import Document as DocxDocument
 from pptx import Presentation
 import streamlit as st
+import re
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -30,6 +31,15 @@ logger = logging.getLogger(__name__)
 
 # Reduce verbose httpx logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+def normalize_financial_text(text):
+    text = re.sub(r'\((\d+\.\d+)\)', r'\1', text)  # Remove parentheses around numbers
+    text = re.sub(r'millionin(\d{4})to', r'million in \1 to', text)
+    text = re.sub(r'in(\d{4})to', r'in \1 to', text)
+    text = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', text)
+    text = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
@@ -97,7 +107,8 @@ class TextProcessor:
                         continue
                         
             doc.close()
-            final_content = "\n".join(text_content)
+            normalized_lines = [normalize_financial_text(line) for line in text_content]
+            final_content = "\n".join(normalized_lines)
             return final_content
         except Exception as e:
             self.error_count += 1
@@ -1060,86 +1071,61 @@ class RAGSystem:
             return self.file_handler.process_images_on_demand()
         return False
 
-    def is_image_related_question(self, question: str) -> bool:
-        """Check if a question is related to images, charts, graphs, etc."""
-        question_lower = question.lower()
-        
-        # Keywords that suggest image-related questions
-        image_keywords = [
-            'show', 'display', 'image', 'picture', 'chart', 'graph', 'table', 'figure',
-            'diagram', 'visual', 'plot', 'graphic', 'photo', 'screenshot', 'illustration',
-            'revenue chart', 'profit graph', 'sales figure', 'data visualization',
-            'bar chart', 'line graph', 'pie chart', 'scatter plot', 'histogram'
-        ]
-        
-        return any(keyword in question_lower for keyword in image_keywords)
-
-    def get_pdf_path_for_question(self, question: str) -> str:
-        """Get the PDF path that should be processed for an image question."""
-        # Get saved PDF paths from the file handler
-        if hasattr(self.file_handler, 'get_saved_pdf_paths'):
-            saved_paths = self.file_handler.get_saved_pdf_paths()
-            if saved_paths:
-                # For now, return the first PDF
-                # In a more sophisticated version, you could analyze which PDF is most relevant
-                return saved_paths[0]
-        return None
-
-    def get_performance_metrics(self):
-        """Get performance metrics for monitoring."""
-        return self.performance_metrics
-
-    def reset_performance_metrics(self):
-        """Reset performance metrics."""
-        self.performance_metrics = {
-            'total_queries': 0,
-            'avg_response_time': 0,
-            'error_count': 0
-        }
-
-    def set_internet_mode(self, enabled: bool):
-        """Toggle internet mode on/off."""
-        self.internet_mode = enabled
-        logger.info(f"Internet mode {'enabled' if enabled else 'disabled'}")
-
-    def is_internet_mode_enabled(self) -> bool:
-        """Check if internet mode is enabled."""
-        return self.internet_mode
-
-    def generate_internet_answer(self, question: str) -> str:
-        """Generate answer using internet search when no documents are available."""
+    def classify_question_intent(self, question: str) -> str:
+        """Use AI to classify the intent of a question - much more intelligent than keyword matching."""
         try:
-            # Use OpenAI's web browsing capabilities
             client = openai.OpenAI(api_key=OPENAI_API_KEY)
             
-            # Create a system prompt for internet search
-            system_prompt = (
-                "You are a helpful assistant with access to the internet. "
-                "Answer questions based on current information from the web. "
-                "Always cite your sources and provide accurate, up-to-date information. "
-                "If you cannot find relevant information, say so clearly."
-            )
-            
+            system_prompt = """You are an intent classifier for a document Q&A system. Analyze the user's question and classify it into one of these categories:
+
+1. "image_request" - User is asking to see, display, or find an image, picture, chart, graph, figure, or visual from the document
+2. "text_question" - User is asking for information, analysis, or answers about the document content (not requesting images)
+3. "negative_image" - User is explicitly saying they DON'T want to see images or asking to stop showing images
+
+Examples:
+- "show me an image" → image_request
+- "give me a picture" → image_request  
+- "what's the revenue?" → text_question
+- "no i don't want the picture again" → negative_image
+- "stop showing me images" → negative_image
+- "explain the data" → text_question
+- "show me the chart" → image_request
+
+Respond with ONLY the category name: image_request, text_question, or negative_image."""
+
             response = client.chat.completions.create(
-                model="gpt-4-turbo-preview",
+                model="gpt-4o-mini",  # Fast and cheap for classification
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": question}
                 ],
-                temperature=0.3,
-                max_tokens=1000
+                temperature=0.1,  # Low temperature for consistent classification
+                max_tokens=10
             )
             
-            return response.choices[0].message.content
+            intent = response.choices[0].message.content.strip().lower()
+            
+            # Map the intent to our processing logic
+            if intent == "image_request":
+                return "image"
+            elif intent == "negative_image":
+                return "text"  # Treat negative image requests as text questions
+            else:
+                return "text"  # Default to text for any other case
             
         except Exception as e:
-            logger.error(f"Error generating internet answer: {str(e)}")
-            return f"Error accessing internet: {str(e)}"
+            logger.error(f"Error classifying question intent: {str(e)}")
+            return "text"  # Fallback to text processing if AI classification fails
+
+    def is_image_related_question(self, question: str) -> bool:
+        """Use AI to intelligently determine if this is an image request."""
+        intent = self.classify_question_intent(question)
+        return intent == "image"
 
     def process_question_with_mode(self, question: str, normalize_length: bool = True) -> str:
         """Process question using either document mode or internet mode."""
-        # Check for image/graph requests first
-        if self.is_image_related_question(question) or self.is_semantic_image_request(question):
+        # Use AI to classify the question intent
+        if self.is_image_related_question(question):
             logger.info("Processing image/graph request")
             answer = self.handle_semantic_image_search(question)
             self.add_to_conversation_history(question, answer, "image_search")
@@ -1165,8 +1151,8 @@ class RAGSystem:
 
     def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
         """Process follow-up question using either document mode or internet mode."""
-        # Check for image/graph requests first
-        if self.is_image_related_question(follow_up_question) or self.is_semantic_image_request(follow_up_question):
+        # Use AI to classify the question intent
+        if self.is_image_related_question(follow_up_question):
             logger.info("Processing follow-up image/graph request")
             answer = self.handle_semantic_image_search(follow_up_question)
             self.add_to_conversation_history(follow_up_question, answer, "image_search_followup")
@@ -1216,6 +1202,36 @@ class RAGSystem:
             import logging
             logging.getLogger(__name__).error(f"Error generating follow-up: {str(e)}")
             return f"Error: {str(e)}"
+
+    def generate_internet_answer(self, question: str) -> str:
+        """Generate answer using internet search when no documents are available."""
+        try:
+            # Use OpenAI's web browsing capabilities
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            
+            # Create a system prompt for internet search
+            system_prompt = (
+                "You are a helpful assistant with access to the internet. "
+                "Answer questions based on current information from the web. "
+                "Always cite your sources and provide accurate, up-to-date information. "
+                "If you cannot find relevant information, say so clearly."
+            )
+            
+            response = client.chat.completions.create(
+                model="gpt-4-turbo-preview",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question}
+                ],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            logger.error(f"Error generating internet answer: {str(e)}")
+            return f"Error accessing internet: {str(e)}"
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
