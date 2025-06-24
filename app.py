@@ -199,7 +199,8 @@ if conversation_history:
                             else:
                                 st.warning("Could not render source image.")
                         else:
-                            st.warning("Source PDF not found.")
+                            st.warning(f"Source PDF not found: {source}")
+                            st.info("The original PDF file may have been moved or deleted. Try uploading the document again.")
                     else:
                         # Show button for other cases
                         show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
@@ -249,9 +250,28 @@ def submit_chat_message():
             is_source_request = any(phrase in question_lower for phrase in trigger_phrases)
             
             if is_source_request:
-                # For source requests, just add a placeholder answer and let the UI handle showing the source
-                answer = "Showing source for the previous answer..."
-                st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "source_request", "document")
+                # For source requests, find the most recent answer with chunk metadata
+                current_history = st.session_state.rag_system.get_conversation_history()
+                source_found = False
+                
+                # Look backwards through conversation history for the most recent answer with chunk metadata
+                for prev_conv in reversed(current_history):
+                    if (prev_conv.get('source') and prev_conv.get('page') and 
+                        prev_conv.get('chunk_text') and prev_conv.get('question_type') not in ['error', 'source_request']):
+                        # Found a valid source, use its metadata
+                        answer = f"Showing source from: {prev_conv.get('source')}, Page {prev_conv.get('page')}"
+                        st.session_state.rag_system.add_to_conversation_history(
+                            chat_question, answer, "source_request", "document",
+                            source=prev_conv.get('source'),
+                            page=prev_conv.get('page'),
+                            chunk_text=prev_conv.get('chunk_text')
+                        )
+                        source_found = True
+                        break
+                
+                if not source_found:
+                    answer = "No previous answer with source information found. Please ask a question first."
+                    st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
             else:
                 # Check if this is actually a follow-up question (has previous conversation)
                 # Get the current conversation history to check if there are real Q&A pairs
