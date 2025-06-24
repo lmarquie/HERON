@@ -273,16 +273,26 @@ def submit_chat_message():
                         # Extract page number from chunk text if not in metadata
                         page_num = most_recent.get('page')
                         chunk_text = most_recent.get('chunk_text', '')
-                        st.info(f"Chunk text preview: {chunk_text[:200]}...")
                         
                         if not page_num:
-                            page_match = re.search(r'Page (\d+):', chunk_text)
-                            if page_match:
-                                page_num = int(page_match.group(1))
-                                st.info(f"Extracted page number: {page_num}")
-                            else:
+                            # Try different patterns for page numbers
+                            page_patterns = [
+                                r'Page (\d+):',
+                                r'page (\d+):',
+                                r'Page (\d+)',
+                                r'page (\d+)',
+                                r'P\.(\d+)',
+                                r'p\.(\d+)'
+                            ]
+                            
+                            for pattern in page_patterns:
+                                page_match = re.search(pattern, chunk_text)
+                                if page_match:
+                                    page_num = int(page_match.group(1))
+                                    break
+                            
+                            if not page_num:
                                 page_num = 1  # Default to page 1 if no page info found
-                                st.info("No page number found, using page 1")
                         
                         answer = f"Showing source from: {most_recent.get('source')}, Chunk {most_recent.get('chunk_id', '?')}"
                         # Create the entry manually to include chunk metadata
