@@ -716,7 +716,7 @@ class ClaudeHandler:
                 self.api_url,
                 headers=self.headers,
                 json=payload,
-                timeout=30
+                timeout=100
             )
 
             response.raise_for_status()
