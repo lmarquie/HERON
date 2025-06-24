@@ -1245,7 +1245,7 @@ def extract_text_from_pptx(path):
 
 def extract_text_from_xlsx(path):
     try:
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True) 
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
         text = []
         for ws in wb.worksheets:
             for row in ws.iter_rows(values_only=True):
@@ -1267,6 +1267,20 @@ def extract_text_from_xls(path):
         return df.to_string(index=False)
     except Exception as e:
         return f"Error extracting text from Excel: {str(e)}"
+
+def render_pdf_page_with_highlight(pdf_path, page_num, highlight_text=None):
+    """Render a PDF page as an image, optionally highlighting the given text."""
+    doc = fitz.open(pdf_path)
+    page = doc.load_page(page_num - 1)  # 0-based index
+    if highlight_text:
+        text_instances = page.search_for(highlight_text)
+        for inst in text_instances:
+            page.add_highlight_annot(inst)
+    pix = page.get_pixmap(dpi=200)
+    img_path = f"temp/page_{page_num}_highlighted.png" if highlight_text else f"temp/page_{page_num}_screenshot.png"
+    pix.save(img_path)
+    doc.close()
+    return img_path
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
