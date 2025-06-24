@@ -1,6 +1,6 @@
 import streamlit as st
 import os
-from local_draft import RAGSystem, WebFileHandler
+from local_draft import RAGSystem, WebFileHandler, render_chunk_source_image
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -213,6 +213,48 @@ if conversation_history:
                         if page_num:
                             attribution += f" (Page {page_num})"
                         st.caption(attribution)
+
+                # Show source image automatically if user's question matches a trigger phrase and chunk metadata is present
+                source = conv.get('source')
+                page = conv.get('page')
+                chunk_text = conv.get('chunk_text')
+                user_question = conv.get('question', '').lower()
+                trigger_phrases = [
+                    'show me the source',
+                    'show me the graph',
+                    'show me the chart',
+                    'show me the figure',
+                    'show me the table',
+                    'show me the image',
+                    'show the source',
+                    'show the graph',
+                    'show the chart',
+                    'show the figure',
+                    'show the table',
+                    'show the image',
+                    'source for this info',
+                    'graph for this info',
+                    'chart for this info',
+                    'figure for this info',
+                    'table for this info',
+                    'image for this info',
+                ]
+                if source and page and chunk_text and any(phrase in user_question for phrase in trigger_phrases):
+                    # Try to find the actual PDF path (uploaded file may be in temp/)
+                    pdf_path = source
+                    if not os.path.exists(pdf_path):
+                        # Try temp directory
+                        temp_path = os.path.join("temp", source)
+                        if os.path.exists(temp_path):
+                            pdf_path = temp_path
+                    if os.path.exists(pdf_path):
+                        img_path = render_chunk_source_image(pdf_path, page, chunk_text)
+                        if os.path.exists(img_path):
+                            st.image(img_path, caption=f"Page {page} (highlighted chunk)", use_container_width=True)
+                        else:
+                            st.warning("Could not render source image.")
+                    else:
+                        st.warning("Source PDF not found.")
 
 # Always show chat input (permanent chat interface)
 # Initialize input key counter
