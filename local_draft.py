@@ -1255,6 +1255,61 @@ class RAGSystem:
             logger.error(f"Error handling generic image request: {str(e)}")
             return f"Error processing image request: {str(e)}"
 
+    def get_mode_status(self) -> Dict:
+        """Get current mode status and information."""
+        return {
+            'internet_mode': self.internet_mode,
+            'documents_loaded': self.vector_store.is_ready(),
+            'total_documents': len(self.vector_store.documents) if self.vector_store.documents else 0,
+            'mode_description': 'Internet Search' if self.internet_mode else 'Document Search'
+        }
+
+    def handle_follow_up(self, follow_up_question: str, normalize_length: bool = True):
+        """Encapsulate all follow-up logic: timing, error handling, metrics, and answer."""
+        import time
+        start_time = time.time()
+        try:
+            answer = self.process_follow_up_with_mode(follow_up_question, normalize_length=normalize_length)
+            response_time = time.time() - start_time
+            if not hasattr(self, 'performance_metrics'):
+                self.performance_metrics = {}
+            self.performance_metrics['last_response_time'] = response_time
+            return answer
+        except Exception as e:
+            if hasattr(self, 'performance_metrics'):
+                self.performance_metrics['error_count'] = self.performance_metrics.get('error_count', 0) + 1
+            import logging
+            logging.getLogger(__name__).error(f"Error generating follow-up: {str(e)}")
+            return f"Error: {str(e)}"
+
+    def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
+        """Process follow-up question using either document mode or internet mode."""
+        # Check for image/graph requests first
+        if self.is_image_related_question(follow_up_question):
+            logger.info("Processing follow-up image/graph request")
+            if self.is_generic_image_request(follow_up_question):
+                answer = self.handle_generic_image_request(follow_up_question)
+            else:
+                answer = self.handle_semantic_image_search(follow_up_question)
+            self.add_to_conversation_history(follow_up_question, answer, "image_search_followup")
+            return answer
+            
+        if self.internet_mode:
+            # Use internet mode for follow-up
+            logger.info("Processing follow-up using internet mode")
+            answer = self.generate_internet_answer(follow_up_question)
+            self.add_to_conversation_history(follow_up_question, answer, "internet_followup")
+            return answer
+        else:
+            # Use document mode (existing logic)
+            if not self.vector_store.is_ready():
+                return "No documents loaded. Please upload documents first or enable internet mode."
+            
+            logger.info("Processing follow-up using document mode")
+            answer = self.question_handler.process_follow_up(follow_up_question, normalize_length=normalize_length)
+            self.add_to_conversation_history(follow_up_question, answer, "document_followup")
+            return answer
+
 if __name__ == "__main__": 
     rag_system = RAGSystem()
     rag_system.run() 
