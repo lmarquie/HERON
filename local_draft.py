@@ -1222,7 +1222,7 @@ Respond with ONLY the category name: image_request, text_question, or negative_i
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": question}
-                ],
+                ], 
                 temperature=0.3,
                 max_tokens=1000
             )
