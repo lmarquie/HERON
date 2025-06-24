@@ -32,7 +32,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 1500, overlap: int = 30):
+    def __init__(self, chunk_size: int = 800, overlap: int = 100):  # Smaller chunks, more overlap for better performance
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.extracted_images = {}  # Store images for display
@@ -40,6 +40,12 @@ class TextProcessor:
         self.images_analyzed = set()  # Track which images have been analyzed
         self.processing_lock = threading.Lock()  # Thread safety for image processing
         self.error_count = 0  # Track errors for better error handling
+        
+        # Performance configuration options
+        self.enable_image_processing = False  # Disable by default for speed
+        self.max_image_size_mb = 5  # Further reduced for speed
+        self.image_dpi = 100  # Further reduced for speed
+        self.batch_size = 150  # Increased batch size for embeddings
 
     def extract_text_from_pdf(self, pdf_path: str, enable_image_processing: bool = False) -> str:
         """Extract text and images from PDF, detect tables/graphs, and run OCR on each region (header + body)."""
@@ -59,12 +65,12 @@ class TextProcessor:
                 if enable_image_processing:
                     try:
                         # Render page as image with lower DPI for speed
-                        pix = page.get_pixmap(dpi=150)  # Reduced from 200 to 150
+                        pix = page.get_pixmap(dpi=self.image_dpi)  # Reduced from 200 to 150
                         img_data = pix.tobytes("png")
                         img_array = np.frombuffer(img_data, np.uint8)
                         
                         # Check image size to prevent processing extremely large images
-                        if len(img_array) > 25 * 1024 * 1024:  # Reduced to 25MB limit
+                        if len(img_array) > self.max_image_size_mb * 1024 * 1024:  # Reduced to 25MB limit
                             continue
                         
                         # Add error handling for large PNG chunks
@@ -411,24 +417,40 @@ class WebFileHandler:
         self.text_processor = TextProcessor()
         self.saved_pdf_paths = []  # Track saved PDF paths for later image processing
         self.processing_status = {}  # Track processing status per file
-        self.executor = ThreadPoolExecutor(max_workers=3)  # Limit concurrent processing
+        self.executor = ThreadPoolExecutor(max_workers=6)  # Increased for better parallelization
+        self.max_file_size_mb = 100  # Increased for larger documents
+        self.enable_image_processing = False  # Disable by default for speed
 
     def process_uploaded_files(self, uploaded_files):
-        """Process files uploaded through Streamlit with improved error handling."""
+        """Process files uploaded through Streamlit with improved error handling and performance optimizations."""
         documents = []
         self.saved_pdf_paths = []  # Reset for new uploads
         self.processing_status = {}
         
+        # Filter out files that are too large
+        valid_files = []
+        for uploaded_file in uploaded_files:
+            file_size_mb = len(uploaded_file.getbuffer()) / (1024 * 1024)
+            if file_size_mb > self.max_file_size_mb:
+                logger.warning(f"File {uploaded_file.name} is too large ({file_size_mb:.1f}MB), skipping")
+                self.processing_status[uploaded_file.name] = "skipped_too_large"
+                continue
+            valid_files.append(uploaded_file)
+        
+        if not valid_files:
+            logger.warning("No valid files to process")
+            return documents
+        
         # Process files in parallel for better performance
         futures = []
-        for uploaded_file in uploaded_files:
+        for uploaded_file in valid_files:
             future = self.executor.submit(self._process_single_file, uploaded_file)
             futures.append((uploaded_file.name, future))
         
-        # Collect results
+        # Collect results with timeout
         for filename, future in futures:
             try:
-                result = future.result(timeout=60)  # 60 second timeout per file
+                result = future.result(timeout=120)  # Increased timeout to 120 seconds
                 if result:
                     documents.extend(result)
                     self.processing_status[filename] = "success"
@@ -441,7 +463,7 @@ class WebFileHandler:
         return documents
 
     def _process_single_file(self, uploaded_file):
-        """Process a single uploaded file."""
+        """Process a single uploaded file with memory management."""
         try:
             ext = os.path.splitext(uploaded_file.name)[1].lower()
             temp_path = f"temp/{uploaded_file.name}"
@@ -452,7 +474,8 @@ class WebFileHandler:
             self.saved_pdf_paths.append(temp_path)
 
             if ext == ".pdf":
-                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
+                # Disable image processing for speed with large documents
+                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
             elif ext == ".docx":
                 text_content = extract_text_from_docx(temp_path)
             elif ext in [".pptx"]:
@@ -475,12 +498,30 @@ class WebFileHandler:
                                 'date': datetime.now().strftime('%Y-%m-%d')
                             }
                         })
+                
+                # Clean up temporary file immediately
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+                
                 return documents
             else:
+                # Clean up temporary file
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
                 return None
 
         except Exception as e:
             logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
+            # Clean up temporary file on error
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except:
+                pass
             return None
 
     def get_saved_pdf_paths(self):
@@ -501,6 +542,12 @@ class VectorStore:
         self.chunk_overlap = 50
         self.model = None
         self.initialized = False
+        
+        # Performance optimization settings
+        self.batch_size = 200  # Increased batch size for faster processing
+        self.embedding_cache = {}  # Cache embeddings to avoid re-computation
+        self.max_documents_before_rebuild = 500  # More frequent rebuilds for better performance
+        self.use_faiss_gpu = False  # Set to True if GPU available
         
         # Initialize embedding model with retry logic
         self._initialize_model()
@@ -546,7 +593,7 @@ class VectorStore:
             return None
 
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store using OpenAI embeddings with batching."""
+        """Add documents to the vector store using OpenAI embeddings with optimized batching."""
         if not documents:
             return
         
@@ -555,31 +602,93 @@ class VectorStore:
             return
         
         try:
-            texts = [doc['text'] for doc in documents]
+            # Process documents in batches for better performance
+            all_embeddings = []
+            all_docs = []
             
-            # Get all embeddings in a single batch call
-            embeddings = self.get_openai_embeddings_batch(texts)
+            for i in range(0, len(documents), self.batch_size):
+                batch = documents[i:i + self.batch_size]
+                texts = [doc['text'] for doc in batch]
+                
+                # Check cache first
+                uncached_texts = []
+                uncached_indices = []
+                cached_embeddings = []
+                
+                for j, text in enumerate(texts):
+                    text_hash = hash(text)
+                    if text_hash in self.embedding_cache:
+                        cached_embeddings.append(self.embedding_cache[text_hash])
+                    else:
+                        uncached_texts.append(text)
+                        uncached_indices.append(j)
+                
+                # Get embeddings for uncached texts
+                if uncached_texts:
+                    batch_embeddings = self.get_openai_embeddings_batch(uncached_texts)
+                    if batch_embeddings:
+                        # Cache new embeddings
+                        for text, embedding in zip(uncached_texts, batch_embeddings):
+                            self.embedding_cache[hash(text)] = embedding
+                        
+                        # Combine cached and new embeddings
+                        batch_embeddings_combined = []
+                        cached_idx = 0
+                        uncached_idx = 0
+                        
+                        for j in range(len(texts)):
+                            if j in uncached_indices:
+                                batch_embeddings_combined.append(batch_embeddings[uncached_idx])
+                                uncached_idx += 1
+                            else:
+                                batch_embeddings_combined.append(cached_embeddings[cached_idx])
+                                cached_idx += 1
+                        
+                        all_embeddings.extend(batch_embeddings_combined)
+                    else:
+                        logger.error(f"Failed to get embeddings for batch {i//self.batch_size}")
+                        return
+                else:
+                    all_embeddings.extend(cached_embeddings)
+                
+                all_docs.extend(batch)
             
-            if embeddings is None or len(embeddings) != len(documents):
-                logger.error("Failed to get embeddings for all documents")
+            if len(all_embeddings) != len(all_docs):
+                logger.error("Mismatch between documents and embeddings")
                 return
             
-            self.documents.extend(documents)
-            embeddings = np.array(embeddings)
+            self.documents.extend(all_docs)
+            embeddings = np.array(all_embeddings)
             
             if self.embeddings is None:
                 self.embeddings = embeddings
             else:
                 self.embeddings = np.vstack([self.embeddings, embeddings])
             
-            embedding_dim = self.embeddings.shape[1]
-            self.index = faiss.IndexFlatIP(embedding_dim)
-            self.index.add(self.embeddings.astype('float32'))
+            # Rebuild index periodically for better performance
+            if len(self.documents) % self.max_documents_before_rebuild == 0:
+                self._rebuild_index()
+            else:
+                # Add to existing index
+                embedding_dim = self.embeddings.shape[1]
+                if self.index is None:
+                    self.index = faiss.IndexFlatIP(embedding_dim)
+                self.index.add(embeddings.astype('float32'))
             
-            logger.info(f"Added {len(documents)} documents to vector store (OpenAI embeddings - batch)")
+            logger.info(f"Added {len(documents)} documents to vector store (optimized batching)")
             
         except Exception as e:
             logger.error(f"Error adding documents to vector store: {str(e)}")
+
+    def _rebuild_index(self):
+        """Rebuild the FAISS index for better performance."""
+        try:
+            embedding_dim = self.embeddings.shape[1]
+            self.index = faiss.IndexFlatIP(embedding_dim)
+            self.index.add(self.embeddings.astype('float32'))
+            logger.info("Rebuilt FAISS index for better performance")
+        except Exception as e:
+            logger.error(f"Error rebuilding index: {str(e)}")
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
         """Search for similar documents using OpenAI embeddings."""
@@ -858,8 +967,26 @@ class SessionManager:
 ### =================== Main RAG System =================== ###
 class RAGSystem:
     def __init__(self, settings=None, is_web=False, use_vision_api=True, session_id: str = None, internet_mode=False):
+        # Use performance config for initialization
+        config = PERFORMANCE_CONFIG
+        
+        # Initialize components with performance settings
         self.file_handler = WebFileHandler() if is_web else None
+        if self.file_handler:
+            self.file_handler.max_file_size_mb = config['max_file_size_mb']
+            self.file_handler.enable_image_processing = config['enable_image_processing']
+            self.file_handler.executor = ThreadPoolExecutor(max_workers=config['max_workers'])
+            self.file_handler.text_processor.chunk_size = config['chunk_size']
+            self.file_handler.text_processor.chunk_overlap = config['chunk_overlap']
+            self.file_handler.text_processor.enable_image_processing = config['enable_image_processing']
+            self.file_handler.text_processor.image_dpi = config['image_dpi']
+            self.file_handler.text_processor.max_image_size_mb = config['max_image_size_mb']
+        
         self.vector_store = VectorStore()
+        self.vector_store.batch_size = config['embedding_batch_size']
+        self.vector_store.max_documents_before_rebuild = config['max_documents_before_rebuild']
+        self.vector_store.use_faiss_gpu = config['use_faiss_gpu']
+        
         self.question_handler = QuestionHandler(self.vector_store)
         self.is_web = is_web
         self.conversation_history = []
@@ -872,6 +999,10 @@ class RAGSystem:
             'avg_response_time': 0,
             'error_count': 0
         }
+        
+        # Performance settings
+        self.search_k = config['search_k']
+        self.min_similarity_score = config['min_similarity_score']
 
     def process_web_uploads(self, uploaded_files):
         """Process files uploaded through the web interface with improved error handling."""
@@ -994,6 +1125,56 @@ class RAGSystem:
     def clear_conversation_history(self):
         """Clear the conversation history"""
         self.conversation_history = []
+
+    def cleanup_memory(self):
+        """Clean up memory and temporary files to prevent memory leaks."""
+        try:
+            # Clear embedding cache if it gets too large
+            if hasattr(self.vector_store, 'embedding_cache') and len(self.vector_store.embedding_cache) > 1000:
+                self.vector_store.embedding_cache.clear()
+                logger.info("Cleared embedding cache to free memory")
+            
+            # Clear response cache if it gets too large
+            if hasattr(self.question_handler, 'claude_handler') and hasattr(self.question_handler.claude_handler, 'response_cache'):
+                if len(self.question_handler.claude_handler.response_cache) > 500:
+                    self.question_handler.claude_handler.response_cache.clear()
+                    logger.info("Cleared response cache to free memory")
+            
+            # Clean up temporary files
+            if self.file_handler and hasattr(self.file_handler, 'saved_pdf_paths'):
+                for pdf_path in self.file_handler.saved_pdf_paths:
+                    if os.path.exists(pdf_path):
+                        try:
+                            os.remove(pdf_path)
+                            logger.info(f"Cleaned up temporary file: {pdf_path}")
+                        except Exception as e:
+                            logger.warning(f"Could not remove {pdf_path}: {e}")
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            logger.info("Memory cleanup completed")
+            
+        except Exception as e:
+            logger.error(f"Error during memory cleanup: {str(e)}")
+
+    def get_memory_usage(self):
+        """Get current memory usage statistics."""
+        try:
+            import psutil
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            
+            return {
+                'rss_mb': memory_info.rss / (1024 * 1024),  # Resident Set Size
+                'vms_mb': memory_info.vms / (1024 * 1024),  # Virtual Memory Size
+                'documents_count': len(self.vector_store.documents) if self.vector_store else 0,
+                'conversation_length': len(self.conversation_history),
+                'embedding_cache_size': len(self.vector_store.embedding_cache) if hasattr(self.vector_store, 'embedding_cache') else 0
+            }
+        except Exception as e:
+            logger.error(f"Error getting memory usage: {str(e)}")
+            return {}
 
     def process_images_on_demand(self, pdf_path: str):
         """Process images from a specific PDF only when needed with improved error handling."""
