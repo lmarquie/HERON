@@ -264,7 +264,15 @@ if chat_question:
 
 # Sidebar - Clean, organized controls
 with st.sidebar:
-    st.title("HERON")
+    # Make HERON title larger and centered like a logo
+    st.markdown(
+        """
+        <div style='text-align: center; margin-bottom: 0.5em;'>
+            <span style='font-size: 2.8em; font-weight: bold; letter-spacing: 0.05em;'>HERON</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     st.header("HERON Controls")
     
     # Document Management Section
