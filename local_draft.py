@@ -1116,7 +1116,8 @@ class RAGSystem:
             system_prompt = (
                 "You are a helpful assistant with access to the internet. "
                 "Answer questions based on current information from the web. "
-                "Always cite your sources and provide accurate, up-to-date information. "
+                "You must always cite your sources with URLs in every answer. "
+                "If you use multiple sources, cite each one clearly. "
                 "If you cannot find relevant information, say so clearly."
             )
             
