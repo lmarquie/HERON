@@ -55,6 +55,7 @@ class TextProcessor:
     def extract_text_from_pdf(self, pdf_path: str, enable_image_processing: bool = False) -> str:
         """Extract text and images from PDF, detect tables/graphs, and run OCR on each region (header + body)."""
         try:
+            print("Starting file upload")
             doc = fitz.open(pdf_path)
             text_content = []
             
@@ -107,8 +108,10 @@ class TextProcessor:
                         continue
                         
             doc.close()
+            print("File written to disk")
             normalized_lines = [normalize_financial_text(line) for line in text_content]
             final_content = "\n".join(normalized_lines)
+            print("Text extracted")
             return final_content
         except Exception as e:
             self.error_count += 1
@@ -508,6 +511,7 @@ class WebFileHandler:
                                 'date': datetime.now().strftime('%Y-%m-%d')
                             }
                         })
+                print("Added to vector store")
                 return documents
             else:
                 return None
