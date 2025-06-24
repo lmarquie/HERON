@@ -197,7 +197,7 @@ class TextProcessor:
                         ]
                     }
                 ],
-                "max_tokens": 5000
+                "max_tokens": 16384
             }
             
             response = requests.post(
@@ -260,7 +260,7 @@ class TextProcessor:
                         ]
                     }
                 ],
-                "max_tokens": 5000
+                "max_tokens": 16384
             }
             
             response = requests.post(
@@ -442,7 +442,7 @@ class WebFileHandler:
         self.processing_status = {}
         self.images_processed = False  # Reset image processing flag
         
-        # Process files in parallel for better performance
+        # Process files in parallel for better performasence
         futures = []
         for uploaded_file in uploaded_files:
             future = self.executor.submit(self._process_single_file, uploaded_file)
@@ -1133,7 +1133,7 @@ class RAGSystem:
                     {"role": "user", "content": question}
                 ],
                 temperature=0.3,
-                max_tokens=5000
+                max_tokens=16384
             )
             
             return response.choices[0].message.content
