@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 from local_draft import RAGSystem, WebFileHandler
+from config import PERFORMANCE_CONFIG
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -41,6 +42,10 @@ def generate_answer(question):
         
         # Use the new mode-aware question processing
         answer = st.session_state.rag_system.process_question_with_mode(question, normalize_length=True)
+        
+        # ADD THIS: Add to conversation history so follow-up input appears
+        current_mode = "internet" if st.session_state.get('internet_mode', False) else "document"
+        st.session_state.rag_system.add_to_conversation_history(question, answer, "initial", current_mode)
         
         # Update performance metrics
         response_time = time.time() - start_time
@@ -287,7 +292,46 @@ if conversation_history:
 with st.sidebar:
     st.header("HERON Controls")
     
+    # Performance Configuration Section
+    st.markdown("---")
+    st.subheader("Performance Settings")
+    
+    # Performance mode selector
+    performance_mode = st.selectbox(
+        "Performance Mode:",
+        ["Balanced", "Fast", "High Quality"],
+        help="Choose performance mode for document processing"
+    )
+    
+    # Show current performance settings
+    if st.checkbox("Show Advanced Settings", help="Configure detailed performance parameters"):
+        st.write("**Text Processing:**")
+        chunk_size = st.slider("Chunk Size", 500, 2000, 1000, help="Smaller chunks = faster processing")
+        chunk_overlap = st.slider("Chunk Overlap", 10, 100, 50, help="Higher overlap = better context")
+        
+        st.write("**File Processing:**")
+        max_workers = st.slider("Max Workers", 1, 8, 4, help="Number of parallel processing threads")
+        max_file_size = st.slider("Max File Size (MB)", 10, 100, 50, help="Skip files larger than this")
+        
+        st.write("**Vector Search:**")
+        search_k = st.slider("Search Results (k)", 3, 10, 5, help="Number of results to retrieve")
+        batch_size = st.slider("Embedding Batch Size", 50, 200, 100, help="Larger batches = faster processing")
+        
+        # Apply settings button
+        if st.button("Apply Performance Settings", type="secondary"):
+            # Update performance config
+            PERFORMANCE_CONFIG.update({
+                'chunk_size': chunk_size,
+                'chunk_overlap': chunk_overlap,
+                'max_workers': max_workers,
+                'max_file_size_mb': max_file_size,
+                'search_k': search_k,
+                'embedding_batch_size': batch_size
+            })
+            st.success("Performance settings updated!")
+    
     # Document Management Section
+    st.markdown("---")
     st.subheader("Documents")
     
     # Show uploaded documents and allow removal
@@ -541,6 +585,26 @@ with st.sidebar:
     # Performance Section
     st.markdown("---")
     st.subheader("Performance")
+    
+    # Memory monitoring
+    if st.checkbox("Show Memory Usage", help="Monitor memory consumption"):
+        try:
+            memory_usage = st.session_state.rag_system.get_memory_usage()
+            if memory_usage:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Memory (RSS)", f"{memory_usage.get('rss_mb', 0):.1f} MB")
+                    st.metric("Documents", memory_usage.get('documents_count', 0))
+                with col2:
+                    st.metric("Memory (VMS)", f"{memory_usage.get('vms_mb', 0):.1f} MB")
+                    st.metric("Cache Size", memory_usage.get('embedding_cache_size', 0))
+                
+                # Memory cleanup button
+                if st.button("Cleanup Memory", type="secondary", help="Free up memory"):
+                    st.session_state.rag_system.cleanup_memory()
+                    st.success("Memory cleanup completed!")
+        except Exception as e:
+            st.error(f"Error getting memory usage: {e}")
     
     # Get actual performance metrics
     try:
