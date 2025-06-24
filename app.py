@@ -640,7 +640,7 @@ with st.sidebar:
             st.metric("Total Errors", metrics.get('error_count', 0))
         
         if stats:
-            st.metric("Total Questions", stats.get('total_questions', 0))
+            st.metric("Total Questions", stats.get('total_questions', 0)) 
             st.metric("Conversation Errors", stats.get('error_count', 0))
         
         if st.session_state.performance_metrics:
