@@ -264,6 +264,8 @@ if chat_question:
 
 # Sidebar - Clean, organized controls
 with st.sidebar:
+    # Move HERON logo to the top of the sidebar
+    st.image("heron_logo.png", width=64)
     st.header("HERON Controls")
     
     # Document Management Section
