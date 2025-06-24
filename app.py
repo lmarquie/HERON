@@ -230,13 +230,20 @@ def submit_chat_message():
             st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
             st.rerun()
         else:
-            # Use the RAG system's mode-aware processing methods that handle conversation history
-            if not conversation_history:
-                # For first question, use process_question_with_mode which adds to history
-                answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
-            else:
-                # For follow-up questions, use process_follow_up_with_mode which adds to history
+            # Check if this is actually a follow-up question (has previous conversation)
+            # Get the current conversation history to check if there are real Q&A pairs
+            current_history = st.session_state.rag_system.get_conversation_history()
+            has_real_conversation = any(
+                conv.get('question_type') not in ['error'] 
+                for conv in current_history
+            )
+            
+            if has_real_conversation:
+                # Use follow-up processing for actual follow-up questions
                 answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+            else:
+                # Use regular question processing for new questions
+                answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             st.rerun()
     # Only increment after rerun, so the key stays in sync
     st.session_state.chat_input_key_counter += 1
