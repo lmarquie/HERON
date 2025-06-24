@@ -292,20 +292,6 @@ with st.sidebar:
                 else:
                     st.error("Processing failed")
                     st.session_state.documents_loaded = False
-    
-    # Show uploaded documents with remove option
-    if st.session_state.get('last_uploaded_files'):
-        st.write("**Loaded:**")
-        for doc_name in st.session_state['last_uploaded_files']:
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.caption(doc_name)
-            with col2:
-                if st.button("×", key=f"remove_{doc_name}", help="Remove"):
-                    st.session_state['last_uploaded_files'] = [d for d in st.session_state['last_uploaded_files'] if d != doc_name]
-                    st.session_state.documents_loaded = False
-                    st.session_state.processing_status = {}
-                    st.rerun()
 
     # Search Mode Section
     st.markdown("---")
