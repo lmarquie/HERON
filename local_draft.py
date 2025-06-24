@@ -58,39 +58,41 @@ class TextProcessor:
                 # Only process images if enabled (much faster without this)
                 if enable_image_processing:
                     try:
-                        # Render page as image with lower DPI for speed
-                        pix = page.get_pixmap(dpi=100)  # Reduced from 150 for speed
+                        # Render page as image with very low DPI for speed
+                        pix = page.get_pixmap(dpi=72)  # Reduced to 72 DPI for maximum speed
                         img_data = pix.tobytes("png")
                         img_array = np.frombuffer(img_data, np.uint8)
                         
                         # Check image size to prevent processing extremely large images
-                        if len(img_array) > 10 * 1024 * 1024:  # Reduced to 10MB limit for speed
+                        if len(img_array) > 5 * 1024 * 1024:  # Reduced to 5MB limit for speed
                             continue
                         
                         # Add error handling for large PNG chunks
                         img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                         if img_cv is not None:
-                            detected_regions = self.detect_tables_and_graphs(img_cv)
-                            for idx, (x, y, w, h) in enumerate(detected_regions):
-                                crop = img_cv[y:y+h, x:x+w]
-                                img_filename = f"page_{page_num + 1}_detected_{idx + 1}.png"
-                                img_path = os.path.join("images", img_filename)
-                                cv2.imwrite(img_path, crop)
-                                img_key = f"page_{page_num + 1}_detected_{idx + 1}"
-                                # OCR on the cropped region (body)
-                                ocr_text = self.ocr_image(crop)
-                                # OCR on the header (top 20%)
-                                header_h = max(1, int(h * 0.2))
-                                header_crop = crop[0:header_h, :]
-                                ocr_header = self.ocr_image(header_crop)
-                                self.extracted_images[img_key] = {
-                                    'path': img_path,
-                                    'page': page_num + 1,
-                                    'image_num': idx + 1,
-                                    'description': 'Detected table/graph region (OpenCV)',
-                                    'ocr_text': ocr_text,
-                                    'ocr_header': ocr_header,
-                                }
+                            # Only process if image is reasonably sized
+                            if img_cv.shape[0] > 100 and img_cv.shape[1] > 100:
+                                detected_regions = self.detect_tables_and_graphs(img_cv)
+                                for idx, (x, y, w, h) in enumerate(detected_regions):
+                                    crop = img_cv[y:y+h, x:x+w]
+                                    img_filename = f"page_{page_num + 1}_detected_{idx + 1}.png"
+                                    img_path = os.path.join("images", img_filename)
+                                    cv2.imwrite(img_path, crop)
+                                    img_key = f"page_{page_num + 1}_detected_{idx + 1}"
+                                    # OCR on the cropped region (body)
+                                    ocr_text = self.ocr_image(crop)
+                                    # OCR on the header (top 20%)
+                                    header_h = max(1, int(h * 0.2))
+                                    header_crop = crop[0:header_h, :]
+                                    ocr_header = self.ocr_image(header_crop)
+                                    self.extracted_images[img_key] = {
+                                        'path': img_path,
+                                        'page': page_num + 1,
+                                        'image_num': idx + 1,
+                                        'description': 'Detected table/graph region (OpenCV)',
+                                        'ocr_text': ocr_text,
+                                        'ocr_header': ocr_header,
+                                    }
                     except Exception as e:
                         logger.warning(f"Error processing images on page {page_num + 1}: {str(e)}")
                         continue
@@ -106,18 +108,30 @@ class TextProcessor:
     def detect_tables_and_graphs(self, img_cv):
         """Detect likely tables/graphs in a page image using OpenCV (returns list of bounding boxes)."""
         try:
+            # Convert to grayscale
             gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-            blur = cv2.GaussianBlur(gray, (5, 5), 0)
-            edges = cv2.Canny(blur, 50, 150, apertureSize=3)
-            # Find contours
+            
+            # Use simpler, faster detection method
+            # Look for regions with high edge density (likely tables/graphs)
+            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+            
+            # Find contours more efficiently
             contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
             regions = []
             for cnt in contours:
                 x, y, w, h = cv2.boundingRect(cnt)
-                # Heuristic: Only keep large regions (likely tables/graphs)
-                if w > 100 and h > 60 and w*h > 10000:
-                    regions.append((x, y, w, h))
-            # Optionally, merge overlapping/close rectangles here
+                
+                # More aggressive filtering for speed - only keep large, likely regions
+                if w > 200 and h > 100 and w*h > 20000:  # Increased minimum size
+                    # Check aspect ratio to avoid very long/skinny regions
+                    aspect_ratio = w / h
+                    if 0.2 < aspect_ratio < 5.0:  # Reasonable aspect ratio
+                        regions.append((x, y, w, h))
+            
+            # Limit to top 5 regions to avoid processing too many
+            regions = regions[:5]
+            
             return regions
         except Exception as e:
             logger.warning(f"Error detecting tables/graphs: {str(e)}")
@@ -126,9 +140,20 @@ class TextProcessor:
     def ocr_image(self, img_cv):
         """Run OCR on a cropped image region using Tesseract if available, else fallback to empty string."""
         try:
+            # Resize image to smaller size for faster OCR
+            height, width = img_cv.shape[:2]
+            if width > 800 or height > 600:
+                scale = min(800/width, 600/height)
+                new_width = int(width * scale)
+                new_height = int(height * scale)
+                img_cv = cv2.resize(img_cv, (new_width, new_height))
+            
             # Convert to RGB for pytesseract
             img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
-            text = pytesseract.image_to_string(img_rgb)
+            
+            # Use faster OCR configuration
+            config = '--oem 1 --psm 6'  # Fast mode
+            text = pytesseract.image_to_string(img_rgb, config=config)
             return text.strip()
         except Exception as e:
             logger.warning(f"OCR error: {str(e)}")
@@ -160,13 +185,13 @@ class TextProcessor:
     def analyze_image_detailed(self, img_pil):
         """Enhanced image analysis using Vision API for semantic search - focused on figures and graphs."""
         try:
-            # Resize image to reduce API costs and speed
-            max_size = 512
+            # Resize image to reduce API costs and speed - make it even smaller
+            max_size = 400  # Reduced from 512 for speed
             img_pil.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
             
             # Convert to base64
             buffer = io.BytesIO()
-            img_pil.save(buffer, format='PNG')
+            img_pil.save(buffer, format='JPEG', quality=85)  # Use JPEG instead of PNG for smaller size
             img_base64 = base64.b64encode(buffer.getvalue()).decode()
             
             # Enhanced Vision API call focused on figures and graphs
@@ -183,25 +208,25 @@ class TextProcessor:
                         "content": [
                             {
                                 "type": "text",
-                                "text": "Analyze this image and determine if it contains figures, graphs, charts, tables, or data visualizations. If it does, provide a detailed description including: 1) Type of visual (chart, graph, table, diagram, etc.) 2) Main subject/topic 3) Key data points or information shown 4) Any text or labels visible 5) Business context if applicable (revenue, growth, metrics, etc.). If this is NOT a figure/graph/chart (e.g., it's just text, a photo, or decorative element), respond with 'NOT_A_FIGURE'. Be specific and searchable."
+                                "text": "Analyze this image and determine if it contains figures, graphs, charts, tables, or data visualizations. If it does, provide a brief description including: 1) Type of visual 2) Main subject/topic 3) Key data points. If this is NOT a figure/graph/chart, respond with 'NOT_A_FIGURE'. Be concise."
                             },
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": f"data:image/png;base64,{img_base64}"
+                                    "url": f"data:image/jpeg;base64,{img_base64}"
                                 }
                             }
                         ]
                     }
                 ],
-                "max_tokens": 200
+                "max_tokens": 150  # Reduced for speed
             }
             
             response = requests.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=15
+                timeout=10  # Reduced timeout
             )
             
             if response.status_code == 200:
@@ -1220,7 +1245,7 @@ class RAGSystem:
                     if hasattr(self.file_handler, 'saved_pdf_paths'):
                         for pdf_path in self.file_handler.saved_pdf_paths:
                             if doc_part in pdf_path.lower():
-                                # Process images for this specific document
+                                # Process images for this specific document ONLY
                                 logger.info(f"Processing images for generic request from {pdf_path}")
                                 self.process_images_on_demand(pdf_path)
                                 
@@ -1238,18 +1263,8 @@ class RAGSystem:
                                 else:
                                     return f"No images found in the {doc_part} document after processing."
             
-            # If no specific document mentioned, process all documents and return any images
-            logger.info("Processing images for generic request across all documents")
-            if hasattr(self.file_handler, 'saved_pdf_paths'):
-                for pdf_path in self.file_handler.saved_pdf_paths:
-                    self.process_images_on_demand(pdf_path)
-            
-            all_images = self.get_all_images()
-            if all_images:
-                # Return first few images as a list for display
-                return list(all_images.values())[:3]  # Return first 3 images
-            else:
-                return "No images found in any of the uploaded documents."
+            # If no specific document mentioned, return error instead of processing all
+            return "Please specify which document you want images from (e.g., 'show me an image from the ionq document')"
                 
         except Exception as e:
             logger.error(f"Error handling generic image request: {str(e)}")
