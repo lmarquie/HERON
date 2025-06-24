@@ -1099,7 +1099,9 @@ class RAGSystem:
         else:
             # Use document mode (existing logic)
             if not self.vector_store.is_ready():
-                return "No documents loaded. Please upload documents first or enable internet mode."
+                answer = "No documents loaded. Please upload documents first or enable internet mode."
+                self.add_to_conversation_history(question, answer, "error", "document")
+                return answer
             
             logger.info("Processing question using document mode")
             answer = self.question_handler.process_question(question, normalize_length=normalize_length)
@@ -1124,7 +1126,9 @@ class RAGSystem:
         else:
             # Use document mode (existing logic)
             if not self.vector_store.is_ready():
-                return "No documents loaded. Please upload documents first or enable internet mode."
+                answer = "No documents loaded. Please upload documents first or enable internet mode."
+                self.add_to_conversation_history(follow_up_question, answer, "error", "document")
+                return answer
             
             logger.info("Processing follow-up using document mode")
             answer = self.question_handler.process_follow_up(follow_up_question, normalize_length=normalize_length)
