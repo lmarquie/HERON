@@ -767,27 +767,28 @@ class QuestionHandler:
         for attempt in range(self.max_retries):
             try:
                 results = self.vector_store.search(question, k=k)
-                
                 if not results:
                     return "No relevant information found in the documents."
-                
                 # Build context with metadata for citation
                 context = "\n".join([
-                    f"[source: {chunk['metadata'].get('source', 'unknown')}, chunk: {chunk['metadata'].get('chunk_id', '?')}]\n{chunk['text']}"
+                    f"[source: {chunk['metadata'].get('source', 'unknown')}, chunk: {chunk['metadata'].get('chunk_id', '?')}]
+{chunk['text']}"
                     for chunk in results
                 ])
                 answer = self.llm.generate_answer(question, context, normalize_length)
-                
-                # Store conversation history
+                # Store conversation history with chunk metadata from top result
+                top_chunk = results[0] if results else None
                 self.conversation_history.append({
                     'question': question,
                     'answer': answer,
                     'context': context,
-                    'timestamp': datetime.now().isoformat()
+                    'timestamp': datetime.now().isoformat(),
+                    'source': top_chunk['metadata'].get('source') if top_chunk else None,
+                    'chunk_id': top_chunk['metadata'].get('chunk_id') if top_chunk else None,
+                    'chunk_text': top_chunk['text'] if top_chunk else None,
+                    'page': top_chunk['metadata'].get('page') if top_chunk and 'page' in top_chunk['metadata'] else None
                 })
-                
                 return answer
-                
             except Exception as e:
                 self.error_count += 1
                 logger.error(f"Error processing question (attempt {attempt + 1}): {str(e)}")
@@ -799,36 +800,35 @@ class QuestionHandler:
         """Process a follow-up question using conversation history and document context."""
         if not self.conversation_history:
             return "No previous conversation to follow up on. Please ask a question first."
-        
         try:
             # Get recent conversation context
             recent_context = ""
             for i, conv in enumerate(self.conversation_history[-3:]):  # Last 3 exchanges
                 recent_context += f"Previous Q: {conv['question']}\nPrevious A: {conv['answer']}\n\n"
-            
             # Get document context
             results = self.vector_store.search(follow_up_question, k=k)
             document_context = "\n".join([
-                f"[source: {chunk['metadata'].get('source', 'unknown')}, chunk: {chunk['metadata'].get('chunk_id', '?')}]\n{chunk['text']}"
+                f"[source: {chunk['metadata'].get('source', 'unknown')}, chunk: {chunk['metadata'].get('chunk_id', '?')}]
+{chunk['text']}"
                 for chunk in results
             ]) if results else ""
-            
             # Combine contexts
             full_context = f"Conversation History:\n{recent_context}\nDocument Context:\n{document_context}"
-            
             # Generate follow-up answer
             answer = self.llm.generate_answer(follow_up_question, full_context, normalize_length)
-            
-            # Store in conversation history
+            # Store in conversation history with chunk metadata from top result
+            top_chunk = results[0] if results else None
             self.conversation_history.append({
                 'question': follow_up_question,
                 'answer': answer,
                 'context': full_context,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'source': top_chunk['metadata'].get('source') if top_chunk else None,
+                'chunk_id': top_chunk['metadata'].get('chunk_id') if top_chunk else None,
+                'chunk_text': top_chunk['text'] if top_chunk else None,
+                'page': top_chunk['metadata'].get('page') if top_chunk and 'page' in top_chunk['metadata'] else None
             })
-            
             return answer
-            
         except Exception as e:
             self.error_count += 1
             logger.error(f"Error processing follow-up question: {str(e)}")
@@ -1278,6 +1278,24 @@ def render_pdf_page_with_highlight(pdf_path, page_num, highlight_text=None):
             page.add_highlight_annot(inst)
     pix = page.get_pixmap(dpi=200)
     img_path = f"temp/page_{page_num}_highlighted.png" if highlight_text else f"temp/page_{page_num}_screenshot.png"
+    pix.save(img_path)
+    doc.close()
+    return img_path
+
+def render_chunk_source_image(source_path, page_num, chunk_text):
+    """Render a PDF page as an image, highlighting the chunk text if possible."""
+    import fitz
+    import os
+    os.makedirs("temp", exist_ok=True)
+    doc = fitz.open(source_path)
+    page = doc.load_page(page_num - 1)  # 0-based index
+    # Try to highlight all instances of the chunk text
+    if chunk_text:
+        text_instances = page.search_for(chunk_text)
+        for inst in text_instances:
+            page.add_highlight_annot(inst)
+    pix = page.get_pixmap(dpi=200)
+    img_path = f"temp/page_{page_num}_chunk_highlighted.png"
     pix.save(img_path)
     doc.close()
     return img_path
