@@ -283,7 +283,6 @@ if st.button("Get Answer", type="primary") or st.session_state.submit_question:
             st.write(answer)
     st.session_state.answer_given = True
     st.session_state.submit_question = False  # Reset flag
-    st.rerun()  # Rerun to show the new conversation
 
 # Always show follow-up input if there is any conversation history
 if conversation_history:
