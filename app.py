@@ -229,9 +229,13 @@ def submit_chat_message():
     chat_input_key = f"chat_input_{st.session_state.chat_input_key_counter}"
     chat_question = st.session_state.get(chat_input_key, "")
     if chat_question.strip():
-        # Add the question to conversation history with a placeholder answer
-        st.session_state.rag_system.add_to_conversation_history(chat_question, '...', "user", "document")
-        st.rerun()
+        # Only add to conversation history if documents are loaded or internet mode is enabled
+        if st.session_state.get('documents_loaded', False) or st.session_state.get('internet_mode', False):
+            st.session_state.rag_system.add_to_conversation_history(chat_question, '...', "user", "document")
+            st.rerun()
+        else:
+            # Show error but do NOT add to conversation history
+            st.error("No documents loaded. Please upload documents first or enable internet mode.")
     st.session_state.chat_input_key_counter += 1
 
 # --- MODIFIED: After rerun, process unanswered question if present ---
