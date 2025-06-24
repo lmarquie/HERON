@@ -32,7 +32,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 800, overlap: int = 100):  # Smaller chunks, more overlap for better performance
+    def __init__(self, chunk_size: int = 1200, overlap: int = 30):  # Optimized for speed
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.extracted_images = {}  # Store images for display
@@ -40,12 +40,6 @@ class TextProcessor:
         self.images_analyzed = set()  # Track which images have been analyzed
         self.processing_lock = threading.Lock()  # Thread safety for image processing
         self.error_count = 0  # Track errors for better error handling
-        
-        # Performance configuration options
-        self.enable_image_processing = False  # Disable by default for speed
-        self.max_image_size_mb = 5  # Further reduced for speed
-        self.image_dpi = 100  # Further reduced for speed
-        self.batch_size = 150  # Increased batch size for embeddings
 
     def extract_text_from_pdf(self, pdf_path: str, enable_image_processing: bool = False) -> str:
         """Extract text and images from PDF, detect tables/graphs, and run OCR on each region (header + body)."""
@@ -65,12 +59,12 @@ class TextProcessor:
                 if enable_image_processing:
                     try:
                         # Render page as image with lower DPI for speed
-                        pix = page.get_pixmap(dpi=self.image_dpi)  # Reduced from 200 to 150
+                        pix = page.get_pixmap(dpi=100)  # Reduced from 150 for speed
                         img_data = pix.tobytes("png")
                         img_array = np.frombuffer(img_data, np.uint8)
                         
                         # Check image size to prevent processing extremely large images
-                        if len(img_array) > self.max_image_size_mb * 1024 * 1024:  # Reduced to 25MB limit
+                        if len(img_array) > 10 * 1024 * 1024:  # Reduced to 10MB limit for speed
                             continue
                         
                         # Add error handling for large PNG chunks
@@ -287,23 +281,36 @@ class TextProcessor:
         """Return a fuzzy match ratio between two strings (0-100)."""
         return int(SequenceMatcher(None, a, b).ratio() * 100)
 
-    def search_images_semantically(self, query: str, top_k: int = 3, min_score: int = 180):
+    def search_images_semantically(self, query: str, top_k: int = 5, min_score: int = 150):
         """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header. Only return if score is high enough."""
-        query_lc = query.lower()
-        best_score = -1
-        best_img_info = None
-        for img_info in self.extracted_images.values():
-            ocr_header = img_info.get('ocr_header', '').lower()
-            ocr_text = img_info.get('ocr_text', '').lower()
-            header_score = self.fuzzy_score(query_lc, ocr_header)
-            body_score = self.fuzzy_score(query_lc, ocr_text)
-            combined_score = header_score * 2 + body_score  # Prioritize header
-            if combined_score > best_score:
-                best_score = combined_score
-                best_img_info = img_info
-        if best_img_info and best_score >= min_score:
-            return [best_img_info]
-        return []
+        try:
+            query_lc = query.lower()
+            best_matches = []
+            
+            for img_info in self.extracted_images.values():
+                ocr_header = img_info.get('ocr_header', '').lower()
+                ocr_text = img_info.get('ocr_text', '').lower()
+                description = img_info.get('description', '').lower()
+                
+                # Calculate multiple similarity scores
+                header_score = self.fuzzy_score(query_lc, ocr_header)
+                body_score = self.fuzzy_score(query_lc, ocr_text)
+                desc_score = self.fuzzy_score(query_lc, description)
+                
+                # Weighted combination (prioritize header and description)
+                combined_score = (header_score * 3 + body_score * 1 + desc_score * 2) / 6
+                
+                if combined_score >= min_score:
+                    img_info['similarity_score'] = combined_score
+                    best_matches.append(img_info)
+            
+            # Sort by similarity score and return top matches
+            best_matches.sort(key=lambda x: x.get('similarity_score', 0), reverse=True)
+            return best_matches[:top_k]
+            
+        except Exception as e:
+            logger.error(f"Error in semantic image search: {str(e)}")
+            return []
 
     def is_blank_image(self, img_pil):
         """Check if image is mostly blank/white space."""
@@ -417,40 +424,24 @@ class WebFileHandler:
         self.text_processor = TextProcessor()
         self.saved_pdf_paths = []  # Track saved PDF paths for later image processing
         self.processing_status = {}  # Track processing status per file
-        self.executor = ThreadPoolExecutor(max_workers=6)  # Increased for better parallelization
-        self.max_file_size_mb = 100  # Increased for larger documents
-        self.enable_image_processing = False  # Disable by default for speed
+        self.executor = ThreadPoolExecutor(max_workers=6)  # Increased for better performance
 
     def process_uploaded_files(self, uploaded_files):
-        """Process files uploaded through Streamlit with improved error handling and performance optimizations."""
+        """Process files uploaded through Streamlit with improved error handling."""
         documents = []
         self.saved_pdf_paths = []  # Reset for new uploads
         self.processing_status = {}
         
-        # Filter out files that are too large
-        valid_files = []
-        for uploaded_file in uploaded_files:
-            file_size_mb = len(uploaded_file.getbuffer()) / (1024 * 1024)
-            if file_size_mb > self.max_file_size_mb:
-                logger.warning(f"File {uploaded_file.name} is too large ({file_size_mb:.1f}MB), skipping")
-                self.processing_status[uploaded_file.name] = "skipped_too_large"
-                continue
-            valid_files.append(uploaded_file)
-        
-        if not valid_files:
-            logger.warning("No valid files to process")
-            return documents
-        
         # Process files in parallel for better performance
         futures = []
-        for uploaded_file in valid_files:
+        for uploaded_file in uploaded_files:
             future = self.executor.submit(self._process_single_file, uploaded_file)
             futures.append((uploaded_file.name, future))
         
-        # Collect results with timeout
+        # Collect results
         for filename, future in futures:
             try:
-                result = future.result(timeout=120)  # Increased timeout to 120 seconds
+                result = future.result(timeout=60)  # 60 second timeout per file
                 if result:
                     documents.extend(result)
                     self.processing_status[filename] = "success"
@@ -463,7 +454,7 @@ class WebFileHandler:
         return documents
 
     def _process_single_file(self, uploaded_file):
-        """Process a single uploaded file with memory management."""
+        """Process a single uploaded file."""
         try:
             ext = os.path.splitext(uploaded_file.name)[1].lower()
             temp_path = f"temp/{uploaded_file.name}"
@@ -474,7 +465,7 @@ class WebFileHandler:
             self.saved_pdf_paths.append(temp_path)
 
             if ext == ".pdf":
-                # Disable image processing for speed with large documents
+                # Disable image processing by default for speed - can be enabled on-demand
                 text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
             elif ext == ".docx":
                 text_content = extract_text_from_docx(temp_path)
@@ -498,30 +489,12 @@ class WebFileHandler:
                                 'date': datetime.now().strftime('%Y-%m-%d')
                             }
                         })
-                
-                # Clean up temporary file immediately
-                try:
-                    os.remove(temp_path)
-                except:
-                    pass
-                
                 return documents
             else:
-                # Clean up temporary file
-                try:
-                    os.remove(temp_path)
-                except:
-                    pass
                 return None
 
         except Exception as e:
             logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
-            # Clean up temporary file on error
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except:
-                pass
             return None
 
     def get_saved_pdf_paths(self):
@@ -542,12 +515,6 @@ class VectorStore:
         self.chunk_overlap = 50
         self.model = None
         self.initialized = False
-        
-        # Performance optimization settings
-        self.batch_size = 200  # Increased batch size for faster processing
-        self.embedding_cache = {}  # Cache embeddings to avoid re-computation
-        self.max_documents_before_rebuild = 500  # More frequent rebuilds for better performance
-        self.use_faiss_gpu = False  # Set to True if GPU available
         
         # Initialize embedding model with retry logic
         self._initialize_model()
@@ -593,7 +560,7 @@ class VectorStore:
             return None
 
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store using OpenAI embeddings with optimized batching."""
+        """Add documents to the vector store using OpenAI embeddings with batching."""
         if not documents:
             return
         
@@ -602,62 +569,31 @@ class VectorStore:
             return
         
         try:
-            # Process documents in batches for better performance
+            logger.info(f"Processing {len(documents)} documents...")
+            start_time = time.time()
+            
+            texts = [doc['text'] for doc in documents]
+            
+            # Process in larger batches for better performance
+            batch_size = 200  # Increased batch size
             all_embeddings = []
-            all_docs = []
             
-            for i in range(0, len(documents), self.batch_size):
-                batch = documents[i:i + self.batch_size]
-                texts = [doc['text'] for doc in batch]
+            for i in range(0, len(texts), batch_size):
+                batch_texts = texts[i:i + batch_size]
+                logger.info(f"Getting embeddings for batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1} ({len(batch_texts)} texts)")
                 
-                # Check cache first
-                uncached_texts = []
-                uncached_indices = []
-                cached_embeddings = []
-                
-                for j, text in enumerate(texts):
-                    text_hash = hash(text)
-                    if text_hash in self.embedding_cache:
-                        cached_embeddings.append(self.embedding_cache[text_hash])
-                    else:
-                        uncached_texts.append(text)
-                        uncached_indices.append(j)
-                
-                # Get embeddings for uncached texts
-                if uncached_texts:
-                    batch_embeddings = self.get_openai_embeddings_batch(uncached_texts)
-                    if batch_embeddings:
-                        # Cache new embeddings
-                        for text, embedding in zip(uncached_texts, batch_embeddings):
-                            self.embedding_cache[hash(text)] = embedding
-                        
-                        # Combine cached and new embeddings
-                        batch_embeddings_combined = []
-                        cached_idx = 0
-                        uncached_idx = 0
-                        
-                        for j in range(len(texts)):
-                            if j in uncached_indices:
-                                batch_embeddings_combined.append(batch_embeddings[uncached_idx])
-                                uncached_idx += 1
-                            else:
-                                batch_embeddings_combined.append(cached_embeddings[cached_idx])
-                                cached_idx += 1
-                        
-                        all_embeddings.extend(batch_embeddings_combined)
-                    else:
-                        logger.error(f"Failed to get embeddings for batch {i//self.batch_size}")
-                        return
+                batch_embeddings = self.get_openai_embeddings_batch(batch_texts)
+                if batch_embeddings:
+                    all_embeddings.extend(batch_embeddings)
                 else:
-                    all_embeddings.extend(cached_embeddings)
-                
-                all_docs.extend(batch)
+                    logger.error(f"Failed to get embeddings for batch {i//batch_size + 1}")
+                    return
             
-            if len(all_embeddings) != len(all_docs):
-                logger.error("Mismatch between documents and embeddings")
+            if len(all_embeddings) != len(documents):
+                logger.error("Failed to get embeddings for all documents")
                 return
             
-            self.documents.extend(all_docs)
+            self.documents.extend(documents)
             embeddings = np.array(all_embeddings)
             
             if self.embeddings is None:
@@ -665,30 +601,15 @@ class VectorStore:
             else:
                 self.embeddings = np.vstack([self.embeddings, embeddings])
             
-            # Rebuild index periodically for better performance
-            if len(self.documents) % self.max_documents_before_rebuild == 0:
-                self._rebuild_index()
-            else:
-                # Add to existing index
-                embedding_dim = self.embeddings.shape[1]
-                if self.index is None:
-                    self.index = faiss.IndexFlatIP(embedding_dim)
-                self.index.add(embeddings.astype('float32'))
-            
-            logger.info(f"Added {len(documents)} documents to vector store (optimized batching)")
-            
-        except Exception as e:
-            logger.error(f"Error adding documents to vector store: {str(e)}")
-
-    def _rebuild_index(self):
-        """Rebuild the FAISS index for better performance."""
-        try:
             embedding_dim = self.embeddings.shape[1]
             self.index = faiss.IndexFlatIP(embedding_dim)
             self.index.add(self.embeddings.astype('float32'))
-            logger.info("Rebuilt FAISS index for better performance")
+            
+            total_time = time.time() - start_time
+            logger.info(f"Added {len(documents)} documents in {total_time:.2f}s")
+            
         except Exception as e:
-            logger.error(f"Error rebuilding index: {str(e)}")
+            logger.error(f"Error adding documents to vector store: {str(e)}")
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
         """Search for similar documents using OpenAI embeddings."""
@@ -1020,24 +941,33 @@ class RAGSystem:
             return self.file_handler.text_processor.get_all_images()
         return {}
 
-    def search_images_semantically(self, query: str, top_k: int = 3, min_score: int = 180):
+    def search_images_semantically(self, query: str, top_k: int = 5, min_score: int = 150):
         """Find the most relevant detected region by fuzzy matching query to header/body OCR, prioritizing header. Only return if score is high enough."""
         try:
             query_lc = query.lower()
-            best_score = -1
-            best_img_info = None
+            best_matches = []
+            
             for img_info in self.file_handler.text_processor.extracted_images.values():
                 ocr_header = img_info.get('ocr_header', '').lower()
                 ocr_text = img_info.get('ocr_text', '').lower()
+                description = img_info.get('description', '').lower()
+                
+                # Calculate multiple similarity scores
                 header_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_header)
                 body_score = self.file_handler.text_processor.fuzzy_score(query_lc, ocr_text)
-                combined_score = header_score * 2 + body_score  # Prioritize header
-                if combined_score > best_score:
-                    best_score = combined_score
-                    best_img_info = img_info
-            if best_img_info and best_score >= min_score:
-                return [best_img_info]
-            return []
+                desc_score = self.file_handler.text_processor.fuzzy_score(query_lc, description)
+                
+                # Weighted combination (prioritize header and description)
+                combined_score = (header_score * 3 + body_score * 1 + desc_score * 2) / 6
+                
+                if combined_score >= min_score:
+                    img_info['similarity_score'] = combined_score
+                    best_matches.append(img_info)
+            
+            # Sort by similarity score and return top matches
+            best_matches.sort(key=lambda x: x.get('similarity_score', 0), reverse=True)
+            return best_matches[:top_k]
+            
         except Exception as e:
             logger.error(f"Error in semantic image search: {str(e)}")
             return []
@@ -1104,61 +1034,21 @@ class RAGSystem:
         """Clear the conversation history"""
         self.conversation_history = []
 
-    def cleanup_memory(self):
-        """Clean up memory and temporary files to prevent memory leaks."""
-        try:
-            # Clear embedding cache if it gets too large
-            if hasattr(self.vector_store, 'embedding_cache') and len(self.vector_store.embedding_cache) > 1000:
-                self.vector_store.embedding_cache.clear()
-                logger.info("Cleared embedding cache to free memory")
-            
-            # Clear response cache if it gets too large
-            if hasattr(self.question_handler, 'claude_handler') and hasattr(self.question_handler.claude_handler, 'response_cache'):
-                if len(self.question_handler.claude_handler.response_cache) > 500:
-                    self.question_handler.claude_handler.response_cache.clear()
-                    logger.info("Cleared response cache to free memory")
-            
-            # Clean up temporary files
-            if self.file_handler and hasattr(self.file_handler, 'saved_pdf_paths'):
-                for pdf_path in self.file_handler.saved_pdf_paths:
-                    if os.path.exists(pdf_path):
-                        try:
-                            os.remove(pdf_path)
-                            logger.info(f"Cleaned up temporary file: {pdf_path}")
-                        except Exception as e:
-                            logger.warning(f"Could not remove {pdf_path}: {e}")
-            
-            # Force garbage collection
-            import gc
-            gc.collect()
-            logger.info("Memory cleanup completed")
-            
-        except Exception as e:
-            logger.error(f"Error during memory cleanup: {str(e)}")
-
-    def get_memory_usage(self):
-        """Get current memory usage statistics."""
-        try:
-            import psutil
-            process = psutil.Process()
-            memory_info = process.memory_info()
-            
-            return {
-                'rss_mb': memory_info.rss / (1024 * 1024),  # Resident Set Size
-                'vms_mb': memory_info.vms / (1024 * 1024),  # Virtual Memory Size
-                'documents_count': len(self.vector_store.documents) if self.vector_store else 0,
-                'conversation_length': len(self.conversation_history),
-                'embedding_cache_size': len(self.vector_store.embedding_cache) if hasattr(self.vector_store, 'embedding_cache') else 0
-            }
-        except Exception as e:
-            logger.error(f"Error getting memory usage: {str(e)}")
-            return {}
-
     def process_images_on_demand(self, pdf_path: str):
-        """Process images from a specific PDF only when needed with improved error handling."""
+        """Process images from a specific PDF only when needed with comprehensive analysis."""
         try:
-            # Process images with the text processor
+            logger.info(f"Starting comprehensive image processing for {pdf_path}")
+            start_time = time.time()
+            
+            # Process images with full capabilities
             result = self.file_handler.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
+            
+            # Ensure all images are analyzed with Vision API
+            self.file_handler.text_processor.ensure_images_analyzed()
+            
+            processing_time = time.time() - start_time
+            logger.info(f"Comprehensive image processing completed in {processing_time:.2f}s")
+            
             return True
         except Exception as e:
             logger.error(f"Error processing images on demand: {str(e)}")
@@ -1168,12 +1058,18 @@ class RAGSystem:
         """Check if a question is related to images, charts, graphs, etc."""
         question_lower = question.lower()
         
-        # Keywords that suggest image-related questions
+        # Comprehensive list of image-related keywords
         image_keywords = [
             'show', 'display', 'image', 'picture', 'chart', 'graph', 'table', 'figure',
             'diagram', 'visual', 'plot', 'graphic', 'photo', 'screenshot', 'illustration',
             'revenue chart', 'profit graph', 'sales figure', 'data visualization',
-            'bar chart', 'line graph', 'pie chart', 'scatter plot', 'histogram'
+            'bar chart', 'line graph', 'pie chart', 'scatter plot', 'histogram',
+            'dashboard', 'kpi', 'key performance indicator', 'visualization',
+            'chart', 'graph', 'figure', 'diagram', 'plot', 'graphic',
+            'revenue', 'profit', 'growth', 'sales', 'earnings', 'income',
+            'metrics', 'performance', 'financial', 'business', 'quarterly', 'annual',
+            'trend', 'comparison', 'analysis', 'statistics', 'figures',
+            'what does the', 'can you show', 'find the', 'locate the', 'where is the'
         ]
         
         return any(keyword in question_lower for keyword in image_keywords)
@@ -1241,29 +1137,28 @@ class RAGSystem:
             return f"Error accessing internet: {str(e)}"
 
     def process_question_with_mode(self, question: str, normalize_length: bool = True) -> str:
-        """Process question using either document mode or internet mode."""
-        # Check for image/graph requests first
-        if self.is_image_related_question(question) or self.is_semantic_image_request(question):
-            logger.info("Processing image/graph request")
-            answer = self.handle_semantic_image_search(question)
-            self.add_to_conversation_history(question, answer, "image_search")
-            return answer
+        """Process a question using the appropriate mode (document or internet)."""
+        try:
+            # Check if this is an image-related question
+            if self.is_image_related_question(question):
+                logger.info("Image-related question detected - triggering comprehensive image processing")
+                
+                # Get the PDF path and process images on-demand
+                pdf_path = self.get_pdf_path_for_question(question)
+                if pdf_path and os.path.exists(pdf_path):
+                    logger.info(f"Processing images for {pdf_path}")
+                    self.process_images_on_demand(pdf_path)
+                else:
+                    logger.warning("No PDF path found for image processing")
             
-        if self.internet_mode:
-            # Use internet mode
-            logger.info("Processing question using internet mode")
-            answer = self.generate_internet_answer(question)
-            self.add_to_conversation_history(question, answer, "internet")
-            return answer
-        else:
-            # Use document mode (existing logic)
-            if not self.vector_store.is_ready():
-                return "No documents loaded. Please upload documents first or enable internet mode."
-            
-            logger.info("Processing question using document mode")
-            answer = self.question_handler.process_question(question, normalize_length=normalize_length)
-            self.add_to_conversation_history(question, answer, "document")
-            return answer
+            if self.internet_mode:
+                return self.generate_internet_answer(question)
+            else:
+                return self.question_handler.process_question(question, normalize_length=normalize_length)
+                
+        except Exception as e:
+            logger.error(f"Error processing question with mode: {str(e)}")
+            return f"Error processing question: {str(e)}"
 
     def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
         """Process follow-up question using either document mode or internet mode."""
