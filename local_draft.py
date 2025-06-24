@@ -967,26 +967,8 @@ class SessionManager:
 ### =================== Main RAG System =================== ###
 class RAGSystem:
     def __init__(self, settings=None, is_web=False, use_vision_api=True, session_id: str = None, internet_mode=False):
-        # Use performance config for initialization
-        config = PERFORMANCE_CONFIG
-        
-        # Initialize components with performance settings
         self.file_handler = WebFileHandler() if is_web else None
-        if self.file_handler:
-            self.file_handler.max_file_size_mb = config['max_file_size_mb']
-            self.file_handler.enable_image_processing = config['enable_image_processing']
-            self.file_handler.executor = ThreadPoolExecutor(max_workers=config['max_workers'])
-            self.file_handler.text_processor.chunk_size = config['chunk_size']
-            self.file_handler.text_processor.chunk_overlap = config['chunk_overlap']
-            self.file_handler.text_processor.enable_image_processing = config['enable_image_processing']
-            self.file_handler.text_processor.image_dpi = config['image_dpi']
-            self.file_handler.text_processor.max_image_size_mb = config['max_image_size_mb']
-        
         self.vector_store = VectorStore()
-        self.vector_store.batch_size = config['embedding_batch_size']
-        self.vector_store.max_documents_before_rebuild = config['max_documents_before_rebuild']
-        self.vector_store.use_faiss_gpu = config['use_faiss_gpu']
-        
         self.question_handler = QuestionHandler(self.vector_store)
         self.is_web = is_web
         self.conversation_history = []
@@ -999,10 +981,6 @@ class RAGSystem:
             'avg_response_time': 0,
             'error_count': 0
         }
-        
-        # Performance settings
-        self.search_k = config['search_k']
-        self.min_similarity_score = config['min_similarity_score']
 
     def process_web_uploads(self, uploaded_files):
         """Process files uploaded through the web interface with improved error handling."""
