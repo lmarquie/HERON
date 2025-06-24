@@ -25,6 +25,7 @@ from pptx import Presentation
 import streamlit as st
 import openpyxl
 import pandas as pd
+import re
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -413,13 +414,20 @@ class TextProcessor:
                     
                     for i, chunk in enumerate(chunks):
                         if chunk.strip():
+                            # Extract page number from chunk text
+                            page_num = None
+                            page_match = re.search(r'Page (\d+):', chunk)
+                            if page_match:
+                                page_num = int(page_match.group(1))
+                            
                             documents.append({
                                 'text': chunk.strip(),
                                 'metadata': {
                                     'source': pdf_path,
                                     'chunk_id': i,
                                     'total_chunks': len(chunks),
-                                    'date': datetime.now().strftime('%Y-%m-%d')
+                                    'date': datetime.now().strftime('%Y-%m-%d'),
+                                    'page': page_num
                                 }
                             })
                 
@@ -494,13 +502,20 @@ class WebFileHandler:
                 documents = []
                 for i, chunk in enumerate(chunks):
                     if chunk.strip():
+                        # Extract page number from chunk text
+                        page_num = None
+                        page_match = re.search(r'Page (\d+):', chunk)
+                        if page_match:
+                            page_num = int(page_match.group(1))
+                        
                         documents.append({
                             'text': chunk.strip(),
                             'metadata': {
                                 'source': uploaded_file.name,
                                 'chunk_id': i,
                                 'total_chunks': len(chunks),
-                                'date': datetime.now().strftime('%Y-%m-%d')
+                                'date': datetime.now().strftime('%Y-%m-%d'),
+                                'page': page_num
                             }
                         })
                 return documents
