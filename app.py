@@ -157,8 +157,8 @@ def handle_followup_enter_key():
 # Main app
 initialize_rag_system()
 
-# Main content - Clean, modern chat interface
-st.title("HERON")
+# Main content - Modern chat interface
+# (Do not display st.title("HERON") here)
 
 # Display conversation history using logic layer - Modern chat style
 conversation_history = st.session_state.rag_system.get_conversation_history()
@@ -264,7 +264,6 @@ if chat_question:
 
 # Sidebar - Clean, organized controls
 with st.sidebar:
-    # Move HERON title to the top of the sidebar
     st.title("HERON")
     st.header("HERON Controls")
     
