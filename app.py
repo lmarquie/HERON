@@ -260,15 +260,10 @@ if chat_question:
 
 # Sidebar - Clean, organized controls
 with st.sidebar:
-    # Center the heron.png logo at the top of the sidebar
-    st.markdown(
-        """
-        <div style='text-align: center; margin-bottom: 0.5em;'>
-            <img src='heron.png' width='120' style='display: block; margin: 0 auto;' />
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    # Center the logo using columns
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.image("heron.png", width=120)
     
     # Document Management Section
     st.subheader("Documents")
