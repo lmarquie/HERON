@@ -152,20 +152,9 @@ if conversation_history:
             
             # Answer bubble (assistant)
             with st.chat_message("assistant"):
-                # If the answer is a list (image info), display images
+                # If the answer is a list (old image info from OpenCV), show disabled message
                 if isinstance(conv['answer'], list):
-                    if conv['answer']:
-                        img_info = conv['answer'][0]  # Only show the most relevant image
-                        if os.path.exists(img_info['path']):
-                            # Display image with enhanced caption
-                            caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
-                            if 'description' in img_info:
-                                caption += f" - {img_info['description']}"
-                            if 'similarity_score' in img_info:
-                                caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                            st.image(img_info['path'], caption=caption, use_container_width=True)
-                    else:
-                        st.write("No images were found in the uploaded documents.")
+                    st.info("Image processing has been disabled. Use 'Show Source' button to see highlighted chunks instead.")
                 else:
                     # Highlight relevant text if available
                     answer = conv['answer']
@@ -188,47 +177,28 @@ if conversation_history:
                             attribution += f" (Page {page_num})"
                         st.caption(attribution)
 
-                # Show source image automatically if user's question matches a trigger phrase and chunk metadata is present
+                # Show 'Show Source' button if chunk metadata is present
                 source = conv.get('source')
                 page = conv.get('page')
                 chunk_text = conv.get('chunk_text')
-                user_question = conv.get('question', '').lower()
-                trigger_phrases = [
-                    'show me the source',
-                    'show me the graph',
-                    'show me the chart',
-                    'show me the figure',
-                    'show me the table',
-                    'show me the image',
-                    'show the source',
-                    'show the graph',
-                    'show the chart',
-                    'show the figure',
-                    'show the table',
-                    'show the image',
-                    'source for this info',
-                    'graph for this info',
-                    'chart for this info',
-                    'figure for this info',
-                    'table for this info',
-                    'image for this info',
-                ]
-                if source and page and chunk_text and any(phrase in user_question for phrase in trigger_phrases):
-                    # Try to find the actual PDF path (uploaded file may be in temp/)
-                    pdf_path = source
-                    if not os.path.exists(pdf_path):
-                        # Try temp directory
-                        temp_path = os.path.join("temp", source)
-                        if os.path.exists(temp_path):
-                            pdf_path = temp_path
-                    if os.path.exists(pdf_path):
-                        img_path = render_chunk_source_image(pdf_path, page, chunk_text)
-                        if os.path.exists(img_path):
-                            st.image(img_path, caption=f"Page {page} (highlighted chunk)", use_container_width=True)
+                if source and page and chunk_text:
+                    show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
+                    if show_source:
+                        # Try to find the actual PDF path (uploaded file may be in temp/)
+                        pdf_path = source
+                        if not os.path.exists(pdf_path):
+                            # Try temp directory
+                            temp_path = os.path.join("temp", source)
+                            if os.path.exists(temp_path):
+                                pdf_path = temp_path
+                        if os.path.exists(pdf_path):
+                            img_path = render_chunk_source_image(pdf_path, page, chunk_text)
+                            if os.path.exists(img_path):
+                                st.image(img_path, caption=f"Page {page} (highlighted chunk)", use_container_width=True)
+                            else:
+                                st.warning("Could not render source image.")
                         else:
-                            st.warning("Could not render source image.")
-                    else:
-                        st.warning("Source PDF not found.")
+                            st.warning("Source PDF not found.")
 
 # Always show chat input (permanent chat interface)
 # Initialize input key counter
