@@ -321,56 +321,35 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Session")
     
-    # Reset and Export buttons in a compact layout
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Reset", type="secondary", use_container_width=True):
-            st.session_state.rag_system.clear_conversation_history()
-            if 'answer_given' in st.session_state:
-                del st.session_state.answer_given
-            
-            # Clean up files
-            if hasattr(st.session_state.rag_system.file_handler, 'get_saved_pdf_paths'):
-                saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
-                for pdf_path in saved_paths:
-                    if os.path.exists(pdf_path):
-                        try:
-                            os.remove(pdf_path)
-                        except Exception as e:
-                            logger.error(f"Could not remove {pdf_path}: {e}")
-            
-            if os.path.exists("images"):
-                import shutil
-                try:
-                    shutil.rmtree("images")
-                except Exception as e:
-                    logger.error(f"Could not clean up images directory: {e}")
-            
-            st.session_state.rag_system.reset_performance_metrics()
-            st.session_state.error_count = 0
-            st.session_state.performance_metrics = {}
-            st.session_state.documents_loaded = False
-            st.session_state.last_uploaded_files = []
-            st.session_state.processing_status = {}
-            st.success("Session reset!")
-    
-    with col2:
-        if conversation_history:
-            if st.button("Export", use_container_width=True):
-                pdf_path = export_conversation_to_pdf()
-                if pdf_path:
-                    with open(pdf_path, "rb") as pdf_file:
-                        pdf_bytes = pdf_file.read()
-                    st.download_button(
-                        label="Download PDF",
-                        data=pdf_bytes,
-                        file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
+    # Improved layout: Reset full width, Save and Load side by side
+    if st.button("Reset", type="secondary", use_container_width=True):
+        st.session_state.rag_system.clear_conversation_history()
+        if 'answer_given' in st.session_state:
+            del st.session_state.answer_given
+        # Clean up files
+        if hasattr(st.session_state.rag_system.file_handler, 'get_saved_pdf_paths'):
+            saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
+            for pdf_path in saved_paths:
+                if os.path.exists(pdf_path):
+                    try:
+                        os.remove(pdf_path)
+                    except Exception as e:
+                        logger.error(f"Could not remove {pdf_path}: {e}")
+        if os.path.exists("images"):
+            import shutil
+            try:
+                shutil.rmtree("images")
+            except Exception as e:
+                logger.error(f"Could not clean up images directory: {e}")
+        st.session_state.rag_system.reset_performance_metrics()
+        st.session_state.error_count = 0
+        st.session_state.performance_metrics = {}
+        st.session_state.documents_loaded = False
+        st.session_state.last_uploaded_files = []
+        st.session_state.processing_status = {}
+        st.success("Session reset!")
 
-    # Save/Load Session
-    col_save, col_load = st.columns(2)
+    col_save, col_load = st.columns([1, 1])
     with col_save:
         if st.button("Save", use_container_width=True):
             session_data = {
@@ -391,7 +370,6 @@ with st.sidebar:
                 mime="application/json",
                 use_container_width=True
             )
-
     with col_load:
         uploaded_session = st.file_uploader("Load", type=["json"], key="session_loader")
         if uploaded_session is not None:
