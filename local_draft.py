@@ -1245,7 +1245,7 @@ def extract_text_from_pptx(path):
 
 def extract_text_from_xlsx(path):
     try:
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True) 
         text = []
         for ws in wb.worksheets:
             for row in ws.iter_rows(values_only=True):
