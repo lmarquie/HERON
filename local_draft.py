@@ -771,8 +771,7 @@ class QuestionHandler:
                     return "No relevant information found in the documents."
                 # Build context with metadata for citation
                 context = "\n".join([
-                    f"[source: {chunk['metadata'].get('source', 'unknown')}, chunk: {chunk['metadata'].get('chunk_id', '?')}]
-{chunk['text']}"
+                    f"[source: {chunk['metadata'].get('source', 'unknown')}, chunk: {chunk['metadata'].get('chunk_id', '?')}]\n{chunk['text']}"
                     for chunk in results
                 ])
                 answer = self.llm.generate_answer(question, context, normalize_length)
@@ -808,8 +807,7 @@ class QuestionHandler:
             # Get document context
             results = self.vector_store.search(follow_up_question, k=k)
             document_context = "\n".join([
-                f"[source: {chunk['metadata'].get('source', 'unknown')}, chunk: {chunk['metadata'].get('chunk_id', '?')}]
-{chunk['text']}"
+                f"[source: {chunk['metadata'].get('source', 'unknown')}, chunk: {chunk['metadata'].get('chunk_id', '?')}]\n{chunk['text']}"
                 for chunk in results
             ]) if results else ""
             # Combine contexts
