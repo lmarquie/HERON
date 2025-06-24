@@ -250,27 +250,25 @@ def submit_chat_message():
             is_source_request = any(phrase in question_lower for phrase in trigger_phrases)
             
             if is_source_request:
-                # For source requests, find the most recent answer with chunk metadata
-                current_history = st.session_state.rag_system.get_conversation_history()
-                source_found = False
+                # For source requests, always use the most recent chunk from QuestionHandler
+                question_handler_history = st.session_state.rag_system.question_handler.conversation_history
                 
-                # Look backwards through conversation history for the most recent answer with chunk metadata
-                for prev_conv in reversed(current_history):
-                    if (prev_conv.get('source') and prev_conv.get('page') and 
-                        prev_conv.get('chunk_text') and prev_conv.get('question_type') not in ['error', 'source_request']):
-                        # Found a valid source, use its metadata
-                        answer = f"Showing source from: {prev_conv.get('source')}, Page {prev_conv.get('page')}"
+                if question_handler_history:
+                    # Get the most recent conversation entry with chunk metadata
+                    most_recent = question_handler_history[-1]
+                    if most_recent.get('source') and most_recent.get('chunk_text'):
+                        answer = f"Showing source from: {most_recent.get('source')}, Chunk {most_recent.get('chunk_id', '?')}"
                         st.session_state.rag_system.add_to_conversation_history(
                             chat_question, answer, "source_request", "document",
-                            source=prev_conv.get('source'),
-                            page=prev_conv.get('page'),
-                            chunk_text=prev_conv.get('chunk_text')
+                            source=most_recent.get('source'),
+                            page=most_recent.get('page'),
+                            chunk_text=most_recent.get('chunk_text')
                         )
-                        source_found = True
-                        break
-                
-                if not source_found:
-                    answer = "No previous answer with source information found. Please ask a question first."
+                    else:
+                        answer = "No chunk metadata found in the most recent answer."
+                        st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
+                else:
+                    answer = "No previous conversation found. Please ask a question first."
                     st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
             else:
                 # Check if this is actually a follow-up question (has previous conversation)
