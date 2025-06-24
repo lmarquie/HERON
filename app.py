@@ -219,34 +219,34 @@ if conversation_history:
 if 'chat_input_key_counter' not in st.session_state:
     st.session_state.chat_input_key_counter = 0
 
-# --- NEW: Helper to check for unanswered questions ---
-def has_unanswered_question():
-    history = st.session_state.rag_system.get_conversation_history()
-    return history and isinstance(history[-1].get('answer'), str) and history[-1]['answer'] == '...'
-
-# --- MODIFIED: Chat message submission logic ---
 def submit_chat_message():
     chat_input_key = f"chat_input_{st.session_state.chat_input_key_counter}"
     chat_question = st.session_state.get(chat_input_key, "")
     if chat_question.strip():
-        # Only add to conversation history if documents are loaded or internet mode is enabled
-        if st.session_state.get('documents_loaded', False) or st.session_state.get('internet_mode', False):
-            st.session_state.rag_system.add_to_conversation_history(chat_question, '...', "user", "document")
+        # Check if documents are loaded first
+        if not st.session_state.get('documents_loaded', False):
+            # Quick message for no documents
+            answer = "Please upload a document first."
+            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
             st.rerun()
         else:
-            # Show error but do NOT add to conversation history
-            st.error("No documents loaded. Please upload documents first or enable internet mode.")
+            # Check if this is actually a follow-up question (has previous conversation)
+            # Get the current conversation history to check if there are real Q&A pairs
+            current_history = st.session_state.rag_system.get_conversation_history()
+            has_real_conversation = any(
+                conv.get('question_type') not in ['error'] 
+                for conv in current_history
+            )
+            
+            if has_real_conversation:
+                # Use follow-up processing for actual follow-up questions
+                answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+            else:
+                # Use regular question processing for new questions
+                answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+            st.rerun()
+    # Only increment after rerun, so the key stays in sync
     st.session_state.chat_input_key_counter += 1
-
-# --- MODIFIED: After rerun, process unanswered question if present ---
-if has_unanswered_question():
-    # Get the last question
-    last_q = st.session_state.rag_system.get_conversation_history()[-1]['question']
-    # Generate the answer
-    answer = st.session_state.rag_system.process_question_with_mode(last_q, normalize_length=True)
-    # Overwrite the last entry's answer
-    st.session_state.rag_system.get_conversation_history()[-1]['answer'] = answer
-    st.rerun()
 
 # Show current mode in the placeholder
 current_mode = "Internet Search" if st.session_state.get('internet_mode', False) else "Document Search"
@@ -264,10 +264,8 @@ if chat_question:
 
 # Sidebar - Clean, organized controls
 with st.sidebar:
-    # Center the logo using columns
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.image("heron.png", width=120)
+    # Show heron.png as the logo, centered and sized
+    st.image("heron.png", width=120)
     
     # Document Management Section
     st.subheader("Documents")
