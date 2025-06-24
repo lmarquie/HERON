@@ -243,47 +243,47 @@ if conversation_history:
                             attribution += f" (Page {page_num})"
                         st.caption(attribution)
 
-# Show main question input only if there is no conversation history
-if not conversation_history:
-    # Initialize submit flag
-    if 'submit_question' not in st.session_state:
-        st.session_state.submit_question = False
-    
-    # Show current mode in the input
-    current_mode = "Internet Search" if st.session_state.get('internet_mode', False) else "Document Search"
-    placeholder_text = f"Ask a question (using {current_mode})..."
-    
-    question = st.text_input(
-        "Ask a question:",
-        key="question_input",
-        placeholder=placeholder_text,
-        on_change=handle_enter_key,
-        help=f"Press Enter to submit. Currently using {current_mode} mode."
-    )
-    
-    # Handle submission via button or Enter key
-    if st.button("Get Answer", type="primary") or st.session_state.submit_question:
-        with st.spinner("Processing..."):
-            answer = generate_answer(question)
-            # If answer is a list (image info), display images
-            if isinstance(answer, list):
-                if answer:
-                    img_info = answer[0]  # Only show the most relevant image
-                    if os.path.exists(img_info['path']):
-                        # Display image with enhanced caption
-                        caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
-                        if 'description' in img_info:
-                            caption += f" - {img_info['description']}"
-                        if 'similarity_score' in img_info:
-                            caption += f" (Similarity: {img_info['similarity_score']:.2f})"
-                        
-                        st.image(img_info['path'], caption=caption, use_container_width=True)
-                else:
-                    st.write("No images were found in the uploaded documents.")
+# Always show question input (not just when no conversation history)
+# Initialize submit flag
+if 'submit_question' not in st.session_state:
+    st.session_state.submit_question = False
+
+# Show current mode in the input
+current_mode = "Internet Search" if st.session_state.get('internet_mode', False) else "Document Search"
+placeholder_text = f"Ask a question (using {current_mode})..."
+
+question = st.text_input(
+    "Ask a question:",
+    key="question_input",
+    placeholder=placeholder_text,
+    on_change=handle_enter_key,
+    help=f"Press Enter to submit. Currently using {current_mode} mode."
+)
+
+# Handle submission via button or Enter key
+if st.button("Get Answer", type="primary") or st.session_state.submit_question:
+    with st.spinner("Processing..."):
+        answer = generate_answer(question)
+        # If answer is a list (image info), display images
+        if isinstance(answer, list):
+            if answer:
+                img_info = answer[0]  # Only show the most relevant image
+                if os.path.exists(img_info['path']):
+                    # Display image with enhanced caption
+                    caption = f"Page {img_info['page']}, Image {img_info['image_num']}"
+                    if 'description' in img_info:
+                        caption += f" - {img_info['description']}"
+                    if 'similarity_score' in img_info:
+                        caption += f" (Similarity: {img_info['similarity_score']:.2f})"
+                    
+                    st.image(img_info['path'], caption=caption, use_container_width=True)
             else:
-                st.write(answer)
-        st.session_state.answer_given = True
-        st.session_state.submit_question = False  # Reset flag
+                st.write("No images were found in the uploaded documents.")
+        else:
+            st.write(answer)
+    st.session_state.answer_given = True
+    st.session_state.submit_question = False  # Reset flag
+    st.rerun()  # Rerun to show the new conversation
 
 # Always show follow-up input if there is any conversation history
 if conversation_history:
