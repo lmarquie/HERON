@@ -264,8 +264,10 @@ if chat_question:
 
 # Sidebar - Clean, organized controls
 with st.sidebar:
-    # Show heron.png as the logo, centered and sized
-    st.image("heron.png", width=120)
+    # Center the logo using columns
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.image("heron.png", width=120)
     
     # Document Management Section
     st.subheader("Documents")
