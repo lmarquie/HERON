@@ -1127,7 +1127,7 @@ class RAGSystem:
                     {"role": "user", "content": question}
                 ],
                 temperature=0.3,
-                max_tokens=1000
+                max_tokens=5000
             )
             
             return response.choices[0].message.content
