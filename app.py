@@ -130,7 +130,7 @@ def export_conversation_to_pdf():
                 story.append(Paragraph(f"<b>A{i+1}:</b> {answer_text}", question_style))
             else:
                 # Handle text answers
-                story.append(Paragraph(f"<b>A{i+1}:</b> {conv['answer']}", question_style))
+                story.append(Paragraph(f"<b>A{i+1}:** {conv['answer']}", question_style))
             
             story.append(Spacer(1, 12))
         
@@ -223,12 +223,21 @@ def submit_chat_message():
     chat_input_key = f"chat_input_{st.session_state.chat_input_key_counter}"
     chat_question = st.session_state.get(chat_input_key, "")
     if chat_question.strip():
-        # Use generate_answer for first question, generate_follow_up for subsequent
-        if not conversation_history:
-            generate_answer(chat_question)
+        # Check if documents are loaded first
+        if not st.session_state.get('documents_loaded', False):
+            # Quick message for no documents
+            answer = "Please upload a document first."
+            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
+            st.rerun()
         else:
-            generate_follow_up(chat_question)
-        st.rerun()
+            # Use the RAG system's mode-aware processing methods that handle conversation history
+            if not conversation_history:
+                # For first question, use process_question_with_mode which adds to history
+                answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+            else:
+                # For follow-up questions, use process_follow_up_with_mode which adds to history
+                answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+            st.rerun()
     # Only increment after rerun, so the key stays in sync
     st.session_state.chat_input_key_counter += 1
 
