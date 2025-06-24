@@ -195,7 +195,7 @@ class TextProcessor:
                         ]
                     }
                 ],
-                "max_tokens": 200
+                "max_tokens": 5000
             }
             
             response = requests.post(
@@ -258,7 +258,7 @@ class TextProcessor:
                         ]
                     }
                 ],
-                "max_tokens": 100
+                "max_tokens": 5000
             }
             
             response = requests.post(
