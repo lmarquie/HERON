@@ -258,12 +258,18 @@ def submit_chat_message():
                     most_recent = question_handler_history[-1]
                     if most_recent.get('source') and most_recent.get('chunk_text'):
                         answer = f"Showing source from: {most_recent.get('source')}, Chunk {most_recent.get('chunk_id', '?')}"
-                        st.session_state.rag_system.add_to_conversation_history(
-                            chat_question, answer, "source_request", "document",
-                            source=most_recent.get('source'),
-                            page=most_recent.get('page'),
-                            chunk_text=most_recent.get('chunk_text')
-                        )
+                        # Create the entry manually to include chunk metadata
+                        entry = {
+                            'question': chat_question,
+                            'answer': answer,
+                            'question_type': 'source_request',
+                            'mode': 'document',
+                            'timestamp': datetime.now().isoformat(),
+                            'source': most_recent.get('source'),
+                            'page': most_recent.get('page'),
+                            'chunk_text': most_recent.get('chunk_text')
+                        }
+                        st.session_state.rag_system.conversation_history.append(entry)
                     else:
                         answer = "No chunk metadata found in the most recent answer."
                         st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
