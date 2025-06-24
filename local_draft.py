@@ -518,15 +518,12 @@ class WebFileHandler:
 
     def process_images_on_demand(self):
         """Process images from all saved PDFs when requested."""
-        if self.images_processed:
+        if hasattr(self, 'images_processed') and self.images_processed:
             return True  # Already processed
-            
         try:
             for pdf_path in self.saved_pdf_paths:
                 if os.path.exists(pdf_path):
-                    # Process images with the text processor
                     self.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
-            
             self.images_processed = True
             return True
         except Exception as e:
@@ -1024,7 +1021,7 @@ class RAGSystem:
         """Handle semantic image search requests with on-demand image processing."""
         try:
             # First, ensure images are processed if this is an image request
-            if not hasattr(self.file_handler, 'images_processed') or not self.file_handler.images_processed:
+            if not self.file_handler.images_processed:
                 with st.spinner("Scanning document for images..."):
                     self.process_images_on_demand()
             
@@ -1067,9 +1064,17 @@ class RAGSystem:
 
     def process_images_on_demand(self):
         """Process images from all saved PDFs when requested."""
-        if hasattr(self.file_handler, 'process_images_on_demand'):
-            return self.file_handler.process_images_on_demand()
-        return False
+        if hasattr(self.file_handler, 'images_processed') and self.file_handler.images_processed:
+            return True  # Already processed
+        try:
+            for pdf_path in self.file_handler.saved_pdf_paths:
+                if os.path.exists(pdf_path):
+                    self.file_handler.text_processor.extract_text_from_pdf(pdf_path, enable_image_processing=True)
+            self.file_handler.images_processed = True
+            return True
+        except Exception as e:
+            logger.error(f"Error processing images on demand: {str(e)}")
+            return False
 
     def classify_question_intent(self, question: str) -> str:
         """Use AI to classify the intent of a question - much more intelligent than keyword matching."""
@@ -1222,7 +1227,7 @@ Respond with ONLY the category name: image_request, text_question, or negative_i
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": question}
-                ], 
+                ],
                 temperature=0.3,
                 max_tokens=1000
             )
