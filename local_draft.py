@@ -1,4 +1,3 @@
-
 # Import necessary libraries
 import os
 import faiss
