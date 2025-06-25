@@ -24,6 +24,16 @@ st.set_page_config(
     layout="wide"
 )
 
+def clean_answer_text(answer):
+    # Add a space between a number and a letter if they are stuck together
+    answer = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', answer)
+    answer = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', answer)
+    # Replace multiple spaces with a single space
+    answer = re.sub(r'\s+', ' ', answer)
+    # Optionally, remove stray markdown italics/asterisks
+    answer = answer.replace('*', '')
+    return answer
+
 # Initialize RAG system with improved session management
 def initialize_rag_system():
     if 'rag_system' not in st.session_state:
@@ -507,13 +517,3 @@ def get_page_image_fast(source_path, page_num):
     except Exception as e:
         logging.error(f"Error extracting page {page_num} from {source_path}: {str(e)}")
         return None 
-
-def clean_answer_text(answer):
-    # Add a space between a number and a letter if they are stuck together
-    answer = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', answer)
-    answer = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', answer)
-    # Replace multiple spaces with a single space
-    answer = re.sub(r'\s+', ' ', answer)
-    # Optionally, remove stray markdown italics/asterisks
-    answer = answer.replace('*', '')
-    return answer 
