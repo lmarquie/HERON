@@ -127,9 +127,9 @@ def export_conversation_to_pdf():
                 answer = clean_answer_text(answer)
                 if highlight and highlight in answer:
                     answer = answer.replace(highlight, f'<mark>{highlight}</mark>')
-                    st.markdown(answer, unsafe_allow_html=True)
+                    st.text(answer)
                 else:
-                    st.write(answer)
+                    st.text(answer)
             
             story.append(Spacer(1, 12))
         
@@ -187,9 +187,9 @@ if conversation_history:
                     answer = clean_answer_text(answer)
                     if highlight and highlight in answer:
                         answer = answer.replace(highlight, f'<mark>{highlight}</mark>')
-                        st.markdown(answer, unsafe_allow_html=True)
+                        st.text(answer)
                     else:
-                        st.write(answer)
+                        st.text(answer)
                     
                     # Show source attribution if available
                     doc_name = conv.get('source_document')
