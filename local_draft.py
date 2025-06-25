@@ -1,3 +1,4 @@
+
 # Import necessary libraries
 import os
 import faiss
@@ -26,7 +27,6 @@ import streamlit as st
 import openpyxl
 import pandas as pd
 import re
-import tiktoken
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -35,32 +35,9 @@ logger = logging.getLogger(__name__)
 # Reduce verbose httpx logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-def batch_documents_by_token_limit(documents, max_tokens=250000):
-    enc = tiktoken.get_encoding("cl100k_base")
-    batches = []
-    current_batch = []
-    current_tokens = 0
-    for doc in documents:
-        tokens = len(enc.encode(doc['text']))
-        print(f"Chunk tokens: {tokens}")
-        if tokens > max_tokens:
-            print(f"SKIPPING CHUNK: {tokens} tokens (too large for a single batch)")
-            continue  # Skip this chunk
-        if current_tokens + tokens > max_tokens and current_batch:
-            print(f"Creating batch with {len(current_batch)} docs, {current_tokens} tokens")
-            batches.append(current_batch)
-            current_batch = []
-            current_tokens = 0
-        current_batch.append(doc)
-        current_tokens += tokens
-    if current_batch:
-        print(f"Creating batch with {len(current_batch)} docs, {current_tokens} tokens")
-        batches.append(current_batch)
-    return batches
-
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 300, overlap: int = 30):
+    def __init__(self, chunk_size: int = 1500, overlap: int = 30):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.extracted_images = {}  # Store images for display
@@ -651,12 +628,6 @@ class VectorStore:
         """Get embeddings from OpenAI API in batches."""
         try:
             client = openai.OpenAI(api_key=OPENAI_API_KEY)
-            texts = [t for t in texts if isinstance(t, str) and t.strip()]
-            if not texts:
-                logger.error("No valid texts to embed in this batch")
-                return None
-            print(f"Embedding batch size: {len(texts)}")
-            print(f"First 3 texts: {texts[:3]}")
             response = client.embeddings.create(input=texts, model=model)
             return [data.embedding for data in response.data]
         except Exception as e:
@@ -664,44 +635,38 @@ class VectorStore:
             return None
 
     def add_documents(self, documents: List[Dict]):
+        """Add documents to the vector store using OpenAI embeddings with batching."""
         if not documents:
             return
-
+        
         if not self.initialized:
             logger.error("Model not initialized, cannot add documents")
             return
-
+        
         try:
-            # Batch documents to stay under the token limit
-            batches = batch_documents_by_token_limit(documents, max_tokens=250000)
-            print(f"Batching {len(documents)} documents into {len(batches)} batches")
-            for i, batch in enumerate(batches):
-                print(f"Batch {i+1} has {len(batch)} documents")
-                for doc in batch:
-                    tokens = len(tiktoken.get_encoding("cl100k_base").encode(doc['text']))
-                    if tokens > 20000:
-                        print(f"Large chunk: {tokens} tokens, first 100 chars: {doc['text'][:100]}")
-                texts = [doc['text'] for doc in batch]
-                embeddings = self.get_openai_embeddings_batch(texts)
-                if embeddings is None or len(embeddings) != len(batch):
-                    logger.error("Failed to get embeddings for all documents in batch")
-                    continue
-
-                self.documents.extend(batch)
-                embeddings = np.array(embeddings)
-
-                if self.embeddings is None:
-                    self.embeddings = embeddings
-                else:
-                    self.embeddings = np.vstack([self.embeddings, embeddings])
-
-                embedding_dim = self.embeddings.shape[1]
-                if self.index is None:
-                    self.index = faiss.IndexFlatIP(embedding_dim)
-                self.index.add(embeddings.astype('float32'))
-
-                logger.info(f"Added {len(batch)} documents to vector store (OpenAI embeddings - batch)")
-
+            texts = [doc['text'] for doc in documents]
+            
+            # Get all embeddings in a single batch call
+            embeddings = self.get_openai_embeddings_batch(texts)
+            
+            if embeddings is None or len(embeddings) != len(documents):
+                logger.error("Failed to get embeddings for all documents")
+                return
+            
+            self.documents.extend(documents)
+            embeddings = np.array(embeddings)
+            
+            if self.embeddings is None:
+                self.embeddings = embeddings
+            else:
+                self.embeddings = np.vstack([self.embeddings, embeddings])
+            
+            embedding_dim = self.embeddings.shape[1]
+            self.index = faiss.IndexFlatIP(embedding_dim)
+            self.index.add(self.embeddings.astype('float32'))
+            
+            logger.info(f"Added {len(documents)} documents to vector store (OpenAI embeddings - batch)")
+            
         except Exception as e:
             logger.error(f"Error adding documents to vector store: {str(e)}")
 
