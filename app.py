@@ -1,6 +1,6 @@
 import streamlit as st
 import os
-from local_draft import RAGSystem, WebFileHandler, render_chunk_source_image
+from local_draft import RAGSystem, WebFileHandler, render_chunk_source_image, get_page_image_simple
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -11,6 +11,7 @@ import logging
 import json
 import concurrent.futures
 import re
+import fitz  # PyMuPDF for fast page extraction
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -183,56 +184,56 @@ if conversation_history:
                 page = conv.get('page')
                 chunk_text = conv.get('chunk_text')
                 question_type = conv.get('question_type', '')
+                chunk_id = conv.get('chunk_id')
+                total_chunks = conv.get('total_chunks')
+                
+                # Debug: Show what metadata we have
+                if st.session_state.get('debug_mode', False):
+                    st.write(f"**Debug Info:** Source={source}, Page={page}, Chunk ID={chunk_id}, Total Chunks={total_chunks}")
                 
                 if source and page and chunk_text:
                     if question_type == 'source_request':
                         # Automatically show source for source requests
-                        pdf_path = source
-                        if not os.path.exists(pdf_path):
-                            # Try temp directory
-                            temp_path = os.path.join("temp", source)
-                            if os.path.exists(temp_path):
-                                pdf_path = temp_path
-                            else:
-                                # Try with just the filename
-                                filename = os.path.basename(source)
-                                temp_path = os.path.join("temp", filename)
-                                if os.path.exists(temp_path):
-                                    pdf_path = temp_path
+                        # Use fast on-demand extraction
+                        img_path = get_page_image_fast(source, page)
                         
-                        if os.path.exists(pdf_path):
-                            img_path = render_chunk_source_image(pdf_path, page, chunk_text)
-                            if os.path.exists(img_path):
-                                st.image(img_path, caption=f"Page {page} (highlighted chunk)", use_container_width=True)
-                            else:
-                                st.warning(f"Could not render source image. Expected path: {img_path}")
+                        if img_path and os.path.exists(img_path):
+                            caption = f"Page {page}"
+                            if chunk_id is not None:
+                                caption += f" (Chunk {chunk_id}"
+                                if total_chunks is not None:
+                                    caption += f" of {total_chunks}"
+                                caption += ")"
+                            caption += " - Source Page"
+                            st.image(img_path, caption=caption, use_container_width=True)
                         else:
-                            st.warning(f"Source PDF not found: {source}")
-                            st.info("Available files in temp directory:")
-                            if os.path.exists("temp"):
-                                for file in os.listdir("temp"):
-                                    st.text(f"  - {file}")
-                            else:
-                                st.text("  - temp directory doesn't exist")
+                            st.warning(f"Could not extract page {page} from {source}")
+                            # Show available files for debugging
+                            if st.session_state.get('debug_mode', False):
+                                st.info("Available files in temp directory:")
+                                if os.path.exists("temp"):
+                                    for file in os.listdir("temp"):
+                                        st.text(f"  - {file}")
+                                else:
+                                    st.text("  - temp directory doesn't exist")
                     else:
                         # Show button for other cases
                         show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
                         if show_source:
-                            # Try to find the actual PDF path (uploaded file may be in temp/)
-                            pdf_path = source
-                            if not os.path.exists(pdf_path):
-                                # Try temp directory
-                                temp_path = os.path.join("temp", source)
-                                if os.path.exists(temp_path):
-                                    pdf_path = temp_path
-                            if os.path.exists(pdf_path):
-                                img_path = render_chunk_source_image(pdf_path, page, chunk_text)
-                                if os.path.exists(img_path):
-                                    st.image(img_path, caption=f"Page {page} (highlighted chunk)", use_container_width=True)
-                                else:
-                                    st.warning("Could not render source image.")
+                            # Use fast on-demand extraction
+                            img_path = get_page_image_fast(source, page)
+                            
+                            if img_path and os.path.exists(img_path):
+                                caption = f"Page {page}"
+                                if chunk_id is not None:
+                                    caption += f" (Chunk {chunk_id}"
+                                    if total_chunks is not None:
+                                        caption += f" of {total_chunks}"
+                                    caption += ")"
+                                caption += " - Source Page"
+                                st.image(img_path, caption=caption, use_container_width=True)
                             else:
-                                st.warning("Source PDF not found.")
+                                st.warning(f"Could not extract page {page} from {source}")
 
 # Always show chat input (permanent chat interface)
 # Initialize input key counter
@@ -270,31 +271,15 @@ def submit_chat_message():
                     # Get the most recent conversation entry with chunk metadata
                     most_recent = question_handler_history[-1]
                     if most_recent.get('source') and most_recent.get('chunk_text'):
-                        # Extract page number from chunk text if not in metadata
+                        # Use the page number directly from metadata
                         page_num = most_recent.get('page')
                         chunk_text = most_recent.get('chunk_text', '')
                         
+                        # If no page number in metadata, default to 1 (but this shouldn't happen now)
                         if not page_num:
-                            # Try different patterns for page numbers
-                            page_patterns = [
-                                r'Page (\d+):',
-                                r'page (\d+):',
-                                r'Page (\d+)',
-                                r'page (\d+)',
-                                r'P\.(\d+)',
-                                r'p\.(\d+)'
-                            ]
-                            
-                            for pattern in page_patterns:
-                                page_match = re.search(pattern, chunk_text)
-                                if page_match:
-                                    page_num = int(page_match.group(1))
-                                    break
-                            
-                            if not page_num:
-                                page_num = 1  # Default to page 1 if no page info found
+                            page_num = 1
                         
-                        answer = f"Showing source from: {most_recent.get('source')}, Chunk {most_recent.get('chunk_id', '?')}"
+                        answer = f"Showing source from: {most_recent.get('source')}, Page {page_num}, Chunk {most_recent.get('chunk_id', '?')}"
                         # Create the entry manually to include chunk metadata
                         entry = {
                             'question': chat_question,
@@ -304,7 +289,9 @@ def submit_chat_message():
                             'timestamp': datetime.now().isoformat(),
                             'source': most_recent.get('source'),
                             'page': page_num,
-                            'chunk_text': chunk_text
+                            'chunk_text': chunk_text,
+                            'chunk_id': most_recent.get('chunk_id'),
+                            'total_chunks': most_recent.get('total_chunks')
                         }
                         st.session_state.rag_system.conversation_history.append(entry)
                     else:
@@ -348,10 +335,6 @@ if chat_question:
 
 # Sidebar - Clean, organized controls
 with st.sidebar:
-    # Center the logo using columns
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.image("heron.png", width=120)
     
     # Document Management Section
     st.subheader("Documents")
@@ -407,6 +390,14 @@ with st.sidebar:
     # Session Management Section
     st.markdown("---")
     st.subheader("Session")
+    
+    # Debug toggle
+    debug_mode = st.toggle(
+        "Debug Mode",
+        value=st.session_state.get('debug_mode', False),
+        help="Show debug information to troubleshoot issues"
+    )
+    st.session_state.debug_mode = debug_mode
     
     # Only show the Reset button, full width
     if st.button("Reset", type="secondary", use_container_width=True):
@@ -468,4 +459,49 @@ with st.sidebar:
 
 # Minimal error display in main area
 if st.session_state.error_count > 0:
-    st.error(f"{st.session_state.error_count} error(s) - check sidebar for details.") 
+    st.error(f"{st.session_state.error_count} error(s) - check sidebar for details.")
+
+# Fast on-demand page extraction
+def get_page_image_fast(source_path, page_num):
+    """Extract a single page image on demand - much faster than processing all pages.
+    
+    Args:
+        source_path: Path to the PDF file
+        page_num: Page number (1-based)
+    
+    Returns:
+        Path to the page image file
+    """
+    try:
+        # Try to find the PDF file
+        pdf_path = source_path
+        if not os.path.exists(pdf_path):
+            # Try temp directory
+            temp_path = os.path.join("temp", source_path)
+            if os.path.exists(temp_path):
+                pdf_path = temp_path
+            else:
+                # Try with just the filename
+                filename = os.path.basename(source_path)
+                temp_path = os.path.join("temp", filename)
+                if os.path.exists(temp_path):
+                    pdf_path = temp_path
+                else:
+                    return None
+        
+        # Extract only this specific page
+        doc = fitz.open(pdf_path)
+        page = doc.load_page(page_num - 1)  # 0-based index
+        
+        # Fast rendering with lower DPI
+        pix = page.get_pixmap(dpi=120)  # Lower DPI for speed
+        os.makedirs("temp", exist_ok=True)
+        img_path = f"temp/page_{page_num}_fast.png"
+        pix.save(img_path)
+        doc.close()
+        
+        return img_path
+        
+    except Exception as e:
+        logging.error(f"Error extracting page {page_num} from {source_path}: {str(e)}")
+        return None 
