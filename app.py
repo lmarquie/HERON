@@ -25,13 +25,15 @@ st.set_page_config(
 )
 
 def clean_answer_text(answer):
-    # Remove asterisks and underscores to prevent Markdown italics/bold
+    # Remove all asterisks and underscores (Markdown italics/bold)
     answer = re.sub(r'[_*]', '', answer)
-    # Add a space between a number and a letter if they are stuck together (both directions)
+    # Add a space between a number and a letter (both directions)
     answer = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', answer)
     answer = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', answer)
-    # Add a space before capital letters that are stuck to lowercase letters (e.g., "millionIn2022")
+    # Add a space before capital letters that are stuck to lowercase letters
     answer = re.sub(r'([a-z])([A-Z])', r'\1 \2', answer)
+    # Add a space after commas if missing
+    answer = re.sub(r',([^\s])', r', \1', answer)
     # Replace multiple spaces with a single space
     answer = re.sub(r'\s+', ' ', answer)
     # Strip leading/trailing spaces
@@ -120,7 +122,14 @@ def export_conversation_to_pdf():
                 story.append(Paragraph(f"<b>A{i+1}:</b> {answer_text}", question_style))
             else:
                 # Handle text answers
-                story.append(Paragraph(f"<b>A{i+1}:** {conv['answer']}", question_style))
+                answer = conv['answer']
+                highlight = conv.get('highlight')
+                answer = clean_answer_text(answer)
+                if highlight and highlight in answer:
+                    answer = answer.replace(highlight, f'<mark>{highlight}</mark>')
+                    st.markdown(answer, unsafe_allow_html=True)
+                else:
+                    st.write(answer)
             
             story.append(Spacer(1, 12))
         
@@ -175,7 +184,6 @@ if conversation_history:
                     # Highlight relevant text if available
                     answer = conv['answer']
                     highlight = conv.get('highlight')
-                    # Clean the answer text before displaying
                     answer = clean_answer_text(answer)
                     if highlight and highlight in answer:
                         answer = answer.replace(highlight, f'<mark>{highlight}</mark>')
