@@ -25,13 +25,17 @@ st.set_page_config(
 )
 
 def clean_answer_text(answer):
-    # Remove asterisks and underscores used for markdown italics/bold
+    # Remove asterisks and underscores to prevent Markdown italics/bold
     answer = re.sub(r'[_*]', '', answer)
-    # Add a space between a number and a letter if they are stuck together
+    # Add a space between a number and a letter if they are stuck together (both directions)
     answer = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', answer)
     answer = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', answer)
+    # Add a space before capital letters that are stuck to lowercase letters (e.g., "millionIn2022")
+    answer = re.sub(r'([a-z])([A-Z])', r'\1 \2', answer)
     # Replace multiple spaces with a single space
     answer = re.sub(r'\s+', ' ', answer)
+    # Strip leading/trailing spaces
+    answer = answer.strip()
     return answer
 
 # Initialize RAG system with improved session management
