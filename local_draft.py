@@ -42,22 +42,25 @@ def batch_documents_by_token_limit(documents, max_tokens=250000):
     current_tokens = 0
     for doc in documents:
         tokens = len(enc.encode(doc['text']))
+        print(f"Chunk tokens: {tokens}")
         if tokens > max_tokens:
-            print(f"Skipping chunk with {tokens} tokens (too large for a single batch)")
+            print(f"SKIPPING CHUNK: {tokens} tokens (too large for a single batch)")
             continue  # Skip this chunk
         if current_tokens + tokens > max_tokens and current_batch:
+            print(f"Creating batch with {len(current_batch)} docs, {current_tokens} tokens")
             batches.append(current_batch)
             current_batch = []
             current_tokens = 0
         current_batch.append(doc)
         current_tokens += tokens
     if current_batch:
+        print(f"Creating batch with {len(current_batch)} docs, {current_tokens} tokens")
         batches.append(current_batch)
     return batches
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 500, overlap: int = 30):
+    def __init__(self, chunk_size: int = 300, overlap: int = 30):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.extracted_images = {}  # Store images for display
