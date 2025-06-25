@@ -431,6 +431,34 @@ class TextProcessor:
                 continue
         return documents
 
+    def extract_page_images(self, pdf_path: str) -> Dict[int, str]:
+        """Extract images from each page of a PDF and save them for later display.
+        This is a much simpler and more reliable approach than text highlighting.
+        
+        Returns:
+            Dict mapping page numbers to image file paths
+        """
+        page_images = {}
+        try:
+            doc = fitz.open(pdf_path)
+            os.makedirs("temp", exist_ok=True)
+            
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                
+                # Render page as image
+                pix = page.get_pixmap(dpi=150)  # Lower DPI for speed
+                img_path = f"temp/page_{page_num + 1}_full.png"
+                pix.save(img_path)
+                page_images[page_num + 1] = img_path
+                
+            doc.close()
+            return page_images
+            
+        except Exception as e:
+            logger.error(f"Error extracting page images from {pdf_path}: {str(e)}")
+            return {}
+
 ### =================== Document Loading =================== ###
 class WebFileHandler:
     def __init__(self):
@@ -478,7 +506,29 @@ class WebFileHandler:
             self.saved_pdf_paths.append(temp_path)
 
             if ext == ".pdf":
-                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
+                # Process PDF page by page like prepare_documents does
+                documents = []
+                doc = fitz.open(temp_path)
+                for page_num in range(len(doc)):
+                    page = doc.load_page(page_num)
+                    text = page.get_text()
+                    if text.strip():
+                        # Chunk this page's text
+                        chunks = self.text_processor.chunk_text(text)
+                        for i, chunk in enumerate(chunks):
+                            if chunk.strip():
+                                documents.append({
+                                    'text': chunk.strip(),
+                                    'metadata': {
+                                        'source': uploaded_file.name,
+                                        'chunk_id': i,
+                                        'total_chunks': len(chunks),
+                                        'date': datetime.now().strftime('%Y-%m-%d'),
+                                        'page': page_num + 1
+                                    }
+                                })
+                doc.close()
+                return documents
             elif ext in [".doc", ".docx"]:
                 text_content = extract_text_from_docx(temp_path)
             elif ext in [".ppt", ".pptx"]:
@@ -491,6 +541,7 @@ class WebFileHandler:
                 logger.warning(f"Unsupported file type: {uploaded_file.name}")
                 return None
 
+            # For non-PDF files, use the old approach
             if text_content and text_content.strip():
                 chunks = self.text_processor.chunk_text(text_content)
                 documents = []
@@ -726,26 +777,25 @@ class ClaudeHandler:
             return f"Error generating answer: {str(e)}"
 
     def _get_response_length(self, question: str, normalize_length: bool) -> int:
-        """Determine appropriate response length based on question type."""
         if not normalize_length:
             return 1000
-        
+
         question_lower = question.lower()
-        
+
         # Short responses for simple questions
         if any(word in question_lower for word in ['what is', 'define', 'explain briefly', 'summarize']):
-            return 300
-        
+            return 1000
+
         # Medium responses for analysis questions
         if any(word in question_lower for word in ['analyze', 'compare', 'discuss', 'evaluate']):
-            return 600
-        
+            return 2000
+
         # Long responses for complex questions
         if any(word in question_lower for word in ['detailed', 'comprehensive', 'thorough']):
-            return 1000
-        
+            return 4000
+
         # Default medium length
-        return 500
+        return 2000
 
 ### =================== Question Handler =================== ###
 class QuestionHandler:
@@ -777,6 +827,7 @@ class QuestionHandler:
                     'timestamp': datetime.now().isoformat(),
                     'source': top_chunk['metadata'].get('source') if top_chunk else None,
                     'chunk_id': top_chunk['metadata'].get('chunk_id') if top_chunk else None,
+                    'total_chunks': top_chunk['metadata'].get('total_chunks') if top_chunk else None,
                     'chunk_text': top_chunk['text'] if top_chunk else None,
                     'page': top_chunk['metadata'].get('page') if top_chunk and 'page' in top_chunk['metadata'] else None
                 })
@@ -816,6 +867,7 @@ class QuestionHandler:
                 'timestamp': datetime.now().isoformat(),
                 'source': top_chunk['metadata'].get('source') if top_chunk else None,
                 'chunk_id': top_chunk['metadata'].get('chunk_id') if top_chunk else None,
+                'total_chunks': top_chunk['metadata'].get('total_chunks') if top_chunk else None,
                 'chunk_text': top_chunk['text'] if top_chunk else None,
                 'page': top_chunk['metadata'].get('page') if top_chunk and 'page' in top_chunk['metadata'] else None
             })
@@ -1137,24 +1189,105 @@ def render_pdf_page_with_highlight(pdf_path, page_num, highlight_text=None):
     doc.close()
     return img_path
 
-def render_chunk_source_image(source_path, page_num, chunk_text):
-    """Render a PDF page as an image, highlighting the chunk text if possible."""
+def render_chunk_source_image(source_path, page_num, chunk_text, chunk_id=None, total_chunks=None):
+    """Render a PDF page as an image, highlighting the chunk text if possible.
+    
+    Args:
+        source_path: Path to the PDF file
+        page_num: Page number (1-based)
+        chunk_text: The text content of the chunk to highlight
+        chunk_id: Optional chunk identifier within the page
+        total_chunks: Optional total number of chunks on the page
+    """
     import fitz
     import os
     os.makedirs("temp", exist_ok=True)
-    doc = fitz.open(source_path)
-    page = doc.load_page(page_num - 1)  # 0-based index
-    # Try to highlight all instances of the chunk text
-    if chunk_text:
-        text_instances = page.search_for(chunk_text)
-        for inst in text_instances:
-            page.add_highlight_annot(inst)
-    pix = page.get_pixmap(dpi=200)
-    img_path = f"temp/page_{page_num}_chunk_highlighted.png"
-    pix.save(img_path)
-    doc.close()
-    return img_path
+    
+    try:
+        doc = fitz.open(source_path)
+        page = doc.load_page(page_num - 1)  # 0-based index
+        
+        # Try to highlight all instances of the chunk text
+        if chunk_text:
+            # Clean the chunk text for better matching
+            clean_chunk_text = chunk_text.strip()
+            if len(clean_chunk_text) > 50:  # Only highlight if chunk is substantial
+                text_instances = page.search_for(clean_chunk_text)
+                for inst in text_instances:
+                    page.add_highlight_annot(inst)
+            else:
+                # For short chunks, try to highlight key phrases
+                words = clean_chunk_text.split()
+                if len(words) > 3:
+                    # Highlight first few words as a fallback
+                    key_phrase = " ".join(words[:3])
+                    text_instances = page.search_for(key_phrase)
+                    for inst in text_instances:
+                        page.add_highlight_annot(inst)
+        
+        # Create filename with metadata
+        filename_parts = [f"page_{page_num}"]
+        if chunk_id is not None:
+            filename_parts.append(f"chunk_{chunk_id}")
+        if total_chunks is not None:
+            filename_parts.append(f"of_{total_chunks}")
+        filename_parts.append("highlighted.png")
+        
+        img_path = f"temp/_{'_'.join(filename_parts)}"
+        
+        pix = page.get_pixmap(dpi=200)
+        pix.save(img_path)
+        doc.close()
+        return img_path
+        
+    except Exception as e:
+        logger.error(f"Error rendering chunk source image: {str(e)}")
+        # Fallback to basic rendering without highlighting
+        try:
+            doc = fitz.open(source_path)
+            page = doc.load_page(page_num - 1)
+            pix = page.get_pixmap(dpi=200)
+            img_path = f"temp/page_{page_num}_fallback.png"
+            pix.save(img_path)
+            doc.close()
+            return img_path
+        except Exception as e2:
+            logger.error(f"Fallback rendering also failed: {str(e2)}")
+            return None
+
+def get_page_image_simple(source_path, page_num):
+    """Get a simple page image without highlighting - much more reliable.
+    
+    Args:
+        source_path: Path to the PDF file
+        page_num: Page number (1-based)
+    
+    Returns:
+        Path to the page image file
+    """
+    import fitz
+    import os
+    os.makedirs("temp", exist_ok=True)
+    
+    try:
+        doc = fitz.open(source_path)
+        page = doc.load_page(page_num - 1)  # 0-based index
+        
+        # Simple page rendering
+        pix = page.get_pixmap(dpi=150)
+        img_path = f"temp/page_{page_num}_simple.png"
+        pix.save(img_path)
+        doc.close()
+        return img_path
+        
+    except Exception as e:
+        logger.error(f"Error getting page image: {str(e)}")
+        return None
 
 if __name__ == "__main__": 
+    st.set_page_config(
+        page_title="HERON",
+        layout="wide"
+    )
     rag_system = RAGSystem()
     rag_system.run() 
