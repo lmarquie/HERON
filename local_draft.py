@@ -1298,4 +1298,7 @@ if __name__ == "__main__":
     rag_system = RAGSystem()
     rag_system.run() 
 
+if not os.path.exists("temp"):
+    os.makedirs("temp", exist_ok=True)
+
 print("Files in temp directory:", os.listdir("temp")) 
