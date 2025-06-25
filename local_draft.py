@@ -651,6 +651,12 @@ class VectorStore:
         """Get embeddings from OpenAI API in batches."""
         try:
             client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            texts = [t for t in texts if isinstance(t, str) and t.strip()]
+            if not texts:
+                logger.error("No valid texts to embed in this batch")
+                return None
+            print(f"Embedding batch size: {len(texts)}")
+            print(f"First 3 texts: {texts[:3]}")
             response = client.embeddings.create(input=texts, model=model)
             return [data.embedding for data in response.data]
         except Exception as e:
