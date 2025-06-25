@@ -42,6 +42,9 @@ def batch_documents_by_token_limit(documents, max_tokens=250000):
     current_tokens = 0
     for doc in documents:
         tokens = len(enc.encode(doc['text']))
+        if tokens > max_tokens:
+            print(f"Skipping chunk with {tokens} tokens (too large for a single batch)")
+            continue  # Skip this chunk
         if current_tokens + tokens > max_tokens and current_batch:
             batches.append(current_batch)
             current_batch = []
@@ -54,7 +57,7 @@ def batch_documents_by_token_limit(documents, max_tokens=250000):
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 1500, overlap: int = 30):
+    def __init__(self, chunk_size: int = 500, overlap: int = 30):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.extracted_images = {}  # Store images for display
@@ -665,6 +668,10 @@ class VectorStore:
             print(f"Batching {len(documents)} documents into {len(batches)} batches")
             for i, batch in enumerate(batches):
                 print(f"Batch {i+1} has {len(batch)} documents")
+                for doc in batch:
+                    tokens = len(tiktoken.get_encoding("cl100k_base").encode(doc['text']))
+                    if tokens > 20000:
+                        print(f"Large chunk: {tokens} tokens, first 100 chars: {doc['text'][:100]}")
                 texts = [doc['text'] for doc in batch]
                 embeddings = self.get_openai_embeddings_batch(texts)
                 if embeddings is None or len(embeddings) != len(batch):
