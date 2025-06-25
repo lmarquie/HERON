@@ -25,13 +25,13 @@ st.set_page_config(
 )
 
 def clean_answer_text(answer):
+    # Remove asterisks and underscores used for markdown italics/bold
+    answer = re.sub(r'[_*]', '', answer)
     # Add a space between a number and a letter if they are stuck together
     answer = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', answer)
     answer = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', answer)
     # Replace multiple spaces with a single space
     answer = re.sub(r'\s+', ' ', answer)
-    # Optionally, remove stray markdown italics/asterisks
-    answer = answer.replace('*', '')
     return answer
 
 # Initialize RAG system with improved session management
@@ -171,13 +171,12 @@ if conversation_history:
                     # Highlight relevant text if available
                     answer = conv['answer']
                     highlight = conv.get('highlight')
+                    # Clean the answer text before displaying
+                    answer = clean_answer_text(answer)
                     if highlight and highlight in answer:
-                        # Use HTML <mark> for highlighting
                         answer = answer.replace(highlight, f'<mark>{highlight}</mark>')
-                        answer = clean_answer_text(answer)
                         st.markdown(answer, unsafe_allow_html=True)
                     else:
-                        answer = clean_answer_text(answer)
                         st.write(answer)
                     
                     # Show source attribution if available
