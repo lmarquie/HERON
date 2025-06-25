@@ -12,6 +12,7 @@ import json
 import concurrent.futures
 import re
 import fitz  # PyMuPDF for fast page extraction
+import tiktoken
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -527,4 +528,21 @@ def get_page_image_fast(source_path, page_num):
         
     except Exception as e:
         logging.error(f"Error extracting page {page_num} from {source_path}: {str(e)}")
-        return None 
+        return None
+
+def batch_documents_by_token_limit(documents, max_tokens=250000):
+    enc = tiktoken.get_encoding("cl100k_base")  # Use the encoding for your model
+    batches = []
+    current_batch = []
+    current_tokens = 0
+    for doc in documents:
+        tokens = len(enc.encode(doc['text']))
+        if current_tokens + tokens > max_tokens and current_batch:
+            batches.append(current_batch)
+            current_batch = []
+            current_tokens = 0
+        current_batch.append(doc)
+        current_tokens += tokens
+    if current_batch:
+        batches.append(current_batch)
+    return batches 
