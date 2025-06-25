@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 # Reduce verbose httpx logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
+def safe_filename(filename):
+    # Replace unsafe characters with underscores
+    return re.sub(r'[^\w\-_\.]', '_', filename)
+
 ### =================== Text Processing =================== ###
 class TextProcessor:
     def __init__(self, chunk_size: int = 1500, overlap: int = 30):
@@ -497,15 +501,15 @@ class WebFileHandler:
     def _process_single_file(self, uploaded_file):
         """Process a single uploaded file."""
         try:
-            ext = os.path.splitext(uploaded_file.name)[1].lower()
-            temp_path = f"temp/{uploaded_file.name}"
+            safe_name = safe_filename(uploaded_file.name)
+            temp_path = f"temp/{safe_name}"
             os.makedirs("temp", exist_ok=True)
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
 
             self.saved_pdf_paths.append(temp_path)
 
-            if ext == ".pdf":
+            if safe_name.endswith(".pdf"):
                 # Process PDF page by page like prepare_documents does
                 documents = []
                 doc = fitz.open(temp_path)
@@ -520,7 +524,7 @@ class WebFileHandler:
                                 documents.append({
                                     'text': chunk.strip(),
                                     'metadata': {
-                                        'source': uploaded_file.name,
+                                        'source': safe_name,
                                         'chunk_id': i,
                                         'total_chunks': len(chunks),
                                         'date': datetime.now().strftime('%Y-%m-%d'),
@@ -529,16 +533,16 @@ class WebFileHandler:
                                 })
                 doc.close()
                 return documents
-            elif ext in [".doc", ".docx"]:
+            elif safe_name.endswith((".doc", ".docx")):
                 text_content = extract_text_from_docx(temp_path)
-            elif ext in [".ppt", ".pptx"]:
+            elif safe_name.endswith((".ppt", ".pptx")):
                 text_content = extract_text_from_pptx(temp_path)
-            elif ext == ".xlsx":
+            elif safe_name.endswith(".xlsx"):
                 text_content = extract_text_from_xlsx(temp_path)
-            elif ext == ".xls":
+            elif safe_name.endswith(".xls"):
                 text_content = extract_text_from_xls(temp_path)
             else:
-                logger.warning(f"Unsupported file type: {uploaded_file.name}")
+                logger.warning(f"Unsupported file type: {safe_name}")
                 return None
 
             # For non-PDF files, use the old approach
@@ -556,7 +560,7 @@ class WebFileHandler:
                         documents.append({
                             'text': chunk.strip(),
                             'metadata': {
-                                'source': uploaded_file.name,
+                                'source': safe_name,
                                 'chunk_id': i,
                                 'total_chunks': len(chunks),
                                 'date': datetime.now().strftime('%Y-%m-%d'),
@@ -568,7 +572,7 @@ class WebFileHandler:
                 return None
 
         except Exception as e:
-            logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
+            logger.error(f"Error processing file {safe_name}: {str(e)}")
             return None
 
     def get_saved_pdf_paths(self):
@@ -1292,3 +1296,5 @@ if __name__ == "__main__":
     )
     rag_system = RAGSystem()
     rag_system.run() 
+
+print("Files in temp directory:", os.listdir("temp")) 
