@@ -164,8 +164,10 @@ if conversation_history:
                     if highlight and highlight in answer:
                         # Use HTML <mark> for highlighting
                         answer = answer.replace(highlight, f'<mark>{highlight}</mark>')
+                        answer = clean_answer_text(answer)
                         st.markdown(answer, unsafe_allow_html=True)
                     else:
+                        answer = clean_answer_text(answer)
                         st.write(answer)
                     
                     # Show source attribution if available
@@ -505,3 +507,13 @@ def get_page_image_fast(source_path, page_num):
     except Exception as e:
         logging.error(f"Error extracting page {page_num} from {source_path}: {str(e)}")
         return None 
+
+def clean_answer_text(answer):
+    # Add a space between a number and a letter if they are stuck together
+    answer = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', answer)
+    answer = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', answer)
+    # Replace multiple spaces with a single space
+    answer = re.sub(r'\s+', ' ', answer)
+    # Optionally, remove stray markdown italics/asterisks
+    answer = answer.replace('*', '')
+    return answer 
