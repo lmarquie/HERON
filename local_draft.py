@@ -501,6 +501,7 @@ class WebFileHandler:
     def _process_single_file(self, uploaded_file):
         """Process a single uploaded file."""
         try:
+            ext = os.path.splitext(uploaded_file.name)[1].lower()
             safe_name = safe_filename(uploaded_file.name)
             temp_path = f"temp/{safe_name}"
             os.makedirs("temp", exist_ok=True)
@@ -509,7 +510,7 @@ class WebFileHandler:
 
             self.saved_pdf_paths.append(temp_path)
 
-            if safe_name.endswith(".pdf"):
+            if ext == ".pdf":
                 # Process PDF page by page like prepare_documents does
                 documents = []
                 doc = fitz.open(temp_path)
@@ -533,16 +534,16 @@ class WebFileHandler:
                                 })
                 doc.close()
                 return documents
-            elif safe_name.endswith((".doc", ".docx")):
+            elif ext in [".doc", ".docx"]:
                 text_content = extract_text_from_docx(temp_path)
-            elif safe_name.endswith((".ppt", ".pptx")):
+            elif ext in [".ppt", ".pptx"]:
                 text_content = extract_text_from_pptx(temp_path)
-            elif safe_name.endswith(".xlsx"):
+            elif ext == ".xlsx":
                 text_content = extract_text_from_xlsx(temp_path)
-            elif safe_name.endswith(".xls"):
+            elif ext == ".xls":
                 text_content = extract_text_from_xls(temp_path)
             else:
-                logger.warning(f"Unsupported file type: {safe_name}")
+                logger.warning(f"Unsupported file type: {uploaded_file.name}")
                 return None
 
             # For non-PDF files, use the old approach
@@ -572,7 +573,7 @@ class WebFileHandler:
                 return None
 
         except Exception as e:
-            logger.error(f"Error processing file {safe_name}: {str(e)}")
+            logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
             return None
 
     def get_saved_pdf_paths(self):
