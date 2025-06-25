@@ -218,7 +218,7 @@ if conversation_history:
                     if question_type == 'source_request':
                         # Automatically show source for source requests
                         # Use fast on-demand extraction
-                        img_path = get_page_image_fast(source, page)
+                        img_path = get_page_image_simple(source, page)
                         
                         if img_path and os.path.exists(img_path):
                             caption = f"Page {page}"
@@ -244,7 +244,7 @@ if conversation_history:
                         show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
                         if show_source:
                             # Use fast on-demand extraction
-                            img_path = get_page_image_fast(source, page)
+                            img_path = get_page_image_simple(source, page)
                             
                             if img_path and os.path.exists(img_path):
                                 caption = f"Page {page}"
