@@ -492,14 +492,30 @@ class AudioProcessor:
             
             print(f"🎵 Transcribing {duration/60:.1f} minute audio file...")
             
-            # Transcribe the entire file at once (no chunking)
-            result = self.whisper_model.transcribe(
-                audio_path,
-                language="en",
-                task="transcribe",
-                verbose=True,
-                fp16=False  # Force FP32 to avoid warnings
-            )
+            # For very long files, use a more conservative approach
+            if duration > 1800:  # Longer than 30 minutes
+                print("🔄 Long file detected, using conservative transcription settings")
+                result = self.whisper_model.transcribe(
+                    audio_path,
+                    language="en",
+                    task="transcribe",
+                    verbose=True,
+                    fp16=False,  # Force FP32
+                    condition_on_previous_text=False,  # Don't condition on previous text
+                    temperature=0.0,  # More deterministic
+                    compression_ratio_threshold=2.4,  # More lenient
+                    logprob_threshold=-1.0,  # More lenient
+                    no_speech_threshold=0.6  # More lenient
+                )
+            else:
+                # Standard transcription for shorter files
+                result = self.whisper_model.transcribe(
+                    audio_path,
+                    language="en",
+                    task="transcribe",
+                    verbose=True,
+                    fp16=False  # Force FP32 to avoid warnings
+                )
             
             logger.info("Whisper transcription completed")
             
@@ -520,6 +536,29 @@ class AudioProcessor:
             logger.error(f"Error transcribing with Whisper: {str(e)}")
             logger.error(f"Full traceback: {error_details}")
             print(f"❌ Transcription error: {str(e)}")
+            
+            # If it's a tensor error, try with even more conservative settings
+            if "tensor" in str(e).lower() and "reshape" in str(e).lower():
+                print("🔄 Trying with ultra-conservative settings...")
+                try:
+                    result = self.whisper_model.transcribe(
+                        audio_path,
+                        language="en",
+                        task="transcribe",
+                        verbose=True,
+                        fp16=False,
+                        condition_on_previous_text=False,
+                        temperature=0.0,
+                        compression_ratio_threshold=1.0,
+                        logprob_threshold=-2.0,
+                        no_speech_threshold=0.8
+                    )
+                    transcription = result.get('text', '').strip()
+                    if transcription:
+                        return transcription
+                except Exception as e2:
+                    logger.error(f"Second attempt also failed: {str(e2)}")
+            
             return f"Error transcribing audio: {str(e)}"
     
     def transcribe_with_speechrecognition(self, audio_path: str) -> str:
