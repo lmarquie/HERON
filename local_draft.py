@@ -27,6 +27,7 @@ import openpyxl
 import pandas as pd
 import re
 import tiktoken
+from duckduckgo_search import DDGS
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -1057,6 +1058,16 @@ class RAGSystem:
             logging.getLogger(__name__).error(f"Error generating follow-up: {str(e)}")
             return f"Error: {str(e)}"
 
+    def process_live_web_question(self, question: str) -> str:
+        """Process question using live web search."""
+        try:
+            answer = generate_live_web_answer(question)
+            self.add_to_conversation_history(question, answer, "live_web_search", "internet")
+            return answer
+        except Exception as e:
+            logger.error(f"Error processing live web question: {str(e)}")
+            return f"Error: {str(e)}"
+
 # --- Add helper functions for text extraction ---
 def extract_text_from_docx(path):
     try:
@@ -1155,6 +1166,66 @@ def batch_documents_by_token_limit(documents, max_tokens=16384):
         print(f"Creating batch with {len(current_batch)} docs, {current_tokens} tokens")
         batches.append(current_batch)
     return batches
+
+def search_web_live(query: str, num_results: int = 5) -> list:
+    """Search the web using DuckDuckGo for live results."""
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=num_results))
+        
+        web_results = []
+        for result in results:
+            web_results.append({
+                "title": result.get("title", ""),
+                "snippet": result.get("body", ""),
+                "link": result.get("link", ""),
+                "source": "DuckDuckGo Live Search"
+            })
+        
+        return web_results
+    except Exception as e:
+        logger.error(f"DuckDuckGo search error: {str(e)}")
+        return []
+
+def generate_live_web_answer(question: str) -> str:
+    """Generate answer using live web search results."""
+    try:
+        # Search the web live
+        web_results = search_web_live(question, num_results=5)
+        
+        if not web_results:
+            return "No live web results found for your question."
+        
+        # Format web results for context
+        web_context = "\n\n".join([
+            f"Source: {result['title']}\n{result['snippet']}\nURL: {result['link']}"
+            for result in web_results
+        ])
+        
+        # Use OpenAI to generate answer from live web results
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant with access to live web information. Answer questions based on the provided web search results. Always cite your sources and provide accurate, up-to-date information from the web."
+                },
+                {
+                    "role": "user",
+                    "content": f"Live Web Search Results:\n{web_context}\n\nQuestion: {question}\n\nPlease answer based on the live web results above. Include source citations."
+                }
+            ],
+            max_tokens=16384,
+            temperature=0.3
+        )
+        
+        return response.choices[0].message.content
+        
+    except Exception as e:
+        logger.error(f"Error generating live web answer: {str(e)}")
+        return f"Error accessing live web: {str(e)}"
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
