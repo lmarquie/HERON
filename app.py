@@ -243,10 +243,10 @@ def submit_chat_message():
     chat_input_key = f"chat_input_{st.session_state.chat_input_key}"
     chat_question = st.session_state.get(chat_input_key, "")
     if chat_question.strip():
-        # Check if documents are loaded first
-        if not st.session_state.get('documents_loaded', False):
-            # Quick message for no documents
-            answer = "Please upload a document first."
+        # Check if documents are loaded OR internet mode is enabled
+        if not st.session_state.get('documents_loaded', False) and not st.session_state.get('internet_mode', False):
+            # Quick message for no documents and no internet mode
+            answer = "Please upload a document first or enable Live Web Search."
             st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
             st.rerun()
         else:
@@ -266,20 +266,24 @@ def submit_chat_message():
                 # Source request logic (your existing code)
                 pass  # Add your existing source request code here
             else:
-                # Check if this is actually a follow-up question (has previous conversation)
-                # Get the current conversation history to check if there are real Q&A pairs
-                current_history = st.session_state.rag_system.get_conversation_history()
-                has_real_conversation = any(
-                    conv.get('question_type') not in ['error'] 
-                    for conv in current_history
-                )
-                
-                if has_real_conversation:
-                    # Use follow-up processing for actual follow-up questions
-                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+                # Check if internet mode is enabled
+                if st.session_state.get('internet_mode', False):
+                    # Use live web search
+                    answer = st.session_state.rag_system.process_live_web_question(chat_question)
                 else:
-                    # Use regular question processing for new questions
-                    answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+                    # Use document search
+                    current_history = st.session_state.rag_system.get_conversation_history()
+                    has_real_conversation = any(
+                        conv.get('question_type') not in ['error'] 
+                        for conv in current_history
+                    )
+                    
+                    if has_real_conversation:
+                        # Use follow-up processing for actual follow-up questions
+                        answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+                    else:
+                        # Use regular question processing for new questions
+                        answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             st.rerun()
     # Only increment after rerun, so the key stays in sync
     st.session_state.chat_input_key += 1
