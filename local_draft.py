@@ -641,8 +641,30 @@ class ClaudeHandler:
             if cache_key in self.response_cache:
                 return self.response_cache[cache_key]
             
-            # Determine response length based on question type
-            max_tokens = self._get_response_length(question, normalize_length)
+            # Set maximum tokens for both input and output
+            max_input_tokens = 128000  # Maximum context window for GPT-4o
+            max_output_tokens = 16384   # Maximum response tokens
+            
+            # Count and limit input tokens
+            import tiktoken
+            enc = tiktoken.get_encoding("cl100k_base")
+            
+            # Count input tokens
+            input_text = f"Context: {context}\n\nQuestion: {question}"
+            input_tokens = len(enc.encode(input_text))
+            
+            # Truncate context if too long
+            if input_tokens > max_input_tokens:
+                # Calculate how much context we can keep
+                question_tokens = len(enc.encode(question))
+                system_tokens = len(enc.encode(self.system_prompt))
+                available_tokens = max_input_tokens - question_tokens - system_tokens - 100  # Buffer
+                
+                if available_tokens > 0:
+                    # Truncate context to fit
+                    context = enc.decode(enc.encode(context)[:available_tokens])
+                else:
+                    return "Error: Question too long for processing."
             
             messages = [
                 {
@@ -656,10 +678,10 @@ class ClaudeHandler:
             ]
 
             payload = {
-                "model": "gpt-4-turbo-preview",
+                "model": "gpt-4o",
                 "messages": messages,
                 "temperature": 0.3,
-                "max_tokens": max_tokens
+                "max_tokens": max_output_tokens  # Maximum output tokens
             }
 
             response = requests.post(
