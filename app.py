@@ -338,7 +338,16 @@ chat_question = st.chat_input(
 )
 
 if chat_question:
-    submit_chat_message()
+    # Process the question directly
+    if not st.session_state.get('documents_loaded', False) and not st.session_state.get('internet_mode', False):
+        answer = "Please upload a document first or enable Live Web Search."
+        st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
+    else:
+        if st.session_state.get('internet_mode', False):
+            answer = st.session_state.rag_system.process_live_web_question(chat_question)
+        else:
+            answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+    st.rerun()
 
 # Sidebar - Clean, organized controls
 with st.sidebar:
