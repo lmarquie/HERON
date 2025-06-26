@@ -592,29 +592,26 @@ class VectorStore:
             return
 
         try:
-            batch_size = 100  # Try 100, lower if you still get errors
-            for i in range(0, len(documents), batch_size):
-                batch = documents[i:i+batch_size]
-                texts = [doc['text'] for doc in batch]
-                embeddings = self.get_openai_embeddings_batch(texts)
-                if embeddings is None or len(embeddings) != len(batch):
-                    logger.error("Failed to get embeddings for all documents in batch")
-                    continue
+            texts = [doc['text'] for doc in documents]
+            embeddings = self.get_openai_embeddings_batch(texts)
+            if embeddings is None or len(embeddings) != len(documents):
+                logger.error("Failed to get embeddings for all documents in batch")
+                return
 
-                self.documents.extend(batch)
-                embeddings = np.array(embeddings)
+            self.documents.extend(documents)
+            embeddings = np.array(embeddings)
 
-                if self.embeddings is None:
-                    self.embeddings = embeddings
-                else:
-                    self.embeddings = np.vstack([self.embeddings, embeddings])
+            if self.embeddings is None:
+                self.embeddings = embeddings
+            else:
+                self.embeddings = np.vstack([self.embeddings, embeddings])
 
-                embedding_dim = self.embeddings.shape[1]
-                if self.index is None:
-                    self.index = faiss.IndexFlatIP(embedding_dim)
-                self.index.add(embeddings.astype('float32'))
+            embedding_dim = self.embeddings.shape[1]
+            if self.index is None:
+                self.index = faiss.IndexFlatIP(embedding_dim)
+            self.index.add(embeddings.astype('float32'))
 
-                logger.info(f"Added {len(batch)} documents to vector store (OpenAI embeddings - batch)")
+            logger.info(f"Added {len(documents)} documents to vector store (OpenAI embeddings - batch)")
 
         except Exception as e:
             logger.error(f"Error adding documents to vector store: {str(e)}")
