@@ -372,65 +372,92 @@ if conversation_history:
 if 'chat_input_key_counter' not in st.session_state:
     st.session_state.chat_input_key_counter = 0
 
+# Add this function to detect image requests
+def is_image_request(question: str) -> bool:
+    """Detect if the question is asking for images."""
+    question_lower = question.lower()
+    image_keywords = [
+        'show me the image', 'show me the chart', 'show me the graph', 'show me the figure',
+        'show me the table', 'show me the diagram', 'show me the picture',
+        'find the image', 'find the chart', 'find the graph', 'find the figure',
+        'find the table', 'find the diagram', 'find the picture',
+        'extract image', 'extract chart', 'extract graph', 'extract figure',
+        'extract table', 'extract diagram', 'extract picture',
+        'image in', 'chart in', 'graph in', 'figure in', 'table in',
+        'what does the image show', 'what does the chart show', 'what does the graph show',
+        'analyze the image', 'analyze the chart', 'analyze the graph',
+        'data in the image', 'data in the chart', 'data in the graph'
+    ]
+    
+    return any(keyword in question_lower for keyword in image_keywords)
+
+# Update the submit_chat_message function
 def submit_chat_message():
     chat_input_key = f"chat_input_{st.session_state.chat_input_key}"
     chat_question = st.session_state.get(chat_input_key, "")
     if chat_question.strip():
-        # Check if documents are loaded OR internet mode is enabled
-        if not st.session_state.get('documents_loaded', False) and not st.session_state.get('internet_mode', False):
-            # Quick message for no documents and no internet mode
-            answer = "Please upload a document first or enable Live Web Search."
-            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
+        # Check if this is an image request
+        if is_image_request(chat_question):
+            # Process image request
+            answer = st.session_state.rag_system.process_image_request(chat_question)
+            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "image_request", "document")
             st.rerun()
         else:
-            # Check if this is a source/graph request
-            question_lower = chat_question.lower()
-            trigger_phrases = [
-                'show me the source', 'show me the graph', 'show me the chart', 'show me the figure',
-                'show me the table', 'show me the image', 'show the source', 'show the graph',
-                'show the chart', 'show the figure', 'show the table', 'show the image',
-                'source for this', 'graph for this', 'chart for this', 'figure for this',
-                'table for this', 'image for this'
-            ]
-            
-            is_source_request = any(phrase in question_lower for phrase in trigger_phrases)
-            
-            if is_source_request:
-                # Source request logic (your existing code)
-                pass  # Add your existing source request code here
+            # Check if documents are loaded OR internet mode is enabled
+            if not st.session_state.get('documents_loaded', False) and not st.session_state.get('internet_mode', False):
+                # Quick message for no documents and no internet mode
+                answer = "Please upload a document first or enable Live Web Search."
+                st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
+                st.rerun()
             else:
-                # Check if both modes are enabled
-                if st.session_state.get('use_both_modes', False) and st.session_state.get('documents_loaded', False):
-                    # Try document search first, then web search if no good results
-                    doc_answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
-                    
-                    # If document answer is generic, try web search
-                    if "No relevant information found" in doc_answer or "No documents loaded" in doc_answer:
-                        web_answer = st.session_state.rag_system.process_live_web_question(chat_question)
-                        answer = f"Document Search: {doc_answer}\n\nWeb Search: {web_answer}"
-                    else:
-                        answer = f"Document Search: {doc_answer}"
-                        
-                elif st.session_state.get('internet_mode', False):
-                    # Use live web search only
-                    answer = st.session_state.rag_system.process_live_web_question(chat_question)
+                # Check if this is a source/graph request
+                question_lower = chat_question.lower()
+                trigger_phrases = [
+                    'show me the source', 'show me the graph', 'show me the chart', 'show me the figure',
+                    'show me the table', 'show the source', 'show the graph',
+                    'show the chart', 'show the figure', 'show the table',
+                    'source for this', 'graph for this', 'chart for this', 'figure for this',
+                    'table for this'
+                ]
+                
+                is_source_request = any(phrase in question_lower for phrase in trigger_phrases)
+                
+                if is_source_request:
+                    # Source request logic (your existing code)
+                    pass  # Add your existing source request code here
                 else:
-                    # Use document search only
-                    current_history = st.session_state.rag_system.get_conversation_history()
-                    has_real_conversation = any(
-                        conv.get('question_type') not in ['error'] 
-                        for conv in current_history
-                    )
-                    
-                    if has_real_conversation:
-                        # Use follow-up processing for actual follow-up questions
-                        answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+                    # Check if both modes are enabled
+                    if st.session_state.get('use_both_modes', False) and st.session_state.get('documents_loaded', False):
+                        # Try document search first, then web search if no good results
+                        doc_answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+                        
+                        # If document answer is generic, try web search
+                        if "No relevant information found" in doc_answer or "No documents loaded" in doc_answer:
+                            web_answer = st.session_state.rag_system.process_live_web_question(chat_question)
+                            answer = f"Document Search: {doc_answer}\n\nWeb Search: {web_answer}"
+                        else:
+                            answer = f"Document Search: {doc_answer}"
+                            
+                    elif st.session_state.get('internet_mode', False):
+                        # Use live web search only
+                        answer = st.session_state.rag_system.process_live_web_question(chat_question)
                     else:
-                        # Use regular question processing for new questions
-                        answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
-            st.rerun()
-    # Only increment after rerun, so the key stays in sync
-    st.session_state.chat_input_key += 1
+                        # Use document search only
+                        current_history = st.session_state.rag_system.get_conversation_history()
+                        has_real_conversation = any(
+                            conv.get('question_type') not in ['error'] 
+                            for conv in current_history
+                        )
+                        
+                        if has_real_conversation:
+                            # Use follow-up processing for actual follow-up questions
+                            answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+                        else:
+                            # Use regular question processing for new questions
+                            answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+                st.rerun()
+        # Only increment after rerun, so the key stays in sync
+        st.session_state.chat_input_key += 1
 
 # Show current mode in the placeholder
 current_mode = "Internet Search" if st.session_state.get('internet_mode', False) else "Document Search"
