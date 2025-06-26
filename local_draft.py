@@ -545,11 +545,30 @@ class AudioProcessor:
                 
                 logger.info(f"Processing chunk {len(transcriptions) + 1}: {chunk_start:.1f}s - {chunk_end:.1f}s")
                 
+                # Check if chunk has audio content (not just silence)
+                chunk_rms = np.sqrt(np.mean(chunk**2))
+                silence_threshold = 0.01  # Adjust this threshold as needed
+                
+                if chunk_rms < silence_threshold:
+                    logger.info(f"Chunk {len(transcriptions) + 1} is silent, skipping")
+                    continue
+                
+                # Ensure chunk has minimum length
+                if len(chunk) < sr * 0.5:  # Less than 0.5 seconds
+                    logger.info(f"Chunk {len(transcriptions) + 1} too short, skipping")
+                    continue
+                
                 # Save chunk to temporary file
                 chunk_path = f"temp_chunk_{len(transcriptions)}.wav"
                 sf.write(chunk_path, chunk, sr)
                 
                 try:
+                    # Verify the saved file has content
+                    if os.path.getsize(chunk_path) < 1000:  # Less than 1KB
+                        logger.info(f"Chunk {len(transcriptions) + 1} file too small, skipping")
+                        os.remove(chunk_path)
+                        continue
+                    
                     # Transcribe chunk
                     result = self.whisper_model.transcribe(
                         chunk_path,
@@ -561,13 +580,16 @@ class AudioProcessor:
                     if chunk_text:
                         transcriptions.append(chunk_text)
                         logger.info(f"Chunk {len(transcriptions)} completed: {len(chunk_text)} characters")
+                    else:
+                        logger.info(f"Chunk {len(transcriptions) + 1} returned no text")
                     
                     # Clean up temporary file
                     os.remove(chunk_path)
                     
                 except Exception as e:
                     logger.error(f"Error transcribing chunk {len(transcriptions) + 1}: {str(e)}")
-                    os.remove(chunk_path)
+                    if os.path.exists(chunk_path):
+                        os.remove(chunk_path)
                     continue
             
             if transcriptions:
