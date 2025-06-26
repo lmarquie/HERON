@@ -369,36 +369,11 @@ class TextProcessor:
         return self.extracted_images
 
     def chunk_text(self, text: str) -> List[str]:
-        """Split text into overlapping chunks."""
+        """Split text into fixed-size chunks (no overlap, no sentence boundary logic)."""
         if not text.strip():
             return []
-        
-        chunks = []
-        start = 0
-        
-        while start < len(text):
-            end = start + self.chunk_size
-            
-            if end >= len(text):
-                chunks.append(text[start:])
-                break
-            
-            # Try to break at a sentence boundary
-            last_period = text.rfind('.', start, end)
-            last_newline = text.rfind('\n', start, end)
-            
-            if last_period > start and last_period > last_newline:
-                end = last_period + 1
-            elif last_newline > start:
-                end = last_newline + 1
-            
-            chunks.append(text[start:end])
-            start = end - self.overlap
-            
-            if start >= len(text):
-                break
-        
-        return chunks
+        chunk_size = self.chunk_size
+        return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
 
     def prepare_documents(self, pdf_paths: List[str]) -> List[Dict]:
         """Prepare documents for vector storage."""
@@ -479,7 +454,7 @@ class WebFileHandler:
             self.saved_pdf_paths.append(temp_path)
 
             if ext == ".pdf":
-                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=False)
+                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
             elif ext in [".doc", ".docx"]:
                 text_content = extract_text_from_docx(temp_path)
             elif ext in [".ppt", ".pptx"]:
@@ -497,20 +472,13 @@ class WebFileHandler:
                 documents = []
                 for i, chunk in enumerate(chunks):
                     if chunk.strip():
-                        # Extract page number from chunk text
-                        page_num = None
-                        page_match = re.search(r'Page (\d+):', chunk)
-                        if page_match:
-                            page_num = int(page_match.group(1))
-                        
                         documents.append({
                             'text': chunk.strip(),
                             'metadata': {
                                 'source': uploaded_file.name,
                                 'chunk_id': i,
                                 'total_chunks': len(chunks),
-                                'date': datetime.now().strftime('%Y-%m-%d'),
-                                'page': page_num
+                                'date': datetime.now().strftime('%Y-%m-%d')
                             }
                         })
                 return documents
@@ -592,13 +560,24 @@ class VectorStore:
             return
 
         try:
-            texts = [doc['text'] for doc in documents]
+            enc = tiktoken.get_encoding("cl100k_base")
+            max_tokens_per_chunk = 8191
+
+            filtered_docs = []
+            for doc in documents:
+                tokens = len(enc.encode(doc['text']))
+                if tokens > max_tokens_per_chunk:
+                    print(f"Skipping chunk with {tokens} tokens (too large for OpenAI embeddings API)")
+                    continue
+                filtered_docs.append(doc)
+
+            texts = [doc['text'] for doc in filtered_docs]
             embeddings = self.get_openai_embeddings_batch(texts)
-            if embeddings is None or len(embeddings) != len(documents):
+            if embeddings is None or len(embeddings) != len(filtered_docs):
                 logger.error("Failed to get embeddings for all documents in batch")
                 return
 
-            self.documents.extend(documents)
+            self.documents.extend(filtered_docs)
             embeddings = np.array(embeddings)
 
             if self.embeddings is None:
@@ -611,7 +590,7 @@ class VectorStore:
                 self.index = faiss.IndexFlatIP(embedding_dim)
             self.index.add(embeddings.astype('float32'))
 
-            logger.info(f"Added {len(documents)} documents to vector store (OpenAI embeddings - batch)")
+            logger.info(f"Added {len(filtered_docs)} documents to vector store (OpenAI embeddings - batch)")
 
         except Exception as e:
             logger.error(f"Error adding documents to vector store: {str(e)}")
