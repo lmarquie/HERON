@@ -378,25 +378,26 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Search Mode")
     
-    internet_mode = st.toggle(
-        "Internet Search",
-        value=st.session_state.get('internet_mode', False),
-        help="Search internet instead of documents"
+    search_mode = st.selectbox(
+        "Choose search mode:",
+        ["Documents", "Live Web Search", "Both"],
+        index=0,
+        help="Live Web Search uses DuckDuckGo for real-time information"
     )
 
-    # Update RAG system mode
-    if 'rag_system' in st.session_state:
-        st.session_state.rag_system.set_internet_mode(internet_mode)
-        st.session_state.internet_mode = internet_mode
-
-    # Show current mode
-    if internet_mode:
-        st.success("Internet Mode")
-    else:
+    if search_mode == "Live Web Search":
+        st.session_state.internet_mode = True
+        st.success("🌐 Live Web Search Enabled")
+    elif search_mode == "Documents":
+        st.session_state.internet_mode = False
         if st.session_state.get('documents_loaded'):
-            st.info(f"Document Mode ({len(st.session_state.get('last_uploaded_files', []))} docs)")
+            st.info(f"📄 Document Mode ({len(st.session_state.get('last_uploaded_files', []))} docs)")
         else:
             st.warning("No documents loaded")
+    elif search_mode == "Both":
+        st.session_state.internet_mode = True
+        st.session_state.use_both_modes = True
+        st.success("🌐 Both Modes Enabled")
 
     # Session Management Section
     st.markdown("---")
