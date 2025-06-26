@@ -28,6 +28,10 @@ import pandas as pd
 import re
 import tiktoken
 from duckduckgo_search import DDGS
+import speech_recognition as sr
+from pydub import AudioSegment
+import whisper
+import tempfile
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -409,12 +413,127 @@ class TextProcessor:
         return documents
 
 ### =================== Document Loading =================== ###
+class AudioProcessor:
+    def __init__(self):
+        self.whisper_model = None
+        self.recognizer = sr.Recognizer()
+        
+    def load_whisper_model(self):
+        """Load Whisper model for transcription."""
+        try:
+            if self.whisper_model is None:
+                logger.info("Loading Whisper model...")
+                self.whisper_model = whisper.load_model("base")  # Options: tiny, base, small, medium, large
+                logger.info("Whisper model loaded successfully")
+        except Exception as e:
+            logger.error(f"Error loading Whisper model: {str(e)}")
+    
+    def convert_audio_format(self, audio_path: str, target_format: str = "wav") -> str:
+        """Convert audio file to target format."""
+        try:
+            # Load audio file
+            audio = AudioSegment.from_file(audio_path)
+            
+            # Create temp file for converted audio
+            temp_dir = "temp"
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            filename = os.path.basename(audio_path)
+            name_without_ext = os.path.splitext(filename)[0]
+            converted_path = os.path.join(temp_dir, f"{name_without_ext}.{target_format}")
+            
+            # Export to target format
+            audio.export(converted_path, format=target_format)
+            
+            logger.info(f"Converted {audio_path} to {converted_path}")
+            return converted_path
+            
+        except Exception as e:
+            logger.error(f"Error converting audio format: {str(e)}")
+            return audio_path
+    
+    def transcribe_with_whisper(self, audio_path: str) -> str:
+        """Transcribe audio using OpenAI Whisper."""
+        try:
+            self.load_whisper_model()
+            
+            logger.info(f"Transcribing audio with Whisper: {audio_path}")
+            
+            # Transcribe audio
+            result = self.whisper_model.transcribe(audio_path)
+            transcription = result["text"]
+            
+            logger.info(f"Whisper transcription completed: {len(transcription)} characters")
+            return transcription
+            
+        except Exception as e:
+            logger.error(f"Error transcribing with Whisper: {str(e)}")
+            return f"Error transcribing audio: {str(e)}"
+    
+    def transcribe_with_speechrecognition(self, audio_path: str) -> str:
+        """Transcribe audio using SpeechRecognition (Google Speech API)."""
+        try:
+            logger.info(f"Transcribing audio with SpeechRecognition: {audio_path}")
+            
+            with sr.AudioFile(audio_path) as source:
+                audio = self.recognizer.record(source)
+                transcription = self.recognizer.recognize_google(audio)
+            
+            logger.info(f"SpeechRecognition transcription completed: {len(transcription)} characters")
+            return transcription
+            
+        except Exception as e:
+            logger.error(f"Error transcribing with SpeechRecognition: {str(e)}")
+            return f"Error transcribing audio: {str(e)}"
+    
+    def transcribe_audio(self, audio_path: str, method: str = "whisper") -> str:
+        """Transcribe audio file using specified method."""
+        try:
+            # Convert to WAV if needed
+            if not audio_path.lower().endswith('.wav'):
+                audio_path = self.convert_audio_format(audio_path, "wav")
+            
+            # Choose transcription method
+            if method.lower() == "whisper":
+                return self.transcribe_with_whisper(audio_path)
+            elif method.lower() == "google":
+                return self.transcribe_with_speechrecognition(audio_path)
+            else:
+                return "Invalid transcription method. Use 'whisper' or 'google'"
+                
+        except Exception as e:
+            logger.error(f"Error transcribing audio: {str(e)}")
+            return f"Error transcribing audio: {str(e)}"
+    
+    def create_transcript_file(self, transcription: str, original_filename: str) -> str:
+        """Create a text file from transcription."""
+        try:
+            # Create temp directory
+            temp_dir = "temp"
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # Create filename
+            base_name = os.path.splitext(original_filename)[0]
+            transcript_path = os.path.join(temp_dir, f"{base_name}_transcript.txt")
+            
+            # Write transcription to file
+            with open(transcript_path, 'w', encoding='utf-8') as f:
+                f.write(transcription)
+            
+            logger.info(f"Transcript saved to: {transcript_path}")
+            return transcript_path
+            
+        except Exception as e:
+            logger.error(f"Error creating transcript file: {str(e)}")
+            return None
+
 class WebFileHandler:
     def __init__(self):
         self.text_processor = TextProcessor()
-        self.saved_pdf_paths = []  # Track saved PDF paths for later image processing
-        self.processing_status = {}  # Track processing status per file
-        self.executor = ThreadPoolExecutor(max_workers=3)  # Limit concurrent processing
+        self.audio_processor = AudioProcessor()
+        self.saved_pdf_paths = []
+        self.processing_status = {}
+        self.executor = ThreadPoolExecutor(max_workers=3)
 
     def process_uploaded_files(self, uploaded_files):
         """Process files uploaded through Streamlit with improved error handling."""
@@ -450,21 +569,46 @@ class WebFileHandler:
             ext = os.path.splitext(uploaded_file.name)[1].lower()
             temp_path = f"temp/{uploaded_file.name}"
             os.makedirs("temp", exist_ok=True)
+            
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
-
-            self.saved_pdf_paths.append(temp_path)
-
-            if ext == ".pdf":
-                text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
-            elif ext == ".docx":
-                text_content = extract_text_from_docx(temp_path)
-            elif ext in [".pptx"]:
-                text_content = extract_text_from_pptx(temp_path)
+            
+            # Handle different file types
+            if ext in ['.pdf', '.docx', '.pptx']:
+                # Existing document processing
+                if ext == ".pdf":
+                    text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
+                elif ext == ".docx":
+                    text_content = extract_text_from_docx(temp_path)
+                elif ext in [".pptx"]:
+                    text_content = extract_text_from_pptx(temp_path)
+                
+                self.saved_pdf_paths.append(temp_path)
+                
+            elif ext in ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac']:
+                # Audio file processing
+                logger.info(f"Processing audio file: {uploaded_file.name}")
+                
+                # Transcribe audio
+                transcription = self.audio_processor.transcribe_audio(temp_path, method="whisper")
+                
+                # Create transcript file
+                transcript_path = self.audio_processor.create_transcript_file(transcription, uploaded_file.name)
+                
+                if transcript_path:
+                    # Read the transcript as text content
+                    with open(transcript_path, 'r', encoding='utf-8') as f:
+                        text_content = f.read()
+                    
+                    # Add transcript path to saved paths
+                    self.saved_pdf_paths.append(transcript_path)
+                else:
+                    text_content = transcription
+                    
             else:
                 logger.warning(f"Unsupported file type: {uploaded_file.name}")
                 return None
-
+            
             if text_content and text_content.strip():
                 chunks = self.text_processor.chunk_text(text_content)
                 documents = []
@@ -476,7 +620,8 @@ class WebFileHandler:
                                 'source': uploaded_file.name,
                                 'chunk_id': i,
                                 'total_chunks': len(chunks),
-                                'date': datetime.now().strftime('%Y-%m-%d')
+                                'date': datetime.now().strftime('%Y-%m-%d'),
+                                'file_type': 'audio' if ext in ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac'] else 'document'
                             }
                         })
                 logger.info(f"Successfully processed {uploaded_file.name}: {len(documents)} chunks")
@@ -484,7 +629,7 @@ class WebFileHandler:
             else:
                 logger.warning(f"No text content extracted from {uploaded_file.name}")
                 return None
-
+                
         except Exception as e:
             logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
             return None
