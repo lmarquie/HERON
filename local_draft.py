@@ -470,7 +470,7 @@ class AudioProcessor:
             return audio_path
     
     def transcribe_with_whisper(self, audio_path: str) -> str:
-        """Transcribe audio using Whisper with better error handling for long files."""
+        """Transcribe audio using Whisper with better error handling."""
         try:
             if self.whisper_model is None:
                 self.load_whisper_model()
@@ -487,21 +487,20 @@ class AudioProcessor:
             
             logger.info(f"Audio file size: {file_size} bytes")
             
-            # For long audio files, use chunked transcription
+            # Get audio duration
+            import librosa
             duration = librosa.get_duration(path=audio_path)
             logger.info(f"Audio duration: {duration:.2f} seconds ({duration/60:.2f} minutes)")
             
-            if duration > 300:  # Longer than 5 minutes
-                logger.info("Long audio file detected, using chunked transcription")
-                return self._transcribe_long_audio(audio_path, duration)
+            print(f"🎵 Transcribing {duration/60:.1f} minute audio file...")
             
-            # Transcribe with detailed error handling
-            logger.info("Starting Whisper transcription...")
+            # Let Whisper handle long files natively
             result = self.whisper_model.transcribe(
                 audio_path,
                 language="en",
                 task="transcribe",
-                verbose=True
+                verbose=True,
+                fp16=False  # Force FP32 to avoid warnings
             )
             
             logger.info("Whisper transcription completed")
@@ -513,6 +512,7 @@ class AudioProcessor:
                 return "No speech detected in audio file."
             
             logger.info(f"Transcription completed: {len(transcription)} characters")
+            print(f"🎉 Transcription completed! Total: {len(transcription)} characters")
             return transcription
             
         except Exception as e:
@@ -522,85 +522,6 @@ class AudioProcessor:
             logger.error(f"Error transcribing with Whisper: {str(e)}")
             logger.error(f"Full traceback: {error_details}")
             return f"Error transcribing audio: {str(e)}"
-    
-    def _transcribe_long_audio(self, audio_path: str, duration: float) -> str:
-        """Transcribe long audio files in 300-second chunks."""
-        try:
-            import librosa
-            import numpy as np
-            
-            # Load audio
-            audio, sr = librosa.load(audio_path, sr=16000)
-            
-            # Split into 300-second chunks (5 minutes)
-            chunk_duration = 300  # 5 minutes in seconds
-            chunk_samples = int(chunk_duration * sr)
-            
-            transcriptions = []
-            total_chunks = (len(audio) + chunk_samples - 1) // chunk_samples
-            
-            print(f"🎵 Transcribing {duration/60:.1f} minute audio in {total_chunks} chunks...")
-            
-            for i in range(0, len(audio), chunk_samples):
-                chunk = audio[i:i + chunk_samples]
-                chunk_start = i / sr
-                chunk_end = min((i + chunk_samples) / sr, duration)
-                chunk_num = len(transcriptions) + 1
-                
-                print(f"🔍 Processing chunk {chunk_num}/{total_chunks}: {chunk_start/60:.1f}m - {chunk_end/60:.1f}m")
-                
-                # Check if chunk has audio content (not just silence)
-                chunk_rms = np.sqrt(np.mean(chunk**2))
-                silence_threshold = 0.005  # Lower threshold
-                
-                if chunk_rms < silence_threshold:
-                    print(f🔇 Chunk {chunk_num} is silent, skipping")
-                    continue
-                
-                # Save chunk to temporary file
-                chunk_path = f"temp_chunk_{len(transcriptions)}.wav"
-                sf.write(chunk_path, chunk, sr)
-                
-                try:
-                    print(f"🔍 Transcribing chunk {chunk_num}...")
-                    
-                    # Transcribe chunk with verbose output
-                    result = self.whisper_model.transcribe(
-                        chunk_path,
-                        language="en",
-                        task="transcribe",
-                        fp16=False,  # Force FP32
-                        verbose=True  # Show progress
-                    )
-                    
-                    chunk_text = result.get('text', '').strip()
-                    if chunk_text:
-                        transcriptions.append(chunk_text)
-                        print(f"✅ Chunk {chunk_num} completed: {len(chunk_text)} characters")
-                        print(f"   Preview: {chunk_text[:100]}...")
-                    else:
-                        print(f"⚠️ Chunk {chunk_num} returned no text")
-                    
-                    # Clean up temporary file
-                    os.remove(chunk_path)
-                    
-                except Exception as e:
-                    print(f"❌ Error transcribing chunk {chunk_num}: {str(e)}")
-                    if os.path.exists(chunk_path):
-                        os.remove(chunk_path)
-                    continue
-            
-            if transcriptions:
-                full_transcription = " ".join(transcriptions)
-                print(f"🎉 Transcription completed! Total: {len(full_transcription)} characters")
-                return full_transcription
-            else:
-                print("❌ No speech detected in audio file")
-                return "No speech detected in audio file."
-            
-        except Exception as e:
-            print(f"❌ Error in long audio transcription: {str(e)}")
-            return f"Error transcribing long audio: {str(e)}"
     
     def transcribe_with_speechrecognition(self, audio_path: str) -> str:
         """Transcribe audio using SpeechRecognition (Google Speech API)."""
