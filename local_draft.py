@@ -37,7 +37,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 1000, overlap: int = 30):
+    def __init__(self, chunk_size: int = 2000, overlap: int = 100):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.extracted_images = {}  # Store images for display
@@ -503,109 +503,86 @@ class VectorStore:
         self.documents = []
         self.embeddings = None
         self.index = None
-        self.chunk_size = 500
+        self.chunk_size = 1500  # Can be larger with Hugging Face
         self.chunk_overlap = 50
         self.model = None
         self.initialized = False
         
-        # Initialize embedding model with retry logic
+        # Initialize embedding model
         self._initialize_model()
 
     def _initialize_model(self):
-        """Initialize the embedding model with retry logic."""
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                # Test the OpenAI API connection
-                client = openai.OpenAI(api_key=OPENAI_API_KEY)
-                # Test with a simple embedding
-                response = client.embeddings.create(input="test", model="text-embedding-ada-002")
-                self.initialized = True
-                logger.info("OpenAI embedding model initialized successfully")
-                break
-            except Exception as e:
-                logger.warning(f"Attempt {attempt + 1} failed to initialize OpenAI model: {str(e)}")
-                if attempt == max_retries - 1:
-                    logger.error("Failed to initialize OpenAI embedding model after all retries")
-                    self.initialized = False
-                else:
-                    time.sleep(1)  # Wait before retry
-
-    def get_openai_embedding_single(self, text, model="text-embedding-ada-002"):
-        """Get a single embedding from OpenAI API."""
+        """Initialize the Hugging Face embedding model."""
         try:
-            client = openai.OpenAI(api_key=OPENAI_API_KEY)
-            response = client.embeddings.create(input=text, model=model)
-            return response.data[0].embedding
+            from sentence_transformers import SentenceTransformer
+            # Use a good general-purpose model
+            self.model = SentenceTransformer('all-MiniLM-L6-v2')
+            self.initialized = True
+            logger.info("Hugging Face embedding model initialized successfully")
         except Exception as e:
-            logger.error(f"Error getting OpenAI embedding: {str(e)}")
-            return None
+            logger.error(f"Failed to initialize Hugging Face model: {str(e)}")
+            self.initialized = False
 
-    def get_openai_embeddings_batch(self, texts, model="text-embedding-ada-002"):
-        """Get embeddings from OpenAI API in batches."""
+    def get_embeddings_batch(self, texts):
+        """Get embeddings from Hugging Face model in batches."""
         try:
-            client = openai.OpenAI(api_key=OPENAI_API_KEY)
-            response = client.embeddings.create(input=texts, model=model)
-            return [data.embedding for data in response.data]
+            if not self.initialized or self.model is None:
+                logger.error("Model not initialized")
+                return None
+            
+            # Get embeddings for all texts at once
+            embeddings = self.model.encode(texts, convert_to_tensor=False)
+            return embeddings.tolist() if hasattr(embeddings, 'tolist') else embeddings
+            
         except Exception as e:
-            logger.error(f"Error getting OpenAI embeddings batch: {str(e)}")
+            logger.error(f"Error getting Hugging Face embeddings: {str(e)}")
             return None
 
     def add_documents(self, documents: List[Dict]):
+        """Add documents to the vector store using Hugging Face embeddings."""
         if not documents:
             return
-
+        
         if not self.initialized:
             logger.error("Model not initialized, cannot add documents")
             return
-
+        
         try:
-            enc = tiktoken.get_encoding("cl100k_base")
-            max_tokens_per_chunk = 8191
-
-            filtered_docs = []
-            for doc in documents:
-                tokens = len(enc.encode(doc['text']))
-                if tokens > max_tokens_per_chunk:
-                    print(f"Skipping chunk with {tokens} tokens (too large for OpenAI embeddings API)")
-                    continue
-                filtered_docs.append(doc)
-
-            texts = [doc['text'] for doc in filtered_docs]
-            embeddings = self.get_openai_embeddings_batch(texts)
-            if embeddings is None or len(embeddings) != len(filtered_docs):
-                logger.error("Failed to get embeddings for all documents in batch")
+            texts = [doc['text'] for doc in documents]
+            
+            # Get embeddings for all documents
+            embeddings = self.get_embeddings_batch(texts)
+            
+            if embeddings is None or len(embeddings) != len(documents):
+                logger.error("Failed to get embeddings for all documents")
                 return
-
-            self.documents.extend(filtered_docs)
+            
+            self.documents.extend(documents)
             embeddings = np.array(embeddings)
-
+            
             if self.embeddings is None:
                 self.embeddings = embeddings
             else:
                 self.embeddings = np.vstack([self.embeddings, embeddings])
-
+            
             embedding_dim = self.embeddings.shape[1]
-            if self.index is None:
-                self.index = faiss.IndexFlatIP(embedding_dim)
-            self.index.add(embeddings.astype('float32'))
-
-            logger.info(f"Added {len(filtered_docs)} documents to vector store (OpenAI embeddings - batch)")
-
+            self.index = faiss.IndexFlatIP(embedding_dim)
+            self.index.add(self.embeddings.astype('float32'))
+            
+            logger.info(f"Added {len(documents)} documents to vector store (Hugging Face embeddings)")
+            
         except Exception as e:
             logger.error(f"Error adding documents to vector store: {str(e)}")
 
     def search(self, query: str, k: int = 3) -> List[Dict]:
-        """Search for similar documents using OpenAI embeddings."""
+        """Search for similar documents using Hugging Face embeddings."""
         if not self.documents or self.index is None or not self.initialized:
             return []
         
         try:
-            query_embedding = self.get_openai_embedding_single(query)
-            if query_embedding is None:
-                return []
-            
-            query_embedding = np.array([query_embedding])
+            # Get query embedding
+            query_embedding = self.model.encode([query], convert_to_tensor=False)
+            query_embedding = query_embedding.reshape(1, -1)
             
             # Safety check: ensure we have valid embeddings
             if self.embeddings is None or len(self.embeddings) == 0:
