@@ -25,3 +25,7 @@ openai-whisper>=20231117
 
 # Add FFmpeg Python wrapper
 ffmpeg-python>=0.2.0
+
+# Add these new dependencies
+librosa>=0.10.0
+soundfile>=0.12.0
