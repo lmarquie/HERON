@@ -1143,29 +1143,23 @@ class RAGSystem:
         }
 
     def process_web_uploads(self, uploaded_files):
-        """Process files uploaded through the web interface with improved error handling."""
-        if not self.is_web:
-            return False
-            
+        """Process uploaded files for web interface."""
         try:
-            start_time = time.time()
-            documents = self.file_handler.process_uploaded_files(uploaded_files)
+            if not uploaded_files:
+                return False
+            
+            # Process files using the file handler
+            documents = self.file_handler.process_web_uploads(uploaded_files)  # Fix: use correct method name
             
             if documents:
+                # Add documents to vector store
                 self.vector_store.add_documents(documents)
-                
-                # Update performance metrics
-                processing_time = time.time() - start_time
-                self.performance_metrics['total_queries'] += 1
-                
                 return True
             else:
-                logger.warning("No documents were successfully processed")
                 return False
                 
         except Exception as e:
             logger.error(f"Error processing web uploads: {str(e)}")
-            self.performance_metrics['error_count'] += 1
             return False
 
     def get_image_path(self, page_num, image_num=None):
