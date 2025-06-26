@@ -391,15 +391,32 @@ def is_image_request(question: str) -> bool:
     
     return any(keyword in question_lower for keyword in image_keywords)
 
-# Update the submit_chat_message function
+# Update the submit_chat_message function with better visual feedback
 def submit_chat_message():
     chat_input_key = f"chat_input_{st.session_state.chat_input_key}"
     chat_question = st.session_state.get(chat_input_key, "")
     if chat_question.strip():
-        # Check if this is an image request
+        # Check if this is an image request FIRST
         if is_image_request(chat_question):
-            # Process image request
-            answer = st.session_state.rag_system.process_image_request(chat_question)
+            # Process image request with visual feedback
+            progress_placeholder = st.empty()
+            progress_placeholder.info("🔍 Searching for images in document...")
+            
+            try:
+                answer = st.session_state.rag_system.process_image_request(chat_question)
+                progress_placeholder.empty()
+                
+                if "No images found" in answer:
+                    st.warning("No images found in the document")
+                elif "Error" in answer:
+                    st.error("Error processing images")
+                else:
+                    st.success("Image analysis completed!")
+                
+            except Exception as e:
+                progress_placeholder.error(f"Error: {str(e)}")
+                answer = f"Error processing image request: {str(e)}"
+            
             st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "image_request", "document")
             st.rerun()
         else:
@@ -639,6 +656,44 @@ with st.sidebar:
                 
         except Exception as e:
             st.error(f"Metrics error: {e}")
+
+    # Add this test function to your sidebar
+    def test_image_extraction():
+        """Test if image extraction actually works."""
+        try:
+            uploaded_files = st.session_state.get('last_uploaded_files', [])
+            if not uploaded_files:
+                return "❌ No documents uploaded"
+            
+            pdf_path = os.path.join("temp", uploaded_files[0])
+            if not os.path.exists(pdf_path):
+                return "❌ Document not found in temp directory"
+            
+            # Actually extract images
+            processor = OnDemandImageProcessor()
+            images = processor.extract_images_from_pdf(pdf_path)
+            
+            if images:
+                # Show the actual images found
+                st.write(f"✅ Found {len(images)} images:")
+                for i, img_info in enumerate(images, 1):
+                    st.write(f"  - Image {i}: Page {img_info['page']} ({img_info['path']})")
+                
+                # Show first image as preview
+                if os.path.exists(images[0]['path']):
+                    st.image(images[0]['path'], caption=f"Preview: {images[0]['description']}", width=300)
+                
+                return f"✅ Successfully extracted {len(images)} images"
+            else:
+                return "⚠️ No images found in document (PDF may only contain text)"
+            
+        except Exception as e:
+            return f"❌ Error: {str(e)}"
+
+    # Add this to your sidebar
+    if st.button("🔍 Test Image Extraction", use_container_width=True):
+        result = test_image_extraction()
+        st.info(result)
 
 # Minimal error display in main area
 if st.session_state.error_count > 0:
