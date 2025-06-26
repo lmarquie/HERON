@@ -491,7 +491,7 @@ class AudioProcessor:
             duration = librosa.get_duration(path=audio_path)
             logger.info(f"Audio duration: {duration:.2f} seconds ({duration/60:.2f} minutes)")
             
-            if duration > 600:  # Longer than 10 minutes
+            if duration > 300:  # Longer than 5 minutes
                 logger.info("Long audio file detected, using chunked transcription")
                 return self._transcribe_long_audio(audio_path, duration)
             
@@ -524,13 +524,16 @@ class AudioProcessor:
             return f"Error transcribing audio: {str(e)}"
     
     def _transcribe_long_audio(self, audio_path: str, duration: float) -> str:
-        """Transcribe long audio files in chunks."""
+        """Transcribe long audio files in 300-second chunks."""
         try:
+            import librosa
+            import numpy as np
+            
             # Load audio
             audio, sr = librosa.load(audio_path, sr=16000)
             
-            # Split into 10-minute chunks
-            chunk_duration = 600  # 10 minutes in seconds
+            # Split into 300-second chunks (5 minutes)
+            chunk_duration = 300  # 5 minutes in seconds
             chunk_samples = int(chunk_duration * sr)
             
             transcriptions = []
