@@ -634,9 +634,28 @@ class WebFileHandler:
         self.processing_status = {}
         self.text_processor = TextProcessor()
         self.audio_processor = AudioProcessor()
-        self.processed_audio_files = set()  # Track processed audio files
-        self.is_processing = False  # Add processing flag
+        self.processed_audio_files = set()
+        self.is_processing = False
 
+    def process_web_uploads(self, uploaded_files):
+        """Process multiple uploaded files."""
+        try:
+            if not uploaded_files:
+                return []
+            
+            all_documents = []
+            
+            for uploaded_file in uploaded_files:
+                documents = self._process_single_file(uploaded_file)
+                if documents:
+                    all_documents.extend(documents)
+            
+            return all_documents
+            
+        except Exception as e:
+            logger.error(f"Error processing web uploads: {str(e)}")
+            return []
+    
     def _process_single_file(self, uploaded_file):
         # Prevent double processing
         if self.is_processing:
@@ -1143,24 +1162,28 @@ class RAGSystem:
         }
 
     def process_web_uploads(self, uploaded_files):
-        """Process uploaded files for web interface."""
+        """Process multiple uploaded files."""
         try:
             if not uploaded_files:
-                return False
+                return []
             
-            # Process files using the file handler
-            documents = self.file_handler.process_web_uploads(uploaded_files)  # Fix: use correct method name
+            all_documents = []
             
-            if documents:
+            for uploaded_file in uploaded_files:
+                documents = self.file_handler.process_web_uploads([uploaded_file])
+                if documents:
+                    all_documents.extend(documents)
+            
+            if all_documents:
                 # Add documents to vector store
-                self.vector_store.add_documents(documents)
-                return True
+                self.vector_store.add_documents(all_documents)
+                return all_documents
             else:
-                return False
+                return []
                 
         except Exception as e:
             logger.error(f"Error processing web uploads: {str(e)}")
-            return False
+            return []
 
     def get_image_path(self, page_num, image_num=None):
         """Get image path for display - delegates to TextProcessor."""
