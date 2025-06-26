@@ -1165,25 +1165,25 @@ class RAGSystem:
         """Process multiple uploaded files."""
         try:
             if not uploaded_files:
-                return []
+                return False
             
             all_documents = []
             
             for uploaded_file in uploaded_files:
-                documents = self.file_handler.process_web_uploads([uploaded_file])
+                documents = self.file_handler._process_single_file(uploaded_file)
                 if documents:
                     all_documents.extend(documents)
             
             if all_documents:
                 # Add documents to vector store
                 self.vector_store.add_documents(all_documents)
-                return all_documents
+                return True
             else:
-                return []
+                return False
                 
         except Exception as e:
             logger.error(f"Error processing web uploads: {str(e)}")
-            return []
+            return False
 
     def get_image_path(self, page_num, image_num=None):
         """Get image path for display - delegates to TextProcessor."""
