@@ -993,10 +993,11 @@ class RAGSystem:
 
     def process_question_with_mode(self, question: str, normalize_length: bool = True) -> str:
         """Process question using either document mode or internet mode."""
+        # Always use the working function for internet mode
         if self.internet_mode:
             # Use internet mode
             logger.info("Processing question using internet mode")
-            answer = self.generate_internet_answer(question)
+            answer = generate_live_web_answer(question)  # ← USE THE WORKING FUNCTION
             self.add_to_conversation_history(question, answer, "internet")
             return answer
         else:
@@ -1016,7 +1017,7 @@ class RAGSystem:
         if self.internet_mode:
             # Use internet mode for follow-up
             logger.info("Processing follow-up using internet mode")
-            answer = self.generate_internet_answer(follow_up_question)
+            answer = generate_live_web_answer(follow_up_question)  # ← USE THE WORKING FUNCTION
             self.add_to_conversation_history(follow_up_question, answer, "internet_followup")
             return answer
         else:
