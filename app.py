@@ -157,15 +157,9 @@ if conversation_history:
                 if isinstance(conv['answer'], list):
                     st.info("Image processing has been disabled. Use 'Show Source' button to see highlighted chunks instead.")
                 else:
-                    # Highlight relevant text if available
+                    # Display answer as plain text
                     answer = conv['answer']
-                    highlight = conv.get('highlight')
-                    if highlight and highlight in answer:
-                        # Use HTML <mark> for highlighting
-                        answer = answer.replace(highlight, f'<mark>{highlight}</mark>')
-                        st.markdown(answer, unsafe_allow_html=True)
-                    else:
-                        st.write(answer)
+                    st.text(answer)
                     
                     # Show source attribution if available
                     doc_name = conv.get('source_document')
