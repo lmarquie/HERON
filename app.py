@@ -403,4 +403,59 @@ with st.sidebar:
 
 # Minimal error display in main area
 if st.session_state.error_count > 0:
-    st.error(f"{st.session_state.error_count} error(s) - check sidebar for details.") 
+    st.error(f"{st.session_state.error_count} error(s) - check sidebar for details.")
+
+def submit_chat_message():
+    chat_input_key = f"chat_input_{st.session_state.chat_input_key}"
+    chat_question = st.session_state.get(chat_input_key, "")
+    if chat_question.strip():
+        # Check if documents are loaded first
+        if not st.session_state.get('documents_loaded', False):
+            # Quick message for no documents
+            answer = "Please upload a document first."
+            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
+            st.rerun()
+        else:
+            # Check if this is a source/graph request
+            question_lower = chat_question.lower()
+            trigger_phrases = [
+                'show me the source', 'show me the graph', 'show me the chart', 'show me the figure',
+                'show me the table', 'show me the image', 'show the source', 'show the graph',
+                'show the chart', 'show the figure', 'show the table', 'show the image',
+                'source for this', 'graph for this', 'chart for this', 'figure for this',
+                'table for this', 'image for this'
+            ]
+            
+            is_source_request = any(phrase in question_lower for phrase in trigger_phrases)
+            
+            if is_source_request:
+                # Source request logic (your existing code)
+                # ... your existing source request code ...
+            else:
+                # Check if this is actually a follow-up question (has previous conversation)
+                # Get the current conversation history to check if there are real Q&A pairs
+                current_history = st.session_state.rag_system.get_conversation_history()
+                has_real_conversation = any(
+                    conv.get('question_type') not in ['error'] 
+                    for conv in current_history
+                )
+                
+                if has_real_conversation:
+                    # Use follow-up processing for actual follow-up questions
+                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+                else:
+                    # Use regular question processing for new questions
+                    answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+            st.rerun()
+    # Only increment after rerun, so the key stays in sync
+    st.session_state.chat_input_key += 1
+
+# Modern chat input - always visible
+chat_input_key = f"chat_input_{st.session_state.chat_input_key}"
+chat_question = st.chat_input(
+    placeholder_text,
+    key=chat_input_key
+)
+
+if chat_question:
+    submit_chat_message() 
