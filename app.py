@@ -266,12 +266,23 @@ def submit_chat_message():
                 # Source request logic (your existing code)
                 pass  # Add your existing source request code here
             else:
-                # Check if internet mode is enabled
-                if st.session_state.get('internet_mode', False):
-                    # Use live web search
+                # Check if both modes are enabled
+                if st.session_state.get('use_both_modes', False) and st.session_state.get('documents_loaded', False):
+                    # Try document search first, then web search if no good results
+                    doc_answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+                    
+                    # If document answer is generic, try web search
+                    if "No relevant information found" in doc_answer or "No documents loaded" in doc_answer:
+                        web_answer = st.session_state.rag_system.process_live_web_question(chat_question)
+                        answer = f"Document Search: {doc_answer}\n\nWeb Search: {web_answer}"
+                    else:
+                        answer = f"Document Search: {doc_answer}"
+                        
+                elif st.session_state.get('internet_mode', False):
+                    # Use live web search only
                     answer = st.session_state.rag_system.process_live_web_question(chat_question)
                 else:
-                    # Use document search
+                    # Use document search only
                     current_history = st.session_state.rag_system.get_conversation_history()
                     has_real_conversation = any(
                         conv.get('question_type') not in ['error'] 
