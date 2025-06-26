@@ -348,6 +348,16 @@ with st.sidebar:
         help="Live Web Search uses DuckDuckGo for real-time information"
     )
 
+    # Track previous search mode and force rerun on change
+    if 'previous_search_mode' not in st.session_state:
+        st.session_state.previous_search_mode = search_mode
+
+    # If search mode changed, force rerun to update session state
+    if st.session_state.previous_search_mode != search_mode:
+        st.session_state.previous_search_mode = search_mode
+        st.rerun()
+
+    # Now set the internet mode based on current selection
     if search_mode == "Live Web Search":
         st.session_state.internet_mode = True
         st.success("🌐 Live Web Search Enabled")
