@@ -537,25 +537,24 @@ class AudioProcessor:
             chunk_samples = int(chunk_duration * sr)
             
             transcriptions = []
+            total_chunks = (len(audio) + chunk_samples - 1) // chunk_samples
+            
+            print(f"🎵 Transcribing {duration/60:.1f} minute audio in {total_chunks} chunks...")
             
             for i in range(0, len(audio), chunk_samples):
                 chunk = audio[i:i + chunk_samples]
                 chunk_start = i / sr
                 chunk_end = min((i + chunk_samples) / sr, duration)
+                chunk_num = len(transcriptions) + 1
                 
-                logger.info(f"Processing chunk {len(transcriptions) + 1}: {chunk_start:.1f}s - {chunk_end:.1f}s")
+                print(f"🔍 Processing chunk {chunk_num}/{total_chunks}: {chunk_start/60:.1f}m - {chunk_end/60:.1f}m")
                 
                 # Check if chunk has audio content (not just silence)
                 chunk_rms = np.sqrt(np.mean(chunk**2))
-                silence_threshold = 0.01  # Adjust this threshold as needed
+                silence_threshold = 0.005  # Lower threshold
                 
                 if chunk_rms < silence_threshold:
-                    logger.info(f"Chunk {len(transcriptions) + 1} is silent, skipping")
-                    continue
-                
-                # Ensure chunk has minimum length
-                if len(chunk) < sr * 0.5:  # Less than 0.5 seconds
-                    logger.info(f"Chunk {len(transcriptions) + 1} too short, skipping")
+                    print(f🔇 Chunk {chunk_num} is silent, skipping")
                     continue
                 
                 # Save chunk to temporary file
@@ -563,44 +562,44 @@ class AudioProcessor:
                 sf.write(chunk_path, chunk, sr)
                 
                 try:
-                    # Verify the saved file has content
-                    if os.path.getsize(chunk_path) < 1000:  # Less than 1KB
-                        logger.info(f"Chunk {len(transcriptions) + 1} file too small, skipping")
-                        os.remove(chunk_path)
-                        continue
+                    print(f"🔍 Transcribing chunk {chunk_num}...")
                     
-                    # Transcribe chunk
+                    # Transcribe chunk with verbose output
                     result = self.whisper_model.transcribe(
                         chunk_path,
                         language="en",
-                        task="transcribe"
+                        task="transcribe",
+                        fp16=False,  # Force FP32
+                        verbose=True  # Show progress
                     )
                     
                     chunk_text = result.get('text', '').strip()
                     if chunk_text:
                         transcriptions.append(chunk_text)
-                        logger.info(f"Chunk {len(transcriptions)} completed: {len(chunk_text)} characters")
+                        print(f"✅ Chunk {chunk_num} completed: {len(chunk_text)} characters")
+                        print(f"   Preview: {chunk_text[:100]}...")
                     else:
-                        logger.info(f"Chunk {len(transcriptions) + 1} returned no text")
+                        print(f"⚠️ Chunk {chunk_num} returned no text")
                     
                     # Clean up temporary file
                     os.remove(chunk_path)
                     
                 except Exception as e:
-                    logger.error(f"Error transcribing chunk {len(transcriptions) + 1}: {str(e)}")
+                    print(f"❌ Error transcribing chunk {chunk_num}: {str(e)}")
                     if os.path.exists(chunk_path):
                         os.remove(chunk_path)
                     continue
             
             if transcriptions:
                 full_transcription = " ".join(transcriptions)
-                logger.info(f"Long audio transcription completed: {len(full_transcription)} characters")
+                print(f"🎉 Transcription completed! Total: {len(full_transcription)} characters")
                 return full_transcription
             else:
+                print("❌ No speech detected in audio file")
                 return "No speech detected in audio file."
             
         except Exception as e:
-            logger.error(f"Error in long audio transcription: {str(e)}")
+            print(f"❌ Error in long audio transcription: {str(e)}")
             return f"Error transcribing long audio: {str(e)}"
     
     def transcribe_with_speechrecognition(self, audio_path: str) -> str:
@@ -731,10 +730,18 @@ class WebFileHandler:
                 # Transcribe audio
                 transcription = self.audio_processor.transcribe_audio(temp_path, method="whisper")
                 
+                logger.info(f"Transcription result: {len(transcription)} characters")
+                
+                # Check if transcription failed
+                if transcription.startswith("Error"):
+                    logger.error(f"Transcription failed: {transcription}")
+                    return None
+                
                 # Create transcript file
                 transcript_path = self.audio_processor.create_transcript_file(transcription, uploaded_file.name)
                 
                 if transcript_path:
+                    logger.info(f"Transcript saved to: {transcript_path}")
                     # Read the transcript as text content
                     with open(transcript_path, 'r', encoding='utf-8') as f:
                         text_content = f.read()
@@ -742,6 +749,7 @@ class WebFileHandler:
                     # Add transcript path to saved paths
                     self.saved_pdf_paths.append(transcript_path)
                 else:
+                    logger.warning("Failed to create transcript file, using transcription directly")
                     text_content = transcription
                     
             else:
@@ -749,6 +757,7 @@ class WebFileHandler:
                 return None
 
             if text_content and text_content.strip():
+                logger.info(f"Processing text content: {len(text_content)} characters")
                 chunks = self.text_processor.chunk_text(text_content)
                 documents = []
                 for i, chunk in enumerate(chunks):
@@ -770,7 +779,11 @@ class WebFileHandler:
                 return None
 
         except Exception as e:
+            # FIX: Actually capture and log the error details
+            import traceback
+            error_details = traceback.format_exc()
             logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
+            logger.error(f"Full traceback: {error_details}")
             return None
 
     def get_saved_pdf_paths(self):
