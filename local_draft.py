@@ -530,29 +530,33 @@ class AudioProcessor:
             return f"Error transcribing audio: {str(e)}"
     
     def transcribe_audio(self, audio_path: str, method: str = "whisper") -> str:
-        """Transcribe audio file using specified method."""
+        """Transcribe audio with fallback methods."""
         try:
-            # Check file format
-            file_ext = os.path.splitext(audio_path)[1].lower()
+            logger.info(f"Processing audio file: {audio_path}")
             
-            # If it's already WAV, we can try to process it directly
-            if file_ext == '.wav':
-                return self.transcribe_with_whisper(audio_path)
+            # Convert to WAV if needed
+            if not audio_path.lower().endswith('.wav'):
+                logger.info("Converting audio to WAV format...")
+                wav_path = self.convert_audio_format(audio_path, "wav")
+                
+                if wav_path != audio_path and os.path.exists(wav_path):
+                    audio_path = wav_path
+                    logger.info(f"Using converted file: {wav_path}")
+                else:
+                    logger.warning("Audio conversion failed, using original file")
             
-            # If FFmpeg is not available, return error message
-            if not self.ffmpeg_available:
-                return f"Audio format {file_ext} requires FFmpeg for processing. Please upload WAV files only, or contact support to install FFmpeg."
-            
-            # Try to convert and transcribe
-            try:
-                converted_path = self.convert_audio_format(audio_path, "wav")
-                return self.transcribe_with_whisper(converted_path)
-            except Exception as e:
-                return f"Error processing audio: {str(e)}"
+            # Transcribe based on method
+            if method == "whisper":
+                return self.transcribe_with_whisper(audio_path)  # This now does full transcription
+            elif method == "speechrecognition":
+                return self.transcribe_with_speechrecognition(audio_path)
+            else:
+                logger.error(f"Unknown transcription method: {method}")
+                return f"Error: Unknown transcription method {method}"
                 
         except Exception as e:
-            logger.error(f"Error transcribing audio: {str(e)}")
-            return f"Error transcribing audio: {str(e)}"
+            logger.error(f"Error processing {audio_path}: {str(e)}")
+            return f"Error processing audio: {str(e)}"
     
     def create_transcript_file(self, transcription: str, original_filename: str) -> str:
         """Create a text file from transcription."""
