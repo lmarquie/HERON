@@ -592,10 +592,9 @@ class VectorStore:
             return
 
         try:
-            batches = batch_documents_by_token_limit(documents, max_tokens=250000)
-            print(f"Total batches: {len(batches)}")
-            for i, batch in enumerate(batches):
-                print(f"Processing batch {i+1} with {len(batch)} docs")
+            batch_size = 100  # Try 100, lower if you still get errors
+            for i in range(0, len(documents), batch_size):
+                batch = documents[i:i+batch_size]
                 texts = [doc['text'] for doc in batch]
                 embeddings = self.get_openai_embeddings_batch(texts)
                 if embeddings is None or len(embeddings) != len(batch):
