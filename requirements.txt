@@ -22,3 +22,6 @@ sentence-transformers>=2.2.2
 SpeechRecognition>=3.10.0
 pydub>=0.25.1
 openai-whisper>=20231117
+
+# Add FFmpeg Python wrapper
+ffmpeg-python>=0.2.0
