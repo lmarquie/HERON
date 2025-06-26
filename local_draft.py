@@ -445,6 +445,7 @@ class WebFileHandler:
     def _process_single_file(self, uploaded_file):
         """Process a single uploaded file."""
         try:
+            logger.info(f"Processing file: {uploaded_file.name}")
             ext = os.path.splitext(uploaded_file.name)[1].lower()
             temp_path = f"temp/{uploaded_file.name}"
             os.makedirs("temp", exist_ok=True)
@@ -455,14 +456,10 @@ class WebFileHandler:
 
             if ext == ".pdf":
                 text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
-            elif ext in [".doc", ".docx"]:
+            elif ext == ".docx":
                 text_content = extract_text_from_docx(temp_path)
-            elif ext in [".ppt", ".pptx"]:
+            elif ext in [".pptx"]:
                 text_content = extract_text_from_pptx(temp_path)
-            elif ext == ".xlsx":
-                text_content = extract_text_from_xlsx(temp_path)
-            elif ext == ".xls":
-                text_content = extract_text_from_xls(temp_path)
             else:
                 logger.warning(f"Unsupported file type: {uploaded_file.name}")
                 return None
@@ -481,8 +478,10 @@ class WebFileHandler:
                                 'date': datetime.now().strftime('%Y-%m-%d')
                             }
                         })
+                logger.info(f"Successfully processed {uploaded_file.name}: {len(documents)} chunks")
                 return documents
             else:
+                logger.warning(f"No text content extracted from {uploaded_file.name}")
                 return None
 
         except Exception as e:
@@ -499,29 +498,33 @@ class WebFileHandler:
 
 ### =================== Vector Store =================== ###
 class VectorStore:
+    _model = None  # Class variable to store the model
+    
     def __init__(self, dimension: int = 768):
         self.documents = []
         self.embeddings = None
         self.index = None
-        self.chunk_size = 1500  # Can be larger with Hugging Face
-        self.chunk_overlap = 50
-        self.model = None
+        self.chunk_size = 2000
+        self.chunk_overlap = 100
         self.initialized = False
         
-        # Initialize embedding model
+        # Initialize embedding model only once
         self._initialize_model()
 
     def _initialize_model(self):
-        """Initialize the Hugging Face embedding model."""
-        try:
-            from sentence_transformers import SentenceTransformer
-            # Use a good general-purpose model
-            self.model = SentenceTransformer('all-MiniLM-L6-v2')
-            self.initialized = True
-            logger.info("Hugging Face embedding model initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Hugging Face model: {str(e)}")
-            self.initialized = False
+        """Initialize the embedding model only once."""
+        if VectorStore._model is None:  # Only load if not already loaded
+            try:
+                from sentence_transformers import SentenceTransformer
+                VectorStore._model = SentenceTransformer('all-MiniLM-L6-v2')
+                logger.info("Hugging Face embedding model initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize Hugging Face model: {str(e)}")
+                self.initialized = False
+                return
+        
+        self.model = VectorStore._model  # Use the shared model
+        self.initialized = True
 
     def get_embeddings_batch(self, texts):
         """Get embeddings from Hugging Face model in batches."""
