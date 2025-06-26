@@ -715,7 +715,7 @@ class VectorStore:
                 logger.info("Hugging Face embedding model initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize Hugging Face model: {str(e)}")
-                    self.initialized = False
+                self.initialized = False
                 return
         
         self.model = VectorStore._model  # Use the shared model
@@ -726,7 +726,7 @@ class VectorStore:
         try:
             if not self.initialized or self.model is None:
                 logger.error("Model not initialized")
-            return None
+                return None
 
             # Get embeddings for all texts at once
             embeddings = self.model.encode(texts, convert_to_tensor=False)
@@ -1398,18 +1398,18 @@ def render_chunk_source_image(source_path, page_num, chunk_text):
     import fitz
     import os
     os.makedirs("temp", exist_ok=True)
-        doc = fitz.open(source_path)
-        page = doc.load_page(page_num - 1)  # 0-based index
-        # Try to highlight all instances of the chunk text
-        if chunk_text:
+    doc = fitz.open(source_path)
+    page = doc.load_page(page_num - 1)  # 0-based index
+    # Try to highlight all instances of the chunk text
+    if chunk_text:
         text_instances = page.search_for(chunk_text)
-                for inst in text_instances:
-                    page.add_highlight_annot(inst)
-        pix = page.get_pixmap(dpi=200)
+        for inst in text_instances:
+            page.add_highlight_annot(inst)
+    pix = page.get_pixmap(dpi=200)
     img_path = f"temp/page_{page_num}_chunk_highlighted.png"
-        pix.save(img_path)
-        doc.close()
-        return img_path
+    pix.save(img_path)
+    doc.close()
+    return img_path
         
 def batch_documents_by_token_limit(documents, max_tokens=16384):
     enc = tiktoken.get_encoding("cl100k_base")
@@ -1552,11 +1552,11 @@ class OnDemandImageProcessor:
                     logger.warning(f"Error processing page {page_idx + 1}: {str(e)}")
                     continue
             
-        doc.close()
+            doc.close()
             logger.info(f"Extracted {len(images)} images from PDF")
             return images
         
-    except Exception as e:
+        except Exception as e:
             logger.error(f"Error extracting images from PDF: {str(e)}")
             return []
     
