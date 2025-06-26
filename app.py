@@ -505,7 +505,13 @@ with st.sidebar:
     if uploaded_files:
         current_files = [f.name for f in uploaded_files]
         last_files = st.session_state.get('last_uploaded_files', [])
-        if current_files != last_files or not st.session_state.get('documents_loaded'):
+        
+        # Check if files are actually new and not currently processing
+        new_files = [f for f in current_files if f not in last_files]
+        is_processing = st.session_state.get('is_processing_files', False)
+        
+        if (new_files or not st.session_state.get('documents_loaded')) and not is_processing:
+            st.session_state.is_processing_files = True
             st.session_state.last_uploaded_files = current_files
             st.session_state.last_upload_time = time.time()
             
@@ -526,6 +532,12 @@ with st.sidebar:
                 else:
                     st.error("Processing failed")
                     st.session_state.documents_loaded = False
+        
+            st.session_state.is_processing_files = False
+        else:
+            # Files haven't changed or currently processing, just show status
+            if st.session_state.get('documents_loaded'):
+                st.info(f"{len(current_files)} file(s) already loaded")
 
     # Search Mode Section
     st.markdown("---")
