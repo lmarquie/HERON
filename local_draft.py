@@ -468,21 +468,49 @@ class AudioProcessor:
             return audio_path
     
     def transcribe_with_whisper(self, audio_path: str) -> str:
-        """Transcribe audio using OpenAI Whisper."""
+        """Transcribe audio using Whisper with better error handling."""
         try:
-            self.load_whisper_model()
+            if self.whisper_model is None:
+                self.load_whisper_model()
             
             logger.info(f"Transcribing audio with Whisper: {audio_path}")
             
-            # Transcribe audio
-            result = self.whisper_model.transcribe(audio_path)
-            transcription = result["text"]
+            # Check if file exists and has content
+            if not os.path.exists(audio_path):
+                raise FileNotFoundError(f"Audio file not found: {audio_path}")
             
-            logger.info(f"Whisper transcription completed: {len(transcription)} characters")
+            file_size = os.path.getsize(audio_path)
+            if file_size == 0:
+                raise ValueError(f"Audio file is empty: {audio_path}")
+            
+            logger.info(f"Audio file size: {file_size} bytes")
+            
+            # Transcribe with detailed error handling
+            logger.info("Starting Whisper transcription...")
+            result = self.whisper_model.transcribe(
+                audio_path,
+                language="en",
+                task="transcribe",
+                verbose=True
+            )
+            
+            logger.info("Whisper transcription completed")
+            
+            transcription = result.get('text', '').strip()
+            
+            if not transcription:
+                logger.warning("Whisper returned empty transcription")
+                return "No speech detected in audio file."
+            
+            logger.info(f"Transcription completed: {len(transcription)} characters")
             return transcription
             
         except Exception as e:
+            # FIX: Capture the actual error details
+            import traceback
+            error_details = traceback.format_exc()
             logger.error(f"Error transcribing with Whisper: {str(e)}")
+            logger.error(f"Full traceback: {error_details}")
             return f"Error transcribing audio: {str(e)}"
     
     def transcribe_with_speechrecognition(self, audio_path: str) -> str:
@@ -597,12 +625,12 @@ class WebFileHandler:
             # Handle different file types
             if ext in ['.pdf', '.docx', '.pptx']:
                 # Existing document processing
-                if ext == ".pdf":
+            if ext == ".pdf":
                     text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
                 elif ext == ".docx":
-                    text_content = extract_text_from_docx(temp_path)
+                text_content = extract_text_from_docx(temp_path)
                 elif ext in [".pptx"]:
-                    text_content = extract_text_from_pptx(temp_path)
+                text_content = extract_text_from_pptx(temp_path)
                 
                 self.saved_pdf_paths.append(temp_path)
                 
@@ -687,7 +715,7 @@ class VectorStore:
                 logger.info("Hugging Face embedding model initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize Hugging Face model: {str(e)}")
-                self.initialized = False
+                    self.initialized = False
                 return
         
         self.model = VectorStore._model  # Use the shared model
@@ -698,7 +726,7 @@ class VectorStore:
         try:
             if not self.initialized or self.model is None:
                 logger.error("Model not initialized")
-                return None
+            return None
 
             # Get embeddings for all texts at once
             embeddings = self.model.encode(texts, convert_to_tensor=False)
@@ -1370,18 +1398,18 @@ def render_chunk_source_image(source_path, page_num, chunk_text):
     import fitz
     import os
     os.makedirs("temp", exist_ok=True)
-    doc = fitz.open(source_path)
-    page = doc.load_page(page_num - 1)  # 0-based index
-    # Try to highlight all instances of the chunk text
-    if chunk_text:
+        doc = fitz.open(source_path)
+        page = doc.load_page(page_num - 1)  # 0-based index
+        # Try to highlight all instances of the chunk text
+        if chunk_text:
         text_instances = page.search_for(chunk_text)
-        for inst in text_instances:
-            page.add_highlight_annot(inst)
-    pix = page.get_pixmap(dpi=200)
+                for inst in text_instances:
+                    page.add_highlight_annot(inst)
+        pix = page.get_pixmap(dpi=200)
     img_path = f"temp/page_{page_num}_chunk_highlighted.png"
-    pix.save(img_path)
-    doc.close()
-    return img_path
+        pix.save(img_path)
+        doc.close()
+        return img_path
         
 def batch_documents_by_token_limit(documents, max_tokens=16384):
     enc = tiktoken.get_encoding("cl100k_base")
@@ -1524,11 +1552,11 @@ class OnDemandImageProcessor:
                     logger.warning(f"Error processing page {page_idx + 1}: {str(e)}")
                     continue
             
-            doc.close()
+        doc.close()
             logger.info(f"Extracted {len(images)} images from PDF")
             return images
         
-        except Exception as e:
+    except Exception as e:
             logger.error(f"Error extracting images from PDF: {str(e)}")
             return []
     
