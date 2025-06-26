@@ -285,6 +285,12 @@ if conversation_history:
             mode_icon = "🌐" if conv.get('mode') == 'internet' else "📄"
             mode_text = "Internet" if conv.get('mode') == 'internet' else "Document"
             
+            # Add audio indicator
+            file_type = conv.get('metadata', {}).get('file_type', 'document')
+            if file_type == 'audio':
+                mode_icon = "🎵"
+                mode_text = "Audio"
+            
             # Question bubble (user)
             with st.chat_message("user"):
                 st.write(f"{conv['question']}")
@@ -488,7 +494,7 @@ with st.sidebar:
     # File uploader
     uploaded_files = st.file_uploader(
         "Upload files",
-        type=['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'],
+        type=['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac'],
         accept_multiple_files=True,
         key="pdf_uploader"
     )
@@ -500,9 +506,19 @@ with st.sidebar:
         if current_files != last_files or not st.session_state.get('documents_loaded'):
             st.session_state.last_uploaded_files = current_files
             st.session_state.last_upload_time = time.time()
+            
+            # Check for audio files
+            audio_files = [f for f in uploaded_files if f.name.lower().endswith(('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac'))]
+            document_files = [f for f in uploaded_files if f.name.lower().endswith(('.pdf', '.docx', '.pptx', '.doc', '.xls', '.xlsx', '.ppt'))]
+            
+            if audio_files:
+                st.info(f"🎵 Found {len(audio_files)} audio file(s) - will transcribe to text")
+            
             with st.spinner("Processing..."):
                 if st.session_state.rag_system.process_web_uploads(uploaded_files):
                     st.success(f"{len(uploaded_files)} file(s) loaded")
+                    if audio_files:
+                        st.success("🎵 Audio files transcribed successfully")
                     st.session_state.documents_loaded = True
                     st.session_state.processing_status = st.session_state.rag_system.file_handler.get_processing_status()
                 else:
@@ -707,4 +723,32 @@ chat_question = st.chat_input(
 )
 
 if chat_question:
-    submit_chat_message() 
+    submit_chat_message()
+
+# Add this function to handle audio-specific questions
+def is_audio_question(question: str) -> bool:
+    """Detect if the question is about audio content."""
+    question_lower = question.lower()
+    audio_keywords = [
+        'audio', 'recording', 'transcript', 'transcription', 'voice', 'speech',
+        'said', 'mentioned', 'talked about', 'discussed', 'conversation',
+        'interview', 'podcast', 'meeting', 'call', 'recording'
+    ]
+    return any(keyword in question_lower for keyword in audio_keywords)
+
+# Update the conversation display to show audio sources
+for i, conv in enumerate(conversation_history):
+    # Show mode indicator
+    mode_icon = "🌐" if conv.get('mode') == 'internet' else "📄"
+    mode_text = "Internet" if conv.get('mode') == 'internet' else "Document"
+    
+    # Add audio indicator
+    file_type = conv.get('metadata', {}).get('file_type', 'document')
+    if file_type == 'audio':
+        mode_icon = "🎵"
+        mode_text = "Audio"
+    
+    # Question bubble (user)
+    with st.chat_message("user"):
+        st.write(f"{conv['question']}")
+        st.caption(f"{mode_text} Mode") 
