@@ -685,24 +685,24 @@ class ClaudeHandler:
     def _get_response_length(self, question: str, normalize_length: bool) -> int:
         """Determine appropriate response length based on question type."""
         if not normalize_length:
-            return 1000
+            return 16384
         
         question_lower = question.lower()
         
         # Short responses for simple questions
         if any(word in question_lower for word in ['what is', 'define', 'explain briefly', 'summarize']):
-            return 300
+            return 16384
         
         # Medium responses for analysis questions
         if any(word in question_lower for word in ['analyze', 'compare', 'discuss', 'evaluate']):
-            return 600
+            return 16384
         
         # Long responses for complex questions
         if any(word in question_lower for word in ['detailed', 'comprehensive', 'thorough']):
-            return 1000
+            return 16384
         
         # Default medium length
-        return 500
+        return 16384
 
 ### =================== Question Handler =================== ###
 class QuestionHandler:
@@ -1112,7 +1112,7 @@ def render_chunk_source_image(source_path, page_num, chunk_text):
     doc.close()
     return img_path
 
-def batch_documents_by_token_limit(documents, max_tokens=250000):
+def batch_documents_by_token_limit(documents, max_tokens=16384):
     enc = tiktoken.get_encoding("cl100k_base")
     batches = []
     current_batch = []
