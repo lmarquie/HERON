@@ -33,8 +33,6 @@ from pydub import AudioSegment
 import whisper
 import tempfile
 import subprocess
-import librosa
-import soundfile as sf
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -470,7 +468,7 @@ class AudioProcessor:
             return audio_path
     
     def transcribe_with_whisper(self, audio_path: str) -> str:
-        """Transcribe audio using Whisper with better error handling for long files."""
+        """Transcribe audio using Whisper with better error handling."""
         try:
             if self.whisper_model is None:
                 self.load_whisper_model()
@@ -486,14 +484,6 @@ class AudioProcessor:
                 raise ValueError(f"Audio file is empty: {audio_path}")
             
             logger.info(f"Audio file size: {file_size} bytes")
-            
-            # For long audio files, use chunked transcription
-            duration = librosa.get_duration(path=audio_path)
-            logger.info(f"Audio duration: {duration:.2f} seconds ({duration/60:.2f} minutes)")
-            
-            if duration > 600:  # Longer than 10 minutes
-                logger.info("Long audio file detected, using chunked transcription")
-                return self._transcribe_long_audio(audio_path, duration)
             
             # Transcribe with detailed error handling
             logger.info("Starting Whisper transcription...")
@@ -522,61 +512,6 @@ class AudioProcessor:
             logger.error(f"Error transcribing with Whisper: {str(e)}")
             logger.error(f"Full traceback: {error_details}")
             return f"Error transcribing audio: {str(e)}"
-    
-    def _transcribe_long_audio(self, audio_path: str, duration: float) -> str:
-        """Transcribe long audio files in chunks."""
-        try:
-            # Load audio
-            audio, sr = librosa.load(audio_path, sr=16000)
-            
-            # Split into 10-minute chunks
-            chunk_duration = 600  # 10 minutes in seconds
-            chunk_samples = int(chunk_duration * sr)
-            
-            transcriptions = []
-            
-            for i in range(0, len(audio), chunk_samples):
-                chunk = audio[i:i + chunk_samples]
-                chunk_start = i / sr
-                chunk_end = min((i + chunk_samples) / sr, duration)
-                
-                logger.info(f"Processing chunk {len(transcriptions) + 1}: {chunk_start:.1f}s - {chunk_end:.1f}s")
-                
-                # Save chunk to temporary file
-                chunk_path = f"temp_chunk_{len(transcriptions)}.wav"
-                sf.write(chunk_path, chunk, sr)
-                
-                try:
-                    # Transcribe chunk
-                    result = self.whisper_model.transcribe(
-                        chunk_path,
-                        language="en",
-                        task="transcribe"
-                    )
-                    
-                    chunk_text = result.get('text', '').strip()
-                    if chunk_text:
-                        transcriptions.append(chunk_text)
-                        logger.info(f"Chunk {len(transcriptions)} completed: {len(chunk_text)} characters")
-                    
-                    # Clean up temporary file
-                    os.remove(chunk_path)
-                    
-                except Exception as e:
-                    logger.error(f"Error transcribing chunk {len(transcriptions) + 1}: {str(e)}")
-                    os.remove(chunk_path)
-                    continue
-            
-            if transcriptions:
-                full_transcription = " ".join(transcriptions)
-                logger.info(f"Long audio transcription completed: {len(full_transcription)} characters")
-                return full_transcription
-            else:
-                return "No speech detected in audio file."
-            
-        except Exception as e:
-            logger.error(f"Error in long audio transcription: {str(e)}")
-            return f"Error transcribing long audio: {str(e)}"
     
     def transcribe_with_speechrecognition(self, audio_path: str) -> str:
         """Transcribe audio using SpeechRecognition (Google Speech API)."""
@@ -780,7 +715,7 @@ class VectorStore:
                 logger.info("Hugging Face embedding model initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize Hugging Face model: {str(e)}")
-                self.initialized = False
+                    self.initialized = False
                 return
         
         self.model = VectorStore._model  # Use the shared model
@@ -791,7 +726,7 @@ class VectorStore:
         try:
             if not self.initialized or self.model is None:
                 logger.error("Model not initialized")
-                return None
+            return None
 
             # Get embeddings for all texts at once
             embeddings = self.model.encode(texts, convert_to_tensor=False)
@@ -906,6 +841,7 @@ class ClaudeHandler:
             max_output_tokens = 16384   # Maximum response tokens
             
             # Count and limit input tokens
+            import tiktoken
             enc = tiktoken.get_encoding("cl100k_base")
             
             # Count input tokens
@@ -1462,18 +1398,18 @@ def render_chunk_source_image(source_path, page_num, chunk_text):
     import fitz
     import os
     os.makedirs("temp", exist_ok=True)
-    doc = fitz.open(source_path)
-    page = doc.load_page(page_num - 1)  # 0-based index
-    # Try to highlight all instances of the chunk text
-    if chunk_text:
+        doc = fitz.open(source_path)
+        page = doc.load_page(page_num - 1)  # 0-based index
+        # Try to highlight all instances of the chunk text
+        if chunk_text:
         text_instances = page.search_for(chunk_text)
-        for inst in text_instances:
-            page.add_highlight_annot(inst)
-    pix = page.get_pixmap(dpi=200)
+                for inst in text_instances:
+                    page.add_highlight_annot(inst)
+        pix = page.get_pixmap(dpi=200)
     img_path = f"temp/page_{page_num}_chunk_highlighted.png"
-    pix.save(img_path)
-    doc.close()
-    return img_path
+        pix.save(img_path)
+        doc.close()
+        return img_path
         
 def batch_documents_by_token_limit(documents, max_tokens=16384):
     enc = tiktoken.get_encoding("cl100k_base")
@@ -1616,11 +1552,11 @@ class OnDemandImageProcessor:
                     logger.warning(f"Error processing page {page_idx + 1}: {str(e)}")
                     continue
             
-            doc.close()
+        doc.close()
             logger.info(f"Extracted {len(images)} images from PDF")
             return images
         
-        except Exception as e:
+    except Exception as e:
             logger.error(f"Error extracting images from PDF: {str(e)}")
             return []
     
