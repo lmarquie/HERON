@@ -11,6 +11,8 @@ import logging
 import json
 import concurrent.futures
 import re
+import csv
+import io
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -87,7 +89,20 @@ def export_conversation_to_pdf():
         story.append(Spacer(1, 12))
         
         # Add each conversation exchange
+        question_counter = 1
         for i, conv in enumerate(conversation_history):
+            question_type = conv.get('question_type', '')
+            mode = conv.get('mode', 'Unknown')
+            
+            # Determine if this is a follow-up
+            is_followup = 'followup' in question_type.lower()
+            
+            # Question label
+            if is_followup:
+                question_label = f"Follow-up {question_counter}:"
+            else:
+                question_label = f"Q{question_counter}:"
+            
             # Question
             question_style = ParagraphStyle(
                 'Question',
@@ -96,18 +111,29 @@ def export_conversation_to_pdf():
                 spaceAfter=6,
                 leftIndent=20
             )
-            story.append(Paragraph(f"<b>Q{i+1}:</b> {conv['question']}", question_style))
+            story.append(Paragraph(f"<b>{question_label}</b> {conv['question']}", question_style))
             
             # Answer
             if isinstance(conv['answer'], list):
-                # Handle image answers
                 answer_text = "Found 1 image" if conv['answer'] else "No images found"
-                story.append(Paragraph(f"<b>A{i+1}:</b> {answer_text}", question_style))
+                story.append(Paragraph(f"<b>A{question_counter}:</b> {answer_text}", question_style))
             else:
-                # Handle text answers
-                story.append(Paragraph(f"<b>A{i+1}:** {conv['answer']}", question_style))
+                story.append(Paragraph(f"<b>A{question_counter}:</b> {conv['answer']}", question_style))
+            
+            # Add metadata if available
+            source = conv.get('source', '')
+            page = conv.get('page', '')
+            if source or page:
+                meta_text = f"<i>Mode: {mode}"
+                if source:
+                    meta_text += f" | Source: {source}"
+                if page:
+                    meta_text += f" | Page: {page}"
+                meta_text += "</i>"
+                story.append(Paragraph(meta_text, question_style))
             
             story.append(Spacer(1, 12))
+            question_counter += 1
         
         # Build PDF
         doc.build(story)
@@ -116,6 +142,113 @@ def export_conversation_to_pdf():
         
     except Exception as e:
         logger.error(f"Error creating PDF: {str(e)}")
+        return None
+
+def export_conversation_to_markdown():
+    """Export conversation history to Markdown."""
+    try:
+        conversation_history = st.session_state.rag_system.get_conversation_history()
+        
+        if not conversation_history:
+            return None
+        
+        # Create markdown content
+        markdown_content = []
+        markdown_content.append("# HERON Conversation Export")
+        markdown_content.append(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        markdown_content.append("")
+        
+        # Add each conversation exchange
+        question_counter = 1
+        for i, conv in enumerate(conversation_history):
+            question_type = conv.get('question_type', '')
+            mode = conv.get('mode', 'Unknown')
+            
+            # Determine if this is a follow-up
+            is_followup = 'followup' in question_type.lower()
+            
+            # Question label
+            if is_followup:
+                question_label = f"Follow-up {question_counter}:"
+            else:
+                question_label = f"Q{question_counter}:"
+            
+            markdown_content.append(f"## {question_label} {conv['question']}")
+            markdown_content.append("")
+            
+            # Answer
+            if isinstance(conv['answer'], list):
+                answer_text = "Found 1 image" if conv['answer'] else "No images found"
+                markdown_content.append(f"**A{question_counter}:** {answer_text}")
+            else:
+                markdown_content.append(f"**A{question_counter}:** {conv['answer']}")
+            
+            # Add metadata if available
+            source = conv.get('source', '')
+            page = conv.get('page', '')
+            if source or page:
+                meta_text = f"*Mode: {mode}"
+                if source:
+                    meta_text += f" | Source: {source}"
+                if page:
+                    meta_text += f" | Page: {page}"
+                meta_text += "*"
+                markdown_content.append(meta_text)
+            
+            markdown_content.append("")
+            markdown_content.append("---")
+            markdown_content.append("")
+            question_counter += 1
+        
+        return "\n".join(markdown_content)
+        
+    except Exception as e:
+        logger.error(f"Error creating Markdown: {str(e)}")
+        return None
+
+def export_conversation_to_csv():
+    """Export conversation history to CSV."""
+    try:
+        conversation_history = st.session_state.rag_system.get_conversation_history()
+        
+        if not conversation_history:
+            return None
+        
+        # Create CSV content
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        writer.writerow(['Question Number', 'Question Type', 'Question', 'Answer', 'Mode', 'Source', 'Page', 'Timestamp'])
+        
+        # Write data
+        question_counter = 1
+        for i, conv in enumerate(conversation_history):
+            question = conv['question']
+            question_type = conv.get('question_type', '')
+            
+            # Determine if this is a follow-up
+            is_followup = 'followup' in question_type.lower()
+            question_type_display = "Follow-up" if is_followup else "Initial"
+            
+            # Handle answer (could be text or list)
+            if isinstance(conv['answer'], list):
+                answer = "Found 1 image" if conv['answer'] else "No images found"
+            else:
+                answer = conv['answer']
+            
+            mode = conv.get('mode', 'Unknown')
+            source = conv.get('source', '')
+            page = conv.get('page', '')
+            timestamp = conv.get('timestamp', '')
+            
+            writer.writerow([f"Q{question_counter}", question_type_display, question, answer, mode, source, page, timestamp])
+            question_counter += 1
+        
+        return output.getvalue()
+        
+    except Exception as e:
+        logger.error(f"Error creating CSV: {str(e)}")
         return None
 
 # Handle Enter key submission
@@ -305,11 +438,6 @@ placeholder_text = f"Ask a question (using {current_mode})..."
 
 # Sidebar - Clean, organized controls
 with st.sidebar:
-    # Center the logo using columns
-    # col1, col2, col3 = st.columns([1, 2, 1])
-    # with col2:
-    #     st.image("heron.png", width=120)
-    
     # Document Management Section
     st.subheader("Documents")
     
@@ -371,6 +499,57 @@ with st.sidebar:
         st.session_state.internet_mode = True
         st.session_state.use_both_modes = True
         st.success("🌐 Both Modes Enabled")
+
+    # Export Section (only show if there's conversation history)
+    if conversation_history:
+        st.markdown("---")
+        st.subheader("Export")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📄 PDF", use_container_width=True):
+                pdf_path = export_conversation_to_pdf()
+                if pdf_path and os.path.exists(pdf_path):
+                    with open(pdf_path, "rb") as pdf_file:
+                        pdf_bytes = pdf_file.read()
+                    st.download_button(
+                        label="Download PDF",
+                        data=pdf_bytes,
+                        file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                else:
+                    st.error("Failed to create PDF")
+        
+        with col2:
+            if st.button("📝 Markdown", use_container_width=True):
+                markdown_content = export_conversation_to_markdown()
+                if markdown_content:
+                    st.download_button(
+                        label="Download MD",
+                        data=markdown_content,
+                        file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                        mime="text/markdown",
+                        use_container_width=True
+                    )
+                else:
+                    st.error("Failed to create Markdown")
+        
+        with col3:
+            if st.button("📊 CSV", use_container_width=True):
+                csv_content = export_conversation_to_csv()
+                if csv_content:
+                    st.download_button(
+                        label="Download CSV",
+                        data=csv_content,
+                        file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                else:
+                    st.error("Failed to create CSV")
 
     # Session Management Section
     st.markdown("---")
