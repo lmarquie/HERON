@@ -738,23 +738,6 @@ def is_audio_question(question: str) -> bool:
     ]
     return any(keyword in question_lower for keyword in audio_keywords)
 
-# Update the conversation display to show audio sources
-for i, conv in enumerate(conversation_history):
-    # Show mode indicator
-    mode_icon = "🌐" if conv.get('mode') == 'internet' else "📄"
-    mode_text = "Internet" if conv.get('mode') == 'internet' else "Document"
-    
-    # Add audio indicator
-    file_type = conv.get('metadata', {}).get('file_type', 'document')
-    if file_type == 'audio':
-        mode_icon = "🎵"
-        mode_text = "Audio"
-    
-    # Question bubble (user)
-    with st.chat_message("user"):
-        st.write(f"{conv['question']}")
-        st.caption(f"{mode_text} Mode")
-
 def install_system_dependencies():
     """Install system dependencies if needed."""
     try:
