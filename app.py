@@ -132,6 +132,12 @@ def handle_followup_enter_key():
 # Main app
 initialize_rag_system()
 
+# At the top of your app, initialize these
+if 'chat_input_key' not in st.session_state:
+    st.session_state.chat_input_key = 0
+if 'last_processed_question' not in st.session_state:
+    st.session_state.last_processed_question = ""
+
 # Main content - Modern chat interface
 # (Do not display st.title("HERON") here)
 
@@ -234,7 +240,7 @@ if 'chat_input_key_counter' not in st.session_state:
     st.session_state.chat_input_key_counter = 0
 
 def submit_chat_message():
-    chat_input_key = f"chat_input_{st.session_state.chat_input_key_counter}"
+    chat_input_key = f"chat_input_{st.session_state.chat_input_key}"
     chat_question = st.session_state.get(chat_input_key, "")
     if chat_question.strip():
         # Check if documents are loaded first
@@ -324,30 +330,49 @@ def submit_chat_message():
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             st.rerun()
     # Only increment after rerun, so the key stays in sync
-    st.session_state.chat_input_key_counter += 1
+    st.session_state.chat_input_key += 1
 
 # Show current mode in the placeholder
 current_mode = "Internet Search" if st.session_state.get('internet_mode', False) else "Document Search"
 placeholder_text = f"Ask a question (using {current_mode})..."
 
 # Modern chat input - always visible
-chat_input_key = f"chat_input_{st.session_state.chat_input_key_counter}"
 chat_question = st.chat_input(
     placeholder_text,
-    key=chat_input_key
+    key=f"chat_input_{st.session_state.chat_input_key}"
 )
 
-if chat_question:
-    # Process the question directly
+if chat_question and chat_question != st.session_state.last_processed_question:
+    st.session_state.last_processed_question = chat_question
+    
+    # Process the question
     if not st.session_state.get('documents_loaded', False) and not st.session_state.get('internet_mode', False):
         answer = "Please upload a document first or enable Live Web Search."
         st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
     else:
-        if st.session_state.get('internet_mode', False):
-            answer = st.session_state.rag_system.process_live_web_question(chat_question)
+        # Check if this is a follow-up question
+        current_history = st.session_state.rag_system.get_conversation_history()
+        has_real_conversation = any(
+            conv.get('question_type') not in ['error'] 
+            for conv in current_history
+        )
+        
+        if has_real_conversation:
+            # Use follow-up processing
+            if st.session_state.get('internet_mode', False):
+                answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+            else:
+                answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
         else:
-            answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
-    st.rerun()
+            # Use regular question processing for new questions
+            if st.session_state.get('internet_mode', False):
+                answer = st.session_state.rag_system.process_live_web_question(chat_question)
+            else:
+                answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+    
+    # Clear the last processed question and increment key
+    st.session_state.last_processed_question = ""
+    st.session_state.chat_input_key += 1
 
 # Sidebar - Clean, organized controls
 with st.sidebar:
