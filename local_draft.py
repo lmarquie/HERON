@@ -423,10 +423,10 @@ class AudioProcessor:
     def _check_ffmpeg(self):
         """Check if FFmpeg is available."""
         try:
+            import subprocess
             subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
             return True
         except (subprocess.CalledProcessError, FileNotFoundError):
-            logger.warning("FFmpeg not available. Audio format conversion will be limited.")
             return False
     
     def load_whisper_model(self):
@@ -504,17 +504,23 @@ class AudioProcessor:
     def transcribe_audio(self, audio_path: str, method: str = "whisper") -> str:
         """Transcribe audio file using specified method."""
         try:
-            # Convert to WAV if needed
-            if not audio_path.lower().endswith('.wav'):
-                audio_path = self.convert_audio_format(audio_path, "wav")
+            # Check file format
+            file_ext = os.path.splitext(audio_path)[1].lower()
             
-            # Choose transcription method
-            if method.lower() == "whisper":
+            # If it's already WAV, we can try to process it directly
+            if file_ext == '.wav':
                 return self.transcribe_with_whisper(audio_path)
-            elif method.lower() == "google":
-                return self.transcribe_with_speechrecognition(audio_path)
-            else:
-                return "Invalid transcription method. Use 'whisper' or 'google'"
+            
+            # If FFmpeg is not available, return error message
+            if not self.ffmpeg_available:
+                return f"Audio format {file_ext} requires FFmpeg for processing. Please upload WAV files only, or contact support to install FFmpeg."
+            
+            # Try to convert and transcribe
+            try:
+                converted_path = self.convert_audio_format(audio_path, "wav")
+                return self.transcribe_with_whisper(converted_path)
+            except Exception as e:
+                return f"Error processing audio: {str(e)}"
                 
         except Exception as e:
             logger.error(f"Error transcribing audio: {str(e)}")
@@ -587,16 +593,16 @@ class WebFileHandler:
             
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
-            
+
             # Handle different file types
             if ext in ['.pdf', '.docx', '.pptx']:
                 # Existing document processing
-                if ext == ".pdf":
+            if ext == ".pdf":
                     text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
                 elif ext == ".docx":
-                    text_content = extract_text_from_docx(temp_path)
+                text_content = extract_text_from_docx(temp_path)
                 elif ext in [".pptx"]:
-                    text_content = extract_text_from_pptx(temp_path)
+                text_content = extract_text_from_pptx(temp_path)
                 
                 self.saved_pdf_paths.append(temp_path)
                 
@@ -623,7 +629,7 @@ class WebFileHandler:
             else:
                 logger.warning(f"Unsupported file type: {uploaded_file.name}")
                 return None
-            
+
             if text_content and text_content.strip():
                 chunks = self.text_processor.chunk_text(text_content)
                 documents = []
@@ -644,7 +650,7 @@ class WebFileHandler:
             else:
                 logger.warning(f"No text content extracted from {uploaded_file.name}")
                 return None
-                
+
         except Exception as e:
             logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
             return None
@@ -681,7 +687,7 @@ class VectorStore:
                 logger.info("Hugging Face embedding model initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize Hugging Face model: {str(e)}")
-                self.initialized = False
+                    self.initialized = False
                 return
         
         self.model = VectorStore._model  # Use the shared model
@@ -692,8 +698,8 @@ class VectorStore:
         try:
             if not self.initialized or self.model is None:
                 logger.error("Model not initialized")
-                return None
-            
+            return None
+
             # Get embeddings for all texts at once
             embeddings = self.model.encode(texts, convert_to_tensor=False)
             return embeddings.tolist() if hasattr(embeddings, 'tolist') else embeddings
@@ -1364,19 +1370,19 @@ def render_chunk_source_image(source_path, page_num, chunk_text):
     import fitz
     import os
     os.makedirs("temp", exist_ok=True)
-    doc = fitz.open(source_path)
-    page = doc.load_page(page_num - 1)  # 0-based index
-    # Try to highlight all instances of the chunk text
-    if chunk_text:
+        doc = fitz.open(source_path)
+        page = doc.load_page(page_num - 1)  # 0-based index
+        # Try to highlight all instances of the chunk text
+        if chunk_text:
         text_instances = page.search_for(chunk_text)
-        for inst in text_instances:
-            page.add_highlight_annot(inst)
-    pix = page.get_pixmap(dpi=200)
+                for inst in text_instances:
+                    page.add_highlight_annot(inst)
+        pix = page.get_pixmap(dpi=200)
     img_path = f"temp/page_{page_num}_chunk_highlighted.png"
-    pix.save(img_path)
-    doc.close()
-    return img_path
-
+        pix.save(img_path)
+        doc.close()
+        return img_path
+        
 def batch_documents_by_token_limit(documents, max_tokens=16384):
     enc = tiktoken.get_encoding("cl100k_base")
     batches = []
@@ -1518,11 +1524,11 @@ class OnDemandImageProcessor:
                     logger.warning(f"Error processing page {page_idx + 1}: {str(e)}")
                     continue
             
-            doc.close()
+        doc.close()
             logger.info(f"Extracted {len(images)} images from PDF")
             return images
-            
-        except Exception as e:
+        
+    except Exception as e:
             logger.error(f"Error extracting images from PDF: {str(e)}")
             return []
     
