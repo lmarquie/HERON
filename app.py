@@ -13,6 +13,8 @@ import concurrent.futures
 import re
 import csv
 import io
+import subprocess
+import sys
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -751,4 +753,21 @@ for i, conv in enumerate(conversation_history):
     # Question bubble (user)
     with st.chat_message("user"):
         st.write(f"{conv['question']}")
-        st.caption(f"{mode_text} Mode") 
+        st.caption(f"{mode_text} Mode")
+
+def install_system_dependencies():
+    """Install system dependencies if needed."""
+    try:
+        # Check if ffmpeg is available
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        print("✅ FFmpeg is available")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("⚠️ FFmpeg not found. Audio processing may not work properly.")
+        print("To install FFmpeg:")
+        print("  Ubuntu/Debian: sudo apt-get install ffmpeg")
+        print("  macOS: brew install ffmpeg")
+        print("  Windows: Download from https://ffmpeg.org/download.html")
+
+# Call this function when the app starts
+if __name__ == "__main__":
+    install_system_dependencies() 
