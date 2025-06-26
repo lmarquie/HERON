@@ -1073,6 +1073,8 @@ class RAGSystem:
     def process_image_request(self, question: str, pdf_path: str = None) -> str:
         """Process a request for images from a document."""
         try:
+            logger.info(f"Processing image request: {question}")
+            
             # Determine which PDF to search
             if pdf_path is None:
                 # Use the most recent document from conversation history
@@ -1094,18 +1096,40 @@ class RAGSystem:
                 else:
                     return f"Document not found: {pdf_path}"
             
-            # Search for images
-            matching_images = self.image_processor.search_images_in_document(pdf_path, question)
+            # ACTUALLY EXTRACT IMAGES
+            logger.info(f"Extracting images from: {pdf_path}")
+            all_images = self.image_processor.extract_images_from_pdf(pdf_path)
             
-            if not matching_images:
-                return "No relevant images found in the document."
+            if not all_images:
+                return "No images found in the document. This PDF may only contain text."
             
-            # Format the response
+            logger.info(f"Found {len(all_images)} images, analyzing...")
+            
+            # ANALYZE EACH IMAGE
+            results = []
+            for i, img_info in enumerate(all_images):
+                try:
+                    logger.info(f"Analyzing image {i+1}/{len(all_images)}: {img_info['path']}")
+                    analysis = self.image_processor.analyze_image_with_gpt4(img_info['path'], question)
+                    
+                    results.append({
+                        **img_info,
+                        'analysis': analysis
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Error analyzing image {img_info['path']}: {str(e)}")
+                    results.append({
+                        **img_info,
+                        'analysis': f"Error analyzing this image: {str(e)}"
+                    })
+            
+            # FORMAT THE RESPONSE
             response_parts = []
-            response_parts.append(f"Found {len(matching_images)} relevant image(s) in the document:")
+            response_parts.append(f"📊 **Found {len(results)} image(s) in the document:**")
             response_parts.append("")
             
-            for i, img_info in enumerate(matching_images, 1):
+            for i, img_info in enumerate(results, 1):
                 response_parts.append(f"**Image {i} (Page {img_info['page']}):**")
                 response_parts.append(img_info['analysis'])
                 response_parts.append("")
