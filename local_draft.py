@@ -887,6 +887,7 @@ class RAGSystem:
             'avg_response_time': 0,
             'error_count': 0
         }
+        self.image_processor = OnDemandImageProcessor()  # Add this line
 
     def process_web_uploads(self, uploaded_files):
         """Process files uploaded through the web interface with improved error handling."""
@@ -1069,6 +1070,52 @@ class RAGSystem:
             logger.error(f"Error processing live web question: {str(e)}")
             return f"Error: {str(e)}"
 
+    def process_image_request(self, question: str, pdf_path: str = None) -> str:
+        """Process a request for images from a document."""
+        try:
+            # Determine which PDF to search
+            if pdf_path is None:
+                # Use the most recent document from conversation history
+                conversation_history = self.get_conversation_history()
+                for conv in reversed(conversation_history):
+                    if conv.get('source'):
+                        pdf_path = conv['source']
+                        break
+                
+                if not pdf_path:
+                    return "No document specified. Please upload a document first."
+            
+            # Check if PDF exists
+            if not os.path.exists(pdf_path):
+                # Try temp directory
+                temp_path = os.path.join("temp", os.path.basename(pdf_path))
+                if os.path.exists(temp_path):
+                    pdf_path = temp_path
+                else:
+                    return f"Document not found: {pdf_path}"
+            
+            # Search for images
+            matching_images = self.image_processor.search_images_in_document(pdf_path, question)
+            
+            if not matching_images:
+                return "No relevant images found in the document."
+            
+            # Format the response
+            response_parts = []
+            response_parts.append(f"Found {len(matching_images)} relevant image(s) in the document:")
+            response_parts.append("")
+            
+            for i, img_info in enumerate(matching_images, 1):
+                response_parts.append(f"**Image {i} (Page {img_info['page']}):**")
+                response_parts.append(img_info['analysis'])
+                response_parts.append("")
+            
+            return "\n".join(response_parts)
+            
+        except Exception as e:
+            logger.error(f"Error processing image request: {str(e)}")
+            return f"Error processing image request: {str(e)}"
+
 # --- Add helper functions for text extraction ---
 def extract_text_from_docx(path):
     try:
@@ -1227,6 +1274,159 @@ def generate_live_web_answer(question: str) -> str:
     except Exception as e:
         logger.error(f"Error generating live web answer: {str(e)}")
         return f"Error accessing live web: {str(e)}"
+
+# Add this new class for on-demand image processing
+class OnDemandImageProcessor:
+    def __init__(self):
+        self.processed_images = {}  # Cache for processed images
+        self.image_descriptions = {}  # Cache for image descriptions
+        
+    def extract_images_from_pdf(self, pdf_path: str, page_num: int = None) -> list:
+        """Extract images from a specific page or all pages of a PDF."""
+        try:
+            doc = fitz.open(pdf_path)
+            images = []
+            
+            if page_num is not None:
+                # Extract from specific page
+                pages = [page_num - 1]  # Convert to 0-based index
+            else:
+                # Extract from all pages
+                pages = range(len(doc))
+            
+            for page_idx in pages:
+                page = doc.load_page(page_idx)
+                image_list = page.get_images()
+                
+                for img_index, img in enumerate(image_list):
+                    try:
+                        # Get image data
+                        xref = img[0]
+                        pix = fitz.Pixmap(doc, xref)
+                        
+                        if pix.n - pix.alpha < 4:  # GRAY or RGB
+                            img_data = pix.tobytes("png")
+                        else:  # CMYK: convert to RGB first
+                            pix1 = fitz.Pixmap(fitz.csRGB, pix)
+                            img_data = pix1.tobytes("png")
+                            pix1 = None
+                        
+                        # Save image
+                        img_filename = f"page_{page_idx + 1}_image_{img_index + 1}.png"
+                        img_path = os.path.join("temp", img_filename)
+                        os.makedirs("temp", exist_ok=True)
+                        
+                        with open(img_path, "wb") as img_file:
+                            img_file.write(img_data)
+                        
+                        images.append({
+                            'path': img_path,
+                            'page': page_idx + 1,
+                            'image_index': img_index + 1,
+                            'description': f"Image from page {page_idx + 1}"
+                        })
+                        
+                        pix = None
+                        
+                    except Exception as e:
+                        logger.warning(f"Error extracting image {img_index} from page {page_idx + 1}: {str(e)}")
+                        continue
+            
+            doc.close()
+            return images
+            
+        except Exception as e:
+            logger.error(f"Error extracting images from PDF: {str(e)}")
+            return []
+    
+    def analyze_image_with_gpt4(self, image_path: str, question: str = None) -> str:
+        """Analyze an image using GPT-4 Vision API."""
+        try:
+            # Read and encode the image
+            with open(image_path, "rb") as img_file:
+                img_data = img_file.read()
+                encoded_image = base64.b64encode(img_data).decode('ascii')
+            
+            # Prepare the prompt
+            if question:
+                system_prompt = f"Analyze this image and answer the specific question: {question}. Provide detailed information about any charts, graphs, tables, or data visualizations you see."
+            else:
+                system_prompt = "Analyze this image and extract all text and data from any charts, graphs, or tables. Present chart data in tabular format for easy understanding."
+            
+            # API call to GPT-4 Vision
+            headers = {
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "gpt-4o",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": system_prompt
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{encoded_image}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 16384,
+                "temperature": 0.3
+            }
+            
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                return f"Error analyzing image: {response.status_code}"
+                
+        except Exception as e:
+            logger.error(f"Error analyzing image with GPT-4: {str(e)}")
+            return f"Error analyzing image: {str(e)}"
+    
+    def search_images_in_document(self, pdf_path: str, search_query: str) -> list:
+        """Search for images in a document based on a query."""
+        try:
+            # Extract all images from the document
+            all_images = self.extract_images_from_pdf(pdf_path)
+            
+            if not all_images:
+                return []
+            
+            # Analyze each image to see if it matches the query
+            matching_images = []
+            
+            for img_info in all_images:
+                # Analyze the image
+                analysis = self.analyze_image_with_gpt4(img_info['path'], search_query)
+                
+                # Check if the analysis indicates relevance
+                if "relevant" in analysis.lower() or "found" in analysis.lower() or "chart" in analysis.lower() or "graph" in analysis.lower():
+                    matching_images.append({
+                        **img_info,
+                        'analysis': analysis
+                    })
+            
+            return matching_images
+            
+        except Exception as e:
+            logger.error(f"Error searching images in document: {str(e)}")
+            return []
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
