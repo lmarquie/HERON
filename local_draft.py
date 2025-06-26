@@ -32,6 +32,7 @@ import speech_recognition as sr
 from pydub import AudioSegment
 import whisper
 import tempfile
+import subprocess
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -417,7 +418,17 @@ class AudioProcessor:
     def __init__(self):
         self.whisper_model = None
         self.recognizer = sr.Recognizer()
+        self.ffmpeg_available = self._check_ffmpeg()
         
+    def _check_ffmpeg(self):
+        """Check if FFmpeg is available."""
+        try:
+            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            logger.warning("FFmpeg not available. Audio format conversion will be limited.")
+            return False
+    
     def load_whisper_model(self):
         """Load Whisper model for transcription."""
         try:
@@ -430,6 +441,10 @@ class AudioProcessor:
     
     def convert_audio_format(self, audio_path: str, target_format: str = "wav") -> str:
         """Convert audio file to target format."""
+        if not self.ffmpeg_available:
+            logger.warning("FFmpeg not available. Using original audio file.")
+            return audio_path
+        
         try:
             # Load audio file
             audio = AudioSegment.from_file(audio_path)
