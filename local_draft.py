@@ -485,13 +485,20 @@ class AudioProcessor:
             
             logger.info(f"Audio file size: {file_size} bytes")
             
-            # Transcribe with detailed error handling
-            logger.info("Starting Whisper transcription...")
+            # Get audio duration
+            import librosa
+            duration = librosa.get_duration(path=audio_path)
+            logger.info(f"Audio duration: {duration:.2f} seconds ({duration/60:.2f} minutes)")
+            
+            print(f"🎵 Transcribing {duration/60:.1f} minute audio file...")
+            
+            # Transcribe the entire file at once (no chunking)
             result = self.whisper_model.transcribe(
                 audio_path,
                 language="en",
                 task="transcribe",
-                verbose=True
+                verbose=True,
+                fp16=False  # Force FP32 to avoid warnings
             )
             
             logger.info("Whisper transcription completed")
@@ -503,6 +510,7 @@ class AudioProcessor:
                 return "No speech detected in audio file."
             
             logger.info(f"Transcription completed: {len(transcription)} characters")
+            print(f"🎉 Transcription completed! Total: {len(transcription)} characters")
             return transcription
             
         except Exception as e:
@@ -511,6 +519,7 @@ class AudioProcessor:
             error_details = traceback.format_exc()
             logger.error(f"Error transcribing with Whisper: {str(e)}")
             logger.error(f"Full traceback: {error_details}")
+            print(f"❌ Transcription error: {str(e)}")
             return f"Error transcribing audio: {str(e)}"
     
     def transcribe_with_speechrecognition(self, audio_path: str) -> str:
@@ -645,10 +654,18 @@ class WebFileHandler:
                 # Transcribe audio
                 transcription = self.audio_processor.transcribe_audio(temp_path, method="whisper")
                 
+                logger.info(f"Transcription result: {len(transcription)} characters")
+                
+                # Check if transcription failed
+                if transcription.startswith("Error"):
+                    logger.error(f"Transcription failed: {transcription}")
+                    return None
+                
                 # Create transcript file
                 transcript_path = self.audio_processor.create_transcript_file(transcription, uploaded_file.name)
                 
                 if transcript_path:
+                    logger.info(f"Transcript saved to: {transcript_path}")
                     # Read the transcript as text content
                     with open(transcript_path, 'r', encoding='utf-8') as f:
                         text_content = f.read()
@@ -656,6 +673,7 @@ class WebFileHandler:
                     # Add transcript path to saved paths
                     self.saved_pdf_paths.append(transcript_path)
                 else:
+                    logger.warning("Failed to create transcript file, using transcription directly")
                     text_content = transcription
                     
             else:
@@ -663,6 +681,7 @@ class WebFileHandler:
                 return None
 
             if text_content and text_content.strip():
+                logger.info(f"Processing text content: {len(text_content)} characters")
                 chunks = self.text_processor.chunk_text(text_content)
                 documents = []
                 for i, chunk in enumerate(chunks):
@@ -684,7 +703,11 @@ class WebFileHandler:
                 return None
 
         except Exception as e:
+            # FIX: Actually capture and log the error details
+            import traceback
+            error_details = traceback.format_exc()
             logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
+            logger.error(f"Full traceback: {error_details}")
             return None
 
     def get_saved_pdf_paths(self):
