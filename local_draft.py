@@ -26,6 +26,7 @@ import streamlit as st
 import openpyxl
 import pandas as pd
 import re
+import tiktoken
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -583,38 +584,39 @@ class VectorStore:
             return None
 
     def add_documents(self, documents: List[Dict]):
-        """Add documents to the vector store using OpenAI embeddings with batching."""
         if not documents:
             return
-        
+
         if not self.initialized:
             logger.error("Model not initialized, cannot add documents")
             return
-        
+
         try:
-            texts = [doc['text'] for doc in documents]
-            
-            # Get all embeddings in a single batch call
-            embeddings = self.get_openai_embeddings_batch(texts)
-            
-            if embeddings is None or len(embeddings) != len(documents):
-                logger.error("Failed to get embeddings for all documents")
-                return
-            
-            self.documents.extend(documents)
-            embeddings = np.array(embeddings)
-            
-            if self.embeddings is None:
-                self.embeddings = embeddings
-            else:
-                self.embeddings = np.vstack([self.embeddings, embeddings])
-            
-            embedding_dim = self.embeddings.shape[1]
-            self.index = faiss.IndexFlatIP(embedding_dim)
-            self.index.add(self.embeddings.astype('float32'))
-            
-            logger.info(f"Added {len(documents)} documents to vector store (OpenAI embeddings - batch)")
-            
+            batches = batch_documents_by_token_limit(documents, max_tokens=250000)
+            print(f"Total batches: {len(batches)}")
+            for i, batch in enumerate(batches):
+                print(f"Processing batch {i+1} with {len(batch)} docs")
+                texts = [doc['text'] for doc in batch]
+                embeddings = self.get_openai_embeddings_batch(texts)
+                if embeddings is None or len(embeddings) != len(batch):
+                    logger.error("Failed to get embeddings for all documents in batch")
+                    continue
+
+                self.documents.extend(batch)
+                embeddings = np.array(embeddings)
+
+                if self.embeddings is None:
+                    self.embeddings = embeddings
+                else:
+                    self.embeddings = np.vstack([self.embeddings, embeddings])
+
+                embedding_dim = self.embeddings.shape[1]
+                if self.index is None:
+                    self.index = faiss.IndexFlatIP(embedding_dim)
+                self.index.add(embeddings.astype('float32'))
+
+                logger.info(f"Added {len(batch)} documents to vector store (OpenAI embeddings - batch)")
+
         except Exception as e:
             logger.error(f"Error adding documents to vector store: {str(e)}")
 
@@ -1154,6 +1156,28 @@ def render_chunk_source_image(source_path, page_num, chunk_text):
     pix.save(img_path)
     doc.close()
     return img_path
+
+def batch_documents_by_token_limit(documents, max_tokens=250000):
+    enc = tiktoken.get_encoding("cl100k_base")
+    batches = []
+    current_batch = []
+    current_tokens = 0
+    for doc in documents:
+        tokens = len(enc.encode(doc['text']))
+        if tokens > max_tokens:
+            print(f"SKIPPING CHUNK: {tokens} tokens (too large for a single batch)")
+            continue  # Skip this chunk
+        if current_tokens + tokens > max_tokens and current_batch:
+            print(f"Creating batch with {len(current_batch)} docs, {current_tokens} tokens")
+            batches.append(current_batch)
+            current_batch = []
+            current_tokens = 0
+        current_batch.append(doc)
+        current_tokens += tokens
+    if current_batch:
+        print(f"Creating batch with {len(current_batch)} docs, {current_tokens} tokens")
+        batches.append(current_batch)
+    return batches
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
