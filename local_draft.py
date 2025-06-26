@@ -625,12 +625,12 @@ class WebFileHandler:
             # Handle different file types
             if ext in ['.pdf', '.docx', '.pptx']:
                 # Existing document processing
-            if ext == ".pdf":
+                if ext == ".pdf":
                     text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
                 elif ext == ".docx":
-                text_content = extract_text_from_docx(temp_path)
+                    text_content = extract_text_from_docx(temp_path)
                 elif ext in [".pptx"]:
-                text_content = extract_text_from_pptx(temp_path)
+                    text_content = extract_text_from_pptx(temp_path)
                 
                 self.saved_pdf_paths.append(temp_path)
                 
