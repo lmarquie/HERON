@@ -239,113 +239,15 @@ if conversation_history:
 if 'chat_input_key_counter' not in st.session_state:
     st.session_state.chat_input_key_counter = 0
 
-def submit_chat_message():
-    chat_input_key = f"chat_input_{st.session_state.chat_input_key}"
-    chat_question = st.session_state.get(chat_input_key, "")
-    if chat_question.strip():
-        # Check if documents are loaded first
-        if not st.session_state.get('documents_loaded', False):
-            # Quick message for no documents
-            answer = "Please upload a document first."
-            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
-            st.rerun()
-        else:
-            # Check if this is a source/graph request
-            question_lower = chat_question.lower()
-            trigger_phrases = [
-                'show me the source', 'show me the graph', 'show me the chart', 'show me the figure',
-                'show me the table', 'show me the image', 'show the source', 'show the graph',
-                'show the chart', 'show the figure', 'show the table', 'show the image',
-                'source for this', 'graph for this', 'chart for this', 'figure for this',
-                'table for this', 'image for this'
-            ]
-            
-            is_source_request = any(phrase in question_lower for phrase in trigger_phrases)
-            
-            if is_source_request:
-                # For source requests, always use the most recent chunk from QuestionHandler
-                question_handler_history = st.session_state.rag_system.question_handler.conversation_history
-                
-                if question_handler_history:
-                    # Get the most recent conversation entry with chunk metadata
-                    most_recent = question_handler_history[-1]
-                    if most_recent.get('source') and most_recent.get('chunk_text'):
-                        # Extract page number from chunk text if not in metadata
-                        page_num = most_recent.get('page')
-                        chunk_text = most_recent.get('chunk_text', '')
-                        
-                        if not page_num:
-                            # Try different patterns for page numbers
-                            page_patterns = [
-                                r'Page (\d+):',
-                                r'page (\d+):',
-                                r'Page (\d+)',
-                                r'page (\d+)',
-                                r'P\.(\d+)',
-                                r'p\.(\d+)'
-                            ]
-                            
-                            for pattern in page_patterns:
-                                page_match = re.search(pattern, chunk_text)
-                                if page_match:
-                                    page_num = int(page_match.group(1))
-                                    break
-                            
-                            if not page_num:
-                                page_num = 1  # Default to page 1 if no page info found
-                        
-                        answer = f"Showing source from: {most_recent.get('source')}, Chunk {most_recent.get('chunk_id', '?')}"
-                        # Create the entry manually to include chunk metadata
-                        entry = {
-                            'question': chat_question,
-                            'answer': answer,
-                            'question_type': 'source_request',
-                            'mode': 'document',
-                            'timestamp': datetime.now().isoformat(),
-                            'source': most_recent.get('source'),
-                            'page': page_num,
-                            'chunk_text': chunk_text
-                        }
-                        st.session_state.rag_system.conversation_history.append(entry)
-                    else:
-                        answer = "No chunk metadata found in the most recent answer."
-                        st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
-                else:
-                    answer = "No previous conversation found. Please ask a question first."
-                    st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
-            else:
-                # Check if this is actually a follow-up question (has previous conversation)
-                # Get the current conversation history to check if there are real Q&A pairs
-                current_history = st.session_state.rag_system.get_conversation_history()
-                has_real_conversation = any(
-                    conv.get('question_type') not in ['error'] 
-                    for conv in current_history
-                )
-                
-                if has_real_conversation:
-                    # Use follow-up processing for actual follow-up questions
-                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
-                else:
-                    # Use regular question processing for new questions
-                    answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
-            st.rerun()
-    # Only increment after rerun, so the key stays in sync
-    st.session_state.chat_input_key += 1
-
-# Show current mode in the placeholder
-current_mode = "Internet Search" if st.session_state.get('internet_mode', False) else "Document Search"
-placeholder_text = f"Ask a question (using {current_mode})..."
-
-# Modern chat input - always visible
+# Replace your entire chat input section with this
 chat_question = st.chat_input(
     placeholder_text,
-    key=f"chat_input_{st.session_state.chat_input_key}"
+    key=f"chat_input_{st.session_state.chat_input_key_counter}"
 )
 
-if chat_question and chat_question != st.session_state.last_processed_question:
-    st.session_state.last_processed_question = chat_question
-    
-    # Process the question
+# Process immediately when question is entered
+if chat_question:
+    # Process the question immediately - no delays, no spinners
     if not st.session_state.get('documents_loaded', False) and not st.session_state.get('internet_mode', False):
         answer = "Please upload a document first or enable Live Web Search."
         st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
@@ -370,9 +272,13 @@ if chat_question and chat_question != st.session_state.last_processed_question:
             else:
                 answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
     
-    # Clear the last processed question and increment key
-    st.session_state.last_processed_question = ""
-    st.session_state.chat_input_key += 1
+    # Increment counter and rerun to show the answer
+    st.session_state.chat_input_key_counter += 1
+    st.rerun()
+
+# Show current mode in the placeholder
+current_mode = "Internet Search" if st.session_state.get('internet_mode', False) else "Document Search"
+placeholder_text = f"Ask a question (using {current_mode})..."
 
 # Sidebar - Clean, organized controls
 with st.sidebar:
