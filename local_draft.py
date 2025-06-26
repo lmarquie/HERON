@@ -37,7 +37,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 ### =================== Text Processing =================== ###
 class TextProcessor:
-    def __init__(self, chunk_size: int = 1500, overlap: int = 30):
+    def __init__(self, chunk_size: int = 1000, overlap: int = 30):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.extracted_images = {}  # Store images for display
@@ -592,7 +592,7 @@ class VectorStore:
             return
 
         try:
-            batch_size = 5  # Try 100, lower if you still get errors
+            batch_size = 100  # Try 100, lower if you still get errors
             for i in range(0, len(documents), batch_size):
                 batch = documents[i:i+batch_size]
                 texts = [doc['text'] for doc in batch]
