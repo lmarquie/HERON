@@ -630,42 +630,28 @@ class AudioProcessor:
 
 class WebFileHandler:
     def __init__(self):
-        self.text_processor = TextProcessor()
-        self.audio_processor = AudioProcessor()
         self.saved_pdf_paths = []
         self.processing_status = {}
-        self.executor = ThreadPoolExecutor(max_workers=3)
-
-    def process_uploaded_files(self, uploaded_files):
-        """Process files uploaded through Streamlit with improved error handling."""
-        documents = []
-        self.saved_pdf_paths = []  # Reset for new uploads
-        self.processing_status = {}
-        
-        # Process files in parallel for better performasence
-        futures = []
-        for uploaded_file in uploaded_files:
-            future = self.executor.submit(self._process_single_file, uploaded_file)
-            futures.append((uploaded_file.name, future))
-        
-        # Collect results
-        for filename, future in futures:
-            try:
-                result = future.result(timeout=100)  # 60 second timeout per file
-                if result:
-                    documents.extend(result)
-                    self.processing_status[filename] = "success"
-                else:
-                    self.processing_status[filename] = "failed"
-            except Exception as e:
-                logger.error(f"Error processing {filename}: {str(e)}")
-                self.processing_status[filename] = "failed"
-        
-        return documents
+        self.text_processor = TextProcessor()
+        self.audio_processor = AudioProcessor()
+        self.processed_audio_files = set()  # Track processed audio files
+        self.is_processing = False  # Add processing flag
 
     def _process_single_file(self, uploaded_file):
-        """Process a single uploaded file."""
+        # Prevent double processing
+        if self.is_processing:
+            logger.info(f"Already processing a file, skipping {uploaded_file.name}")
+            return None
+            
+        self.is_processing = True
+        
         try:
+            # Check if this audio file has already been processed
+            if uploaded_file.name in self.processed_audio_files:
+                logger.info(f"Audio file {uploaded_file.name} already processed, skipping")
+                self.is_processing = False
+                return None
+                
             logger.info(f"Processing file: {uploaded_file.name}")
             ext = os.path.splitext(uploaded_file.name)[1].lower()
             temp_path = f"temp/{uploaded_file.name}"
@@ -698,6 +684,7 @@ class WebFileHandler:
                 # Check if transcription failed
                 if transcription.startswith("Error"):
                     logger.error(f"Transcription failed: {transcription}")
+                    self.is_processing = False
                     return None
                 
                 # Create transcript file
@@ -714,9 +701,13 @@ class WebFileHandler:
                 else:
                     logger.warning("Failed to create transcript file, using transcription directly")
                     text_content = transcription
-                    
+                
+                # Mark this audio file as processed
+                self.processed_audio_files.add(uploaded_file.name)
+                
             else:
                 logger.warning(f"Unsupported file type: {uploaded_file.name}")
+                self.is_processing = False
                 return None
 
             if text_content and text_content.strip():
@@ -736,17 +727,19 @@ class WebFileHandler:
                             }
                         })
                 logger.info(f"Successfully processed {uploaded_file.name}: {len(documents)} chunks")
+                self.is_processing = False
                 return documents
             else:
                 logger.warning(f"No text content extracted from {uploaded_file.name}")
+                self.is_processing = False
                 return None
 
         except Exception as e:
-            # FIX: Actually capture and log the error details
             import traceback
             error_details = traceback.format_exc()
             logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
             logger.error(f"Full traceback: {error_details}")
+            self.is_processing = False
             return None
 
     def get_saved_pdf_paths(self):
