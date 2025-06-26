@@ -592,7 +592,7 @@ class VectorStore:
             return
 
         try:
-            batch_size = 100  # Try 100, lower if you still get errors
+            batch_size = 5  # Try 100, lower if you still get errors
             for i in range(0, len(documents), batch_size):
                 batch = documents[i:i+batch_size]
                 texts = [doc['text'] for doc in batch]
