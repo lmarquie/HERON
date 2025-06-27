@@ -1646,13 +1646,14 @@ class RAGSystem:
     def process_chart_request(self, question: str, pdf_path: str = None) -> list:
         """Process requests for charts/graphs and return image files."""
         try:
+            logger.info(f"Starting chart request processing for: {question}")
+            
             # Determine which PDF to search
             if pdf_path is None:
                 # First try to get PDF paths from the file handler
                 if hasattr(self, 'file_handler') and self.file_handler:
                     saved_paths = self.file_handler.get_saved_pdf_paths()
                     if saved_paths:
-                        # Use the first PDF path found
                         pdf_path = saved_paths[0]
                         logger.info(f"Using PDF path from file handler: {pdf_path}")
                 
@@ -1660,23 +1661,31 @@ class RAGSystem:
                 if not pdf_path:
                     conversation_history = self.get_conversation_history()
                     if conversation_history:
-                        # Find the most recent document source
                         for conv in reversed(conversation_history):
                             if 'source' in conv:
                                 pdf_path = conv['source']
+                                logger.info(f"Using PDF path from conversation: {pdf_path}")
                                 break
             
-            if not pdf_path or not os.path.exists(pdf_path):
+            if not pdf_path:
+                logger.error("No PDF path found")
                 return []
+            
+            if not os.path.exists(pdf_path):
+                logger.error(f"PDF file does not exist: {pdf_path}")
+                return []
+            
+            logger.info(f"Processing PDF: {pdf_path}")
             
             # Check if asking for a specific page
             import re
             page_match = re.search(r'page\s+(\d+)', question.lower())
             if page_match:
                 page_number = int(page_match.group(1))
-                logger.info(f"Converting page {page_number} to image")
+                logger.info(f"Converting specific page {page_number} to image")
                 image_path = self.chart_extractor.convert_single_page_to_image(pdf_path, page_number)
-                if image_path:
+                if image_path and os.path.exists(image_path):
+                    logger.info(f"Successfully created image: {image_path}")
                     return [{
                         'type': 'chart_image',
                         'page': page_number,
@@ -1684,6 +1693,7 @@ class RAGSystem:
                         'description': f"Chart from page {page_number}"
                     }]
                 else:
+                    logger.error(f"Failed to create image for page {page_number}")
                     return []
             
             # Get relevant pages for the question
@@ -1694,18 +1704,23 @@ class RAGSystem:
                 relevant_pages = [1, 2, 3]
                 logger.info("No relevant pages found, using first 3 pages")
             
+            logger.info(f"Converting pages to images: {relevant_pages}")
+            
             # Convert relevant pages to images
             chart_images = []
             for page_num in relevant_pages:
                 logger.info(f"Converting page {page_num} to image")
                 image_path = self.chart_extractor.convert_single_page_to_image(pdf_path, page_num)
-                if image_path:
+                if image_path and os.path.exists(image_path):
+                    logger.info(f"Successfully created image for page {page_num}: {image_path}")
                     chart_images.append({
                         'type': 'chart_image',
                         'page': page_num,
                         'image_path': image_path,
                         'description': f"Chart from page {page_num}"
                     })
+                else:
+                    logger.error(f"Failed to create image for page {page_num}")
             
             logger.info(f"Generated {len(chart_images)} chart images")
             return chart_images
