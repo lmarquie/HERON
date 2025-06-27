@@ -1898,22 +1898,64 @@ class PDFChartExtractor:
         os.makedirs(self.output_dir, exist_ok=True)
 
     def convert_pdf_to_images(self, pdf_path):
-        """Convert PDF pages to images using pdf2image."""
+        """Convert PDF pages to images using PyMuPDF instead of pdf2image."""
         try:
-            # Convert PDF to images
-            images = convert_from_path(pdf_path, dpi=200)
+            import fitz  # PyMuPDF
             
-            # Save images
+            # Open the PDF
+            doc = fitz.open(pdf_path)
             image_paths = []
-            for i, image in enumerate(images):
-                image_path = os.path.join(self.output_dir, f"page_{i+1}.png")
-                image.save(image_path, "PNG")
+            
+            # Convert each page to image
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                
+                # Render page as image
+                pix = page.get_pixmap(dpi=200)
+                
+                # Save image
+                image_path = os.path.join(self.output_dir, f"page_{page_num + 1}.png")
+                pix.save(image_path)
                 image_paths.append(image_path)
             
+            doc.close()
             return image_paths
+            
         except Exception as e:
-            logger.error(f"Error converting PDF to images: {str(e)}")
+            logger.error(f"Error converting PDF to images with PyMuPDF: {str(e)}")
             return []
+
+    def get_chart_data_by_page(self, pdf_path, page_number):
+        """Extract chart data from a specific page using PyMuPDF."""
+        try:
+            import fitz  # PyMuPDF
+            
+            # Open the PDF
+            doc = fitz.open(pdf_path)
+            
+            if page_number > len(doc) or page_number < 1:
+                return f"Page {page_number} not found. PDF has {len(doc)} pages."
+            
+            # Get the specific page
+            page = doc.load_page(page_number - 1)  # 0-based index
+            
+            # Render page as image
+            pix = page.get_pixmap(dpi=200)
+            
+            # Save the page image
+            image_path = os.path.join(self.output_dir, f"page_{page_number}.png")
+            pix.save(image_path)
+            
+            doc.close()
+            
+            # Process the image
+            extracted_text = self.process_image_and_extract_text(image_path)
+            
+            return extracted_text if extracted_text else f"No chart data found on page {page_number}"
+            
+        except Exception as e:
+            logger.error(f"Error extracting chart data from page {page_number}: {str(e)}")
+            return f"Error processing page {page_number}: {str(e)}"
 
     def process_image_and_extract_text(self, image_path, output_dir=None):
         """Process a single image and extract text/chart data using GPT-4 Vision."""
@@ -1991,28 +2033,6 @@ class PDFChartExtractor:
         except Exception as e:
             logger.error(f"Error processing PDF for charts: {str(e)}")
             return {}
-
-    def get_chart_data_by_page(self, pdf_path, page_number):
-        """Extract chart data from a specific page."""
-        try:
-            # Convert specific page to image
-            images = convert_from_path(pdf_path, dpi=200, first_page=page_number, last_page=page_number)
-            
-            if not images:
-                return f"No data found on page {page_number}"
-            
-            # Save the page image
-            image_path = os.path.join(self.output_dir, f"page_{page_number}.png")
-            images[0].save(image_path, "PNG")
-            
-            # Process the image
-            extracted_text = self.process_image_and_extract_text(image_path)
-            
-            return extracted_text if extracted_text else f"No chart data found on page {page_number}"
-            
-        except Exception as e:
-            logger.error(f"Error extracting chart data from page {page_number}: {str(e)}")
-            return f"Error processing page {page_number}: {str(e)}"
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
