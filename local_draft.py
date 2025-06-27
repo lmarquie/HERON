@@ -432,37 +432,50 @@ class AudioProcessor:
     def load_whisper_model(self):
         """Load Whisper model for transcription."""
         try:
-            if self.whisper_model is None:
-                logger.info("Loading Whisper model...")
-                self.whisper_model = whisper.load_model("base")  # Options: tiny, base, small, medium, large
-                logger.info("Whisper model loaded successfully")
+            logger.info("Loading Whisper model...")
+            # Use "base" model for speed (still very accurate)
+            self.whisper_model = whisper.load_model("base")  # Much faster than "medium" or "large"
+            logger.info("Whisper model loaded successfully")
         except Exception as e:
             logger.error(f"Error loading Whisper model: {str(e)}")
     
     def convert_audio_format(self, audio_path: str, target_format: str = "wav") -> str:
-        """Convert audio file to target format."""
-        if not self.ffmpeg_available:
-            logger.warning("FFmpeg not available. Using original audio file.")
-            return audio_path
-        
+        """Convert audio to WAV format using FFmpeg with optimized settings."""
         try:
-            # Load audio file
-            audio = AudioSegment.from_file(audio_path)
+            if not self.ffmpeg_available:
+                logger.error("FFmpeg not available for audio conversion")
+                return audio_path
             
-            # Create temp file for converted audio
-            temp_dir = "temp"
-            os.makedirs(temp_dir, exist_ok=True)
+            # Create output path
+            base_name = os.path.splitext(audio_path)[0]
+            output_path = f"{base_name}.{target_format}"
             
-            filename = os.path.basename(audio_path)
-            name_without_ext = os.path.splitext(filename)[0]
-            converted_path = os.path.join(temp_dir, f"{name_without_ext}.{target_format}")
+            logger.info(f"Converting {audio_path} to {output_path}")
             
-            # Export to target format
-            audio.export(converted_path, format=target_format)
+            # Use optimized FFmpeg settings for speed
+            cmd = [
+                'ffmpeg', '-i', audio_path,
+                '-acodec', 'pcm_s16le',  # 16-bit PCM
+                '-ar', '16000',          # 16kHz sample rate (Whisper's preferred)
+                '-ac', '1',              # Mono
+                '-y',                    # Overwrite output
+                '-threads', '4',         # Use multiple threads
+                '-preset', 'ultrafast',  # Fastest encoding preset
+                output_path
+            ]
             
-            logger.info(f"Converted {audio_path} to {converted_path}")
-            return converted_path
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             
+            if result.returncode != 0:
+                logger.error(f"FFmpeg conversion failed: {result.stderr}")
+                return audio_path
+            
+            logger.info(f"Successfully converted to {output_path}")
+            return output_path
+            
+        except subprocess.TimeoutExpired:
+            logger.error("FFmpeg conversion timed out")
+            return audio_path
         except Exception as e:
             logger.error(f"Error converting audio format: {str(e)}")
             return audio_path
@@ -628,6 +641,91 @@ class AudioProcessor:
             logger.error(f"Error creating transcript file: {str(e)}")
             return None
 
+    def _transcribe_long_audio_chunked(self, audio_path: str, duration: float) -> str:
+        """Transcribe long audio files in parallel chunks."""
+        try:
+            import librosa
+            import soundfile as sf
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            
+            # Load audio
+            audio, sr = librosa.load(audio_path, sr=16000)
+            
+            # Split into 5-minute chunks
+            chunk_duration = 300  # 5 minutes in seconds
+            chunk_samples = int(chunk_duration * sr)
+            
+            # Prepare chunks
+            chunks = []
+            for i in range(0, len(audio), chunk_samples):
+                chunk = audio[i:i + chunk_samples]
+                chunk_start = i / sr
+                chunk_end = min((i + chunk_samples) / sr, duration)
+                chunk_num = len(chunks) + 1
+                
+                # Save chunk to temporary file
+                chunk_path = f"temp_chunk_{chunk_num}.wav"
+                sf.write(chunk_path, chunk, sr, subtype='PCM_16')
+                chunks.append((chunk_num, chunk_path, chunk_start, chunk_end))
+            
+            print(f" Processing {len(chunks)} chunks in parallel...")
+            
+            # Process chunks in parallel
+            transcriptions = [None] * len(chunks)
+            
+            def transcribe_chunk(chunk_info):
+                chunk_num, chunk_path, chunk_start, chunk_end = chunk_info
+                try:
+                    print(f" Processing chunk {chunk_num}: {chunk_start/60:.1f}m - {chunk_end/60:.1f}m")
+                    
+                    result = self.whisper_model.transcribe(
+                        chunk_path,
+                        language="en",
+                        task="transcribe",
+                        fp16=False
+                    )
+                    
+                    chunk_text = result.get('text', '').strip()
+                    
+                    # Clean up temporary file
+                    os.remove(chunk_path)
+                    
+                    if chunk_text:
+                        print(f"✅ Chunk {chunk_num} completed: {len(chunk_text)} characters")
+                        return chunk_num - 1, chunk_text
+                    else:
+                        print(f"⚠️ Chunk {chunk_num} returned no text")
+                        return chunk_num - 1, ""
+                    
+                except Exception as e:
+                    print(f"❌ Error transcribing chunk {chunk_num}: {str(e)}")
+                    if os.path.exists(chunk_path):
+                        os.remove(chunk_path)
+                    return chunk_num - 1, ""
+            
+            # Use ThreadPoolExecutor for parallel processing
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_chunk = {executor.submit(transcribe_chunk, chunk): chunk for chunk in chunks}
+                
+                for future in as_completed(future_to_chunk):
+                    chunk_idx, text = future.result()
+                    if text:
+                        transcriptions[chunk_idx] = text
+            
+            # Combine transcriptions in order
+            final_transcription = " ".join([t for t in transcriptions if t])
+            
+            if final_transcription:
+                print(f" Full transcription completed! Total: {len(final_transcription)} characters")
+                return final_transcription
+            else:
+                print("❌ No transcription completed")
+                return "No speech detected in audio file."
+            
+        except Exception as e:
+            logger.error(f"Error in parallel chunked transcription: {str(e)}")
+            return f"Error transcribing long audio: {str(e)}"
+
 class WebFileHandler:
     def __init__(self):
         self.saved_pdf_paths = []
@@ -655,7 +753,7 @@ class WebFileHandler:
         except Exception as e:
             logger.error(f"Error processing web uploads: {str(e)}")
             return []
-    
+
     def _process_single_file(self, uploaded_file):
         # Prevent double processing
         if self.is_processing:
@@ -685,9 +783,9 @@ class WebFileHandler:
                 if ext == ".pdf":
                     text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
                 elif ext == ".docx":
-                    text_content = extract_text_from_docx(temp_path)
+                    text_content = self.text_processor.extract_text_from_docx(temp_path)
                 elif ext in [".pptx"]:
-                    text_content = extract_text_from_pptx(temp_path)
+                    text_content = self.text_processor.extract_text_from_pptx(temp_path)
                 
                 self.saved_pdf_paths.append(temp_path)
                 
@@ -793,7 +891,7 @@ class VectorStore:
                 logger.info("Hugging Face embedding model initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize Hugging Face model: {str(e)}")
-                self.initialized = False
+                    self.initialized = False
                 return
         
         self.model = VectorStore._model  # Use the shared model
@@ -804,7 +902,7 @@ class VectorStore:
         try:
             if not self.initialized or self.model is None:
                 logger.error("Model not initialized")
-                return None
+            return None
 
             # Get embeddings for all texts at once
             embeddings = self.model.encode(texts, convert_to_tensor=False)
@@ -1474,18 +1572,18 @@ def render_chunk_source_image(source_path, page_num, chunk_text):
     import fitz
     import os
     os.makedirs("temp", exist_ok=True)
-    doc = fitz.open(source_path)
-    page = doc.load_page(page_num - 1)  # 0-based index
-    # Try to highlight all instances of the chunk text
-    if chunk_text:
+        doc = fitz.open(source_path)
+        page = doc.load_page(page_num - 1)  # 0-based index
+        # Try to highlight all instances of the chunk text
+        if chunk_text:
         text_instances = page.search_for(chunk_text)
-        for inst in text_instances:
-            page.add_highlight_annot(inst)
-    pix = page.get_pixmap(dpi=200)
+                for inst in text_instances:
+                    page.add_highlight_annot(inst)
+        pix = page.get_pixmap(dpi=200)
     img_path = f"temp/page_{page_num}_chunk_highlighted.png"
-    pix.save(img_path)
-    doc.close()
-    return img_path
+        pix.save(img_path)
+        doc.close()
+        return img_path
         
 def batch_documents_by_token_limit(documents, max_tokens=16384):
     enc = tiktoken.get_encoding("cl100k_base")
@@ -1628,11 +1726,11 @@ class OnDemandImageProcessor:
                     logger.warning(f"Error processing page {page_idx + 1}: {str(e)}")
                     continue
             
-            doc.close()
+        doc.close()
             logger.info(f"Extracted {len(images)} images from PDF")
             return images
         
-        except Exception as e:
+    except Exception as e:
             logger.error(f"Error extracting images from PDF: {str(e)}")
             return []
     
