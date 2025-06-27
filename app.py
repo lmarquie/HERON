@@ -16,7 +16,6 @@ import io
 import subprocess
 import sys
 import importlib
-import time
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -626,10 +625,17 @@ def submit_chat_message():
                     else:
                         # Add loading indicator for all question processing
                         with st.spinner("🤔 Thinking..."):
-                            # FIXED: Check if both modes are enabled
-                            if st.session_state.get('use_both_modes', False):
-                                # Both modes enabled - use the new method
-                                answer = st.session_state.rag_system.process_question_both_modes(chat_question, normalize_length=True)
+                            # Check if both modes are enabled
+                            if st.session_state.get('use_both_modes', False) and st.session_state.get('documents_loaded', False):
+                                # Try document search first, then web search if no good results
+                                doc_answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+                                
+                                # If document answer is generic, try web search
+                                if "No relevant information found" in doc_answer or "No documents loaded" in doc_answer:
+                                    web_answer = st.session_state.rag_system.process_live_web_question(chat_question)
+                                    answer = f"Document Search: {doc_answer}\n\nWeb Search: {web_answer}"
+                                else:
+                                    answer = f"Document Search: {doc_answer}"
                                     
                             elif st.session_state.get('internet_mode', False):
                                 # Use live web search only
@@ -689,9 +695,6 @@ with st.sidebar:
             
             if audio_files:
                 st.info(f"🎵 Found {len(audio_files)} audio file(s) - will transcribe to text")
-                # Add specific progress for audio files
-                if len(audio_files) > 0:
-                    st.warning("⚠️ Audio transcription may take several minutes for large files. Please be patient.")
             
             with st.spinner("Processing..."):
                 if st.session_state.rag_system.process_web_uploads(uploaded_files):
@@ -939,46 +942,6 @@ with st.sidebar:
         result = test_image_extraction()
         st.info(result)
 
-    # Add this debug function to test chart processing
-    def test_chart_processing():
-        """Test function to debug chart processing."""
-        try:
-            # Test the chart processing directly
-            if hasattr(st.session_state, 'rag_system'):
-                # Get the first PDF path
-                pdf_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
-                if pdf_paths:
-                    pdf_path = pdf_paths[0]
-                    st.write(f"Testing with PDF: {pdf_path}")
-                    
-                    # Test converting page 1
-                    chart_extractor = st.session_state.rag_system.chart_extractor
-                    image_path = chart_extractor.convert_single_page_to_image(pdf_path, 1)
-                    
-                    if image_path:
-                        st.write(f"Image created at: {image_path}")
-                        st.write(f"File exists: {os.path.exists(image_path)}")
-                        
-                        # Try to display the image
-                        if os.path.exists(image_path):
-                            with open(image_path, "rb") as img_file:
-                                st.image(img_file, caption="Test Image")
-                            st.success("✅ Image displayed successfully!")
-                        else:
-                            st.error("❌ Image file not found on disk")
-                    else:
-                        st.error("❌ Failed to create image")
-                else:
-                    st.error("❌ No PDF paths found")
-            else:
-                st.error("❌ RAG system not initialized")
-        except Exception as e:
-            st.error(f"❌ Error in test: {str(e)}")
-
-    # Add this to the sidebar for testing
-    if st.button("🔧 Test Chart Processing"):
-        test_chart_processing()
-
 # Minimal error display in main area
 if st.session_state.error_count > 0:
     st.error(f"{st.session_state.error_count} error(s) - check sidebar for details.")
@@ -1019,106 +982,4 @@ def install_system_dependencies():
 
 # Call this function when the app starts
 if __name__ == "__main__":
-    install_system_dependencies()
-
-# Find your current chat input section and add this right after it
-def add_image_input_to_search():
-    """Add image input functionality to the existing search bar."""
-    
-    # Add a small divider
-    st.markdown("---")
-    
-    # Image upload section
-    st.markdown("#### 🖼️ Image Analysis")
-    
-    # Create columns for layout
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        uploaded_image = st.file_uploader(
-            "Upload image for analysis",
-            type=['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'],
-            key="image_uploader",
-            help="Upload an image to analyze its content, extract text, or analyze charts"
-        )
-    
-    with col2:
-        analysis_type = st.selectbox(
-            "Analysis Type",
-            ["General", "OCR", "Charts", "Custom"],
-            help="Choose analysis type"
-        )
-    
-    # Show uploaded image and custom question if needed
-    if uploaded_image is not None:
-        # Display the uploaded image
-        st.image(uploaded_image, caption="Uploaded Image", width=300)
-        
-        # Custom question input if needed
-        custom_question = ""
-        if analysis_type == "Custom":
-            custom_question = st.text_area(
-                "Ask about this image:",
-                placeholder="e.g., What data does this chart show?",
-                height=60
-            )
-        
-        # Submit button for image analysis
-        if st.button("🔍 Analyze Image", use_container_width=True):
-            if uploaded_image is not None:
-                process_image_analysis(uploaded_image, analysis_type, custom_question)
-            else:
-                st.warning("Please upload an image first")
-
-# Add this function to handle image analysis
-def process_image_analysis(uploaded_image, analysis_type, custom_question=""):
-    """Process uploaded image for analysis."""
-    try:
-        # Save uploaded image temporarily
-        temp_image_path = f"temp_uploaded_image_{int(time.time())}.png"
-        with open(temp_image_path, "wb") as f:
-            f.write(uploaded_image.getbuffer())
-        
-        # Process based on analysis type
-        if analysis_type == "General":
-            question = "Please analyze this image and describe what you see in detail."
-        elif analysis_type == "OCR":
-            question = "Please extract and transcribe all text visible in this image."
-        elif analysis_type == "Charts":
-            question = "Please analyze this chart or graph and extract the data, trends, and key insights."
-        elif analysis_type == "Custom":
-            question = custom_question if custom_question else "Please analyze this image."
-        
-        # Add to conversation history
-        st.session_state.rag_system.add_to_conversation_history(
-            f"[Image Analysis: {analysis_type}] {question}",
-            "Processing image...",
-            "image_analysis",
-            "image"
-        )
-        
-        # Process with GPT-4 Vision
-        with st.spinner("Analyzing image..."):
-            answer = st.session_state.rag_system.analyze_image_with_gpt4(temp_image_path, question)
-            
-            # Update conversation history with result
-            st.session_state.rag_system.add_to_conversation_history(
-                f"[Image Analysis: {analysis_type}] {question}",
-                answer,
-                "image_analysis",
-                "image"
-            )
-        
-        # Clean up temp file
-        if os.path.exists(temp_image_path):
-            os.remove(temp_image_path)
-        
-        st.success("Image analysis completed!")
-        st.rerun()
-        
-    except Exception as e:
-        st.error(f"Error analyzing image: {str(e)}")
-        logger.error(f"Image analysis error: {str(e)}")
-
-# Add this right after your existing chat input section
-add_image_input_to_search() 
+    install_system_dependencies() 
