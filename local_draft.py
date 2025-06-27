@@ -1746,6 +1746,71 @@ class RAGSystem:
             logger.error(f"Error getting relevant pages: {str(e)}")
             return []
 
+    # Add this debug method to the RAGSystem class (add it after the existing methods)
+    def debug_chart_processing(self, question: str):
+        """Debug method to see what's happening with chart processing."""
+        try:
+            logger.info("=== DEBUGGING CHART PROCESSING ===")
+            
+            # Check if file handler exists
+            if hasattr(self, 'file_handler') and self.file_handler:
+                saved_paths = self.file_handler.get_saved_pdf_paths()
+                logger.info(f"File handler saved paths: {saved_paths}")
+            else:
+                logger.info("No file handler found")
+            
+            # Check conversation history
+            conv_history = self.get_conversation_history()
+            logger.info(f"Conversation history length: {len(conv_history)}")
+            
+            # Try to get PDF path
+            pdf_path = None
+            if hasattr(self, 'file_handler') and self.file_handler:
+                saved_paths = self.file_handler.get_saved_pdf_paths()
+                if saved_paths:
+                    pdf_path = saved_paths[0]
+                    logger.info(f"Using PDF path from file handler: {pdf_path}")
+            
+            if not pdf_path:
+                for conv in reversed(conv_history):
+                    if conv.get('source'):
+                        pdf_path = conv['source']
+                        logger.info(f"Using PDF path from conversation: {pdf_path}")
+                        break
+            
+            if not pdf_path:
+                logger.error("No PDF path found!")
+                return "No PDF path found"
+            
+            if not os.path.exists(pdf_path):
+                logger.error(f"PDF file does not exist: {pdf_path}")
+                return f"PDF file does not exist: {pdf_path}"
+            
+            # Check if chart_extractor exists
+            if not hasattr(self, 'chart_extractor'):
+                logger.error("No chart_extractor found!")
+                return "No chart_extractor found"
+            
+            # Try to convert first page
+            logger.info("Attempting to convert page 1 to image...")
+            image_path = self.chart_extractor.convert_single_page_to_image(pdf_path, 1)
+            
+            if image_path:
+                logger.info(f"Successfully created image: {image_path}")
+                if os.path.exists(image_path):
+                    logger.info("Image file exists on disk")
+                    return f"Success! Image created: {image_path}"
+                else:
+                    logger.error("Image file does not exist on disk")
+                    return "Image file does not exist on disk"
+            else:
+                logger.error("convert_single_page_to_image returned None")
+                return "convert_single_page_to_image returned None"
+                
+        except Exception as e:
+            logger.error(f"Debug error: {str(e)}")
+            return f"Debug error: {str(e)}"
+
 # --- Add helper functions for text extraction ---
 def extract_text_from_docx(path):
     try:
