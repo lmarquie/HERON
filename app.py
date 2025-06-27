@@ -538,7 +538,30 @@ def submit_chat_message():
         if is_chart_request(chat_question):
             # Process chart request with progress indicator
             with st.spinner("🔄 Converting PDF pages to images..."):
-                chart_results = st.session_state.rag_system.process_chart_request(chat_question)
+                # Add debug info
+                st.write("Debug: Processing chart request")
+                
+                # Check if documents are loaded
+                if st.session_state.get('documents_loaded', False):
+                    st.write("Debug: Documents are loaded")
+                    
+                    # Check file handler
+                    if hasattr(st.session_state.rag_system, 'file_handler') and st.session_state.rag_system.file_handler:
+                        saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
+                        st.write(f"Debug: Saved PDF paths: {saved_paths}")
+                    else:
+                        st.write("Debug: No file handler found")
+                    
+                    # Check conversation history
+                    conv_history = st.session_state.rag_system.get_conversation_history()
+                    st.write(f"Debug: Conversation history length: {len(conv_history)}")
+                    
+                    # Process the request
+                    chart_results = st.session_state.rag_system.process_chart_request(chat_question)
+                    st.write(f"Debug: Chart results: {chart_results}")
+                else:
+                    st.write("Debug: No documents loaded")
+                    chart_results = []
             
             if not chart_results:
                 st.warning("No charts found or error processing charts")
