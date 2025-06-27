@@ -445,12 +445,12 @@ if conversation_history:
                                 st.warning(f"Could not render source image. Expected path: {img_path}")
                         else:
                             st.warning(f"Source PDF not found: {source}")
-                            st.info("Available files in temp directory:")
-                            if os.path.exists("temp"):
-                                for file in os.listdir("temp"):
-                                    st.text(f"  - {file}")
-                            else:
-                                st.text("  - temp directory doesn't exist")
+                                st.info("Available files in temp directory:")
+                                if os.path.exists("temp"):
+                                    for file in os.listdir("temp"):
+                                        st.text(f"  - {file}")
+                                else:
+                                    st.text("  - temp directory doesn't exist")
                     else:
                         # Show button for other cases
                         show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
@@ -607,7 +607,7 @@ def submit_chat_message():
             st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
             st.rerun()
             
-        else:
+                    else:
             # Add loading indicator for all question processing
             with st.spinner("🤔 Thinking..."):
                 # Check if both modes are enabled
@@ -620,18 +620,18 @@ def submit_chat_message():
                     answer = st.session_state.rag_system.process_live_web_question(chat_question)
                 else:
                     # Use document search only
-                    current_history = st.session_state.rag_system.get_conversation_history()
-                    has_real_conversation = any(
-                        conv.get('question_type') not in ['error'] 
-                        for conv in current_history
-                    )
-                    
-                    if has_real_conversation:
-                        # Use follow-up processing for actual follow-up questions
-                        answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
-                    else:
-                        # Use regular question processing for new questions
-                        answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+                current_history = st.session_state.rag_system.get_conversation_history()
+                has_real_conversation = any(
+                    conv.get('question_type') not in ['error'] 
+                    for conv in current_history
+                )
+                
+                if has_real_conversation:
+                    # Use follow-up processing for actual follow-up questions
+                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+                else:
+                    # Use regular question processing for new questions
+                    answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             
             st.rerun()
     
@@ -1015,44 +1015,44 @@ def process_image_analysis(uploaded_image, analysis_type, custom_question=""):
 if __name__ == "__main__":
     install_system_dependencies()
 
-# Image Analysis Section
+# Image Analysis Section - Clean and minimal
 st.markdown("---")
 st.markdown("### 🖼️ Image Analysis")
 
-# Create columns for layout
-col1, col2 = st.columns([3, 1])
+# Simple two-column layout
+col1, col2 = st.columns([2, 1])
 
 with col1:
     uploaded_image = st.file_uploader(
-        "Upload image for analysis",
+        "Upload image",
         type=['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'],
         key="image_uploader",
-        help="Upload an image to analyze its content, extract text, or analyze charts"
+        help="Upload an image to analyze"
     )
 
 with col2:
     analysis_type = st.selectbox(
-        "Analysis Type",
+        "Analysis",
         ["General", "OCR", "Charts", "Custom"],
         help="Choose analysis type"
     )
 
-# Show uploaded image and custom question if needed
+# Show image preview and custom question only when image is uploaded
 if uploaded_image is not None:
-    # Display the uploaded image
-    st.image(uploaded_image, caption="Uploaded Image", width=300)
+    # Display image with better styling
+    st.image(uploaded_image, caption="", width=250)
     
-    # Custom question input if needed
+    # Custom question only if needed
     custom_question = ""
     if analysis_type == "Custom":
-        custom_question = st.text_area(
+        custom_question = st.text_input(
             "Ask about this image:",
             placeholder="e.g., What data does this chart show?",
-            height=60
+            help="Enter your specific question"
         )
     
-    # Submit button for image analysis
-    if st.button("🔍 Analyze Image", use_container_width=True, type="primary"):
+    # Clean analyze button
+    if st.button("🔍 Analyze", use_container_width=True, type="primary"):
         if uploaded_image is not None:
             process_image_analysis(uploaded_image, analysis_type, custom_question)
         else:
