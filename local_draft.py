@@ -1644,7 +1644,7 @@ class RAGSystem:
             return f"Error processing image request: {str(e)}"
 
     def process_chart_request(self, question: str, pdf_path: str = None) -> list:
-        """Process requests for charts/graphs and return actual image files."""
+        """Process requests for charts/graphs and return image files."""
         try:
             # Determine which PDF to search
             if pdf_path is None:
@@ -1652,6 +1652,7 @@ class RAGSystem:
                 if hasattr(self, 'file_handler') and self.file_handler:
                     saved_paths = self.file_handler.get_saved_pdf_paths()
                     if saved_paths:
+                        # Use the first PDF path found
                         pdf_path = saved_paths[0]
                         logger.info(f"Using PDF path from file handler: {pdf_path}")
                 
@@ -1659,6 +1660,7 @@ class RAGSystem:
                 if not pdf_path:
                     conversation_history = self.get_conversation_history()
                     if conversation_history:
+                        # Find the most recent document source
                         for conv in reversed(conversation_history):
                             if 'source' in conv:
                                 pdf_path = conv['source']
@@ -1674,59 +1676,55 @@ class RAGSystem:
                 page_number = int(page_match.group(1))
                 logger.info(f"Converting page {page_number} to image")
                 image_path = self.chart_extractor.convert_single_page_to_image(pdf_path, page_number)
-                if image_path and os.path.exists(image_path):
+                if image_path:
                     return [{
-                        'path': image_path,
+                        'type': 'chart_image',
                         'page': page_number,
-                        'description': f"Page {page_number} converted to image"
+                        'image_path': image_path,
+                        'description': f"Chart from page {page_number}"
                     }]
                 else:
                     return []
             
-            # Get relevant pages instead of processing entire PDF
+            # Get relevant pages for the question
             relevant_pages = self._get_relevant_pages_for_question(question, pdf_path)
             
             if not relevant_pages:
-                logger.info("No relevant pages found, processing first 3 pages only")
-                relevant_pages = [1, 2, 3]  # Default to first 3 pages
+                # If no relevant pages found, try first few pages
+                relevant_pages = [1, 2, 3]
+                logger.info("No relevant pages found, using first 3 pages")
             
-            logger.info(f"Converting relevant pages to images: {relevant_pages}")
-            
-            # Convert only relevant pages to images
-            image_results = []
+            # Convert relevant pages to images
+            chart_images = []
             for page_num in relevant_pages:
-                try:
-                    logger.info(f"Converting page {page_num} to image")
-                    image_path = self.chart_extractor.convert_single_page_to_image(pdf_path, page_num)
-                    if image_path and os.path.exists(image_path):
-                        image_results.append({
-                            'path': image_path,
-                            'page': page_num,
-                            'description': f"Page {page_num} converted to image"
-                        })
-                except Exception as e:
-                    logger.error(f"Error converting page {page_num}: {str(e)}")
-                    continue
+                logger.info(f"Converting page {page_num} to image")
+                image_path = self.chart_extractor.convert_single_page_to_image(pdf_path, page_num)
+                if image_path:
+                    chart_images.append({
+                        'type': 'chart_image',
+                        'page': page_num,
+                        'image_path': image_path,
+                        'description': f"Chart from page {page_num}"
+                    })
             
-            return image_results
+            logger.info(f"Generated {len(chart_images)} chart images")
+            return chart_images
             
         except Exception as e:
             logger.error(f"Error processing chart request: {str(e)}")
             return []
 
     def _get_relevant_pages_for_question(self, question: str, pdf_path: str) -> list:
-        """Get relevant page numbers for a question based on search results and conversation history."""
+        """Get relevant page numbers for a question."""
         try:
             relevant_pages = set()
             
             # Method 1: Get pages from recent search results
-            if hasattr(self, 'question_handler') and self.question_handler:
-                # Search for the question to get relevant chunks
-                search_results = self.vector_store.search(question, k=5)
-                for chunk in search_results:
-                    page = chunk['metadata'].get('page')
-                    if page:
-                        relevant_pages.add(int(page))
+            search_results = self.vector_store.search(question, k=5)
+            for chunk in search_results:
+                page = chunk['metadata'].get('page')
+                if page:
+                    relevant_pages.add(int(page))
             
             # Method 2: Get pages from recent conversation history
             conversation_history = self.get_conversation_history()
