@@ -536,12 +536,7 @@ def submit_chat_message():
     if chat_question.strip():
         # Check if this is a chart request
         if is_chart_request(chat_question):
-            # Debug chart processing first
-            with st.spinner("🔄 Debugging chart processing..."):
-                debug_result = st.session_state.rag_system.debug_chart_processing(chat_question)
-                st.write(f"Debug result: {debug_result}")
-            
-            # Try normal processing
+            # Process chart request with progress indicator
             with st.spinner("🔄 Converting PDF pages to images..."):
                 chart_results = st.session_state.rag_system.process_chart_request(chat_question)
             
@@ -560,7 +555,7 @@ def submit_chat_message():
                     else:
                         st.error(f"Image file not found: {chart_info['image_path']}")
             
-            st.session_state.rag_system.add_to_conversation_history(chat_question, f"Debug: {debug_result}", "chart_request", "document")
+            st.session_state.rag_system.add_to_conversation_history(chat_question, f"Displayed {len(chart_results)} charts", "chart_request", "document")
             st.rerun()
         else:
             # Check if this is an image request FIRST
