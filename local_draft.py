@@ -1678,12 +1678,29 @@ class RAGSystem:
                 extracted_text = self.chart_extractor.get_chart_data_by_page(pdf_path, page_number)
                 return f"**Chart Data from Page {page_number}:**\n\n{extracted_text}"
             
-            # Process entire PDF for charts
-            logger.info("Processing entire PDF for charts")
-            extracted_data = self.chart_extractor.process_pdf_for_charts(pdf_path)
+            # Get relevant pages instead of processing entire PDF
+            relevant_pages = self._get_relevant_pages_for_question(question, pdf_path)
+            
+            if not relevant_pages:
+                logger.info("No relevant pages found, processing first 3 pages only")
+                relevant_pages = [1, 2, 3]  # Default to first 3 pages
+            
+            logger.info(f"Processing charts from relevant pages: {relevant_pages}")
+            
+            # Process only relevant pages for charts
+            extracted_data = {}
+            for page_num in relevant_pages:
+                try:
+                    logger.info(f"Processing page {page_num} for chart data")
+                    page_text = self.chart_extractor.get_chart_data_by_page(pdf_path, page_num)
+                    if page_text and "No chart data found" not in page_text:
+                        extracted_data[page_num] = page_text
+                except Exception as e:
+                    logger.error(f"Error processing page {page_num}: {str(e)}")
+                    continue
             
             if not extracted_data:
-                return "No charts or text data found in the document."
+                return "No charts or text data found in the relevant pages."
             
             # Format the response
             response_parts = []
