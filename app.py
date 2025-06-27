@@ -445,12 +445,12 @@ if conversation_history:
                                 st.warning(f"Could not render source image. Expected path: {img_path}")
                         else:
                             st.warning(f"Source PDF not found: {source}")
-                            st.info("Available files in temp directory:")
-                            if os.path.exists("temp"):
-                                for file in os.listdir("temp"):
-                                    st.text(f"  - {file}")
-                            else:
-                                st.text("  - temp directory doesn't exist")
+                                st.info("Available files in temp directory:")
+                                if os.path.exists("temp"):
+                                    for file in os.listdir("temp"):
+                                        st.text(f"  - {file}")
+                                else:
+                                    st.text("  - temp directory doesn't exist")
                     else:
                         # Show button for other cases
                         show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
@@ -575,73 +575,51 @@ def submit_chat_message():
             
             st.session_state.rag_system.add_to_conversation_history(chat_question, f"Displayed {len(chart_results)} charts", "chart_request", "document")
             st.rerun()
-        else:
-            # Check if this is an image request FIRST
-            if is_image_request(chat_question):
-                # Process image request with visual feedback
-                progress_placeholder = st.empty()
-                progress_placeholder.info("🔍 Searching for images in document...")
-                
-                try:
-                    answer = st.session_state.rag_system.process_image_request(chat_question)
-                    progress_placeholder.empty()
-                    
-                    if "No images found" in answer:
-                        st.warning("No images found in the document")
-                    elif "Error" in answer:
-                        st.error("Error processing images")
-                    else:
-                        st.success("Image analysis completed!")
-                    
-                except Exception as e:
-                    progress_placeholder.error(f"Error: {str(e)}")
-                    answer = f"Error processing image request: {str(e)}"
-                
-                st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "image_request", "document")
-                st.rerun()
-            else:
-                # Check if documents are loaded OR internet mode is enabled
-                if not st.session_state.get('documents_loaded', False) and not st.session_state.get('internet_mode', False):
-                    # Quick message for no documents and no internet mode
-                    answer = "Please upload a document first or enable Live Web Search."
-                    st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
-            st.rerun()
-        else:
-            # Check if this is a source/graph request
-            question_lower = chat_question.lower()
-            trigger_phrases = [
-                'show me the source', 'show me the graph', 'show me the chart', 'show me the figure',
-                        'show me the table', 'show the source', 'show the graph',
-                        'show the chart', 'show the figure', 'show the table',
-                'source for this', 'graph for this', 'chart for this', 'figure for this',
-                        'table for this'
-            ]
             
-            is_source_request = any(phrase in question_lower for phrase in trigger_phrases)
+        # Check if this is an image request
+        elif is_image_request(chat_question):
+            # Process image request with visual feedback
+            progress_placeholder = st.empty()
+            progress_placeholder.info("🔍 Searching for images in document...")
             
-            if is_source_request:
-                        # Source request logic (your existing code)
-                        pass  # Add your existing source request code here
-                    else:
-                        # Add loading indicator for all question processing
-                        with st.spinner("🤔 Thinking..."):
-                            # Check if both modes are enabled
-                            if st.session_state.get('use_both_modes', False) and st.session_state.get('documents_loaded', False):
-                                # Try document search first, then web search if no good results
-                                doc_answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
-                                
-                                # If document answer is generic, try web search
-                                if "No relevant information found" in doc_answer or "No documents loaded" in doc_answer:
-                                    web_answer = st.session_state.rag_system.process_live_web_question(chat_question)
-                                    answer = f"Document Search: {doc_answer}\n\nWeb Search: {web_answer}"
+            try:
+                answer = st.session_state.rag_system.process_image_request(chat_question)
+                progress_placeholder.empty()
+                
+                if "No images found" in answer:
+                    st.warning("No images found in the document")
+                elif "Error" in answer:
+                    st.error("Error processing images")
                 else:
-                                    answer = f"Document Search: {doc_answer}"
-                                    
-                            elif st.session_state.get('internet_mode', False):
-                                # Use live web search only
-                                answer = st.session_state.rag_system.process_live_web_question(chat_question)
-            else:
-                                # Use document search only
+                    st.success("Image analysis completed!")
+                
+            except Exception as e:
+                progress_placeholder.error(f"Error: {str(e)}")
+                answer = f"Error processing image request: {str(e)}"
+            
+            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "image_request", "document")
+            st.rerun()
+            
+        # Check if documents are loaded OR internet mode is enabled
+        elif not st.session_state.get('documents_loaded', False) and not st.session_state.get('internet_mode', False):
+            # Quick message for no documents and no internet mode
+            answer = "Please upload a document first or enable Live Web Search."
+            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
+            st.rerun()
+            
+                    else:
+            # Add loading indicator for all question processing
+            with st.spinner("🤔 Thinking..."):
+                # Check if both modes are enabled
+                if st.session_state.get('use_both_modes', False):
+                    # Both modes enabled - use the existing method
+                    answer = st.session_state.rag_system.process_question_both_modes(chat_question, normalize_length=True)
+                    
+                elif st.session_state.get('internet_mode', False):
+                    # Use live web search only
+                    answer = st.session_state.rag_system.process_live_web_question(chat_question)
+                else:
+                    # Use document search only
                 current_history = st.session_state.rag_system.get_conversation_history()
                 has_real_conversation = any(
                     conv.get('question_type') not in ['error'] 
@@ -654,9 +632,11 @@ def submit_chat_message():
                 else:
                     # Use regular question processing for new questions
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+            
             st.rerun()
+    
     # Only increment after rerun, so the key stays in sync
-        st.session_state.chat_input_key += 1
+    st.session_state.chat_input_key += 1
 
 # Show current mode in the placeholder
 current_mode = "Internet Search" if st.session_state.get('internet_mode', False) else "Document Search"
