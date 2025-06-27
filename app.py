@@ -404,6 +404,7 @@ def is_chart_request(question: str) -> bool:
     """Detect if the question is asking for charts/graphs."""
     question_lower = question.lower()
     chart_keywords = [
+        # Original keywords
         'show me the chart', 'show me the graph', 'show me the figure',
         'display the chart', 'display the graph', 'display the figure',
         'find the chart', 'find the graph', 'find the figure',
@@ -413,7 +414,21 @@ def is_chart_request(question: str) -> bool:
         'what does the chart show', 'what does the graph show',
         'chart information', 'graph information',
         'extract chart', 'extract graph', 'extract figure',
-        'convert chart', 'convert graph', 'convert figure'
+        'convert chart', 'convert graph', 'convert figure',
+        
+        # Additional common phrases
+        'give me a graph', 'give me a chart', 'give me a figure',
+        'create a graph', 'create a chart', 'create a figure',
+        'make a graph', 'make a chart', 'make a figure',
+        'generate a graph', 'generate a chart', 'generate a figure',
+        'plot a graph', 'plot a chart', 'plot a figure',
+        'draw a graph', 'draw a chart', 'draw a figure',
+        'visualize the data', 'visualize data',
+        'chart the data', 'graph the data',
+        'show me a visualization', 'create a visualization',
+        'data visualization', 'financial chart', 'financial graph',
+        'revenue chart', 'revenue graph', 'earnings chart', 'earnings graph',
+        'projection chart', 'projection graph', 'forecast chart', 'forecast graph'
     ]
     return any(keyword in question_lower for keyword in chart_keywords)
 
@@ -619,40 +634,83 @@ with st.sidebar:
                     st.download_button(
                         label="Download PDF",
                         data=pdf_bytes,
-                        file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                        file_name="conversation.pdf",
                         mime="application/pdf",
                         use_container_width=True
                     )
-                else:
-                    st.error("Failed to create PDF")
         
         with col2:
             if st.button("📝 Markdown", use_container_width=True):
-                markdown_content = export_conversation_to_markdown()
-                if markdown_content:
+                md_path = export_conversation_to_markdown()
+                if md_path and os.path.exists(md_path):
+                    with open(md_path, "r", encoding='utf-8') as md_file:
+                        md_content = md_file.read()
                     st.download_button(
-                        label="Download MD",
-                        data=markdown_content,
-                        file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                        label="Download Markdown",
+                        data=md_content,
+                        file_name="conversation.md",
                         mime="text/markdown",
                         use_container_width=True
                     )
-                else:
-                    st.error("Failed to create Markdown")
         
         with col3:
             if st.button("📊 CSV", use_container_width=True):
-                csv_content = export_conversation_to_csv()
-                if csv_content:
+                csv_path = export_conversation_to_csv()
+                if csv_path and os.path.exists(csv_path):
+                    with open(csv_path, "r", encoding='utf-8') as csv_file:
+                        csv_content = csv_file.read()
                     st.download_button(
                         label="Download CSV",
                         data=csv_content,
-                        file_name=f"heron_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        file_name="conversation.csv",
                         mime="text/csv",
                         use_container_width=True
                     )
-                else:
-                    st.error("Failed to create CSV")
+
+    # Add transcription export section
+    st.markdown("---")
+    st.subheader("Audio Transcriptions")
+    
+    # Check if there are any audio transcriptions available
+    if hasattr(st.session_state.rag_system, 'file_handler') and st.session_state.rag_system.file_handler:
+        saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
+        audio_transcripts = [path for path in saved_paths if '_transcript.txt' in path]
+        
+        if audio_transcripts:
+            st.info(f"Found {len(audio_transcripts)} audio transcription(s)")
+            
+            for transcript_path in audio_transcripts:
+                try:
+                    # Read the transcription
+                    with open(transcript_path, 'r', encoding='utf-8') as f:
+                        transcription_text = f.read()
+                    
+                    # Get original filename
+                    base_name = os.path.basename(transcript_path).replace('_transcript.txt', '')
+                    
+                    # Create export button
+                    if st.button(f"Export {base_name} PDF", key=f"export_{base_name}"):
+                        pdf_path = export_transcription_to_pdf(transcription_text, base_name)
+                        if pdf_path and os.path.exists(pdf_path):
+                            with open(pdf_path, "rb") as pdf_file:
+                                pdf_bytes = pdf_file.read()
+                            st.download_button(
+                                label=f"Download {base_name} PDF",
+                                data=pdf_bytes,
+                                file_name=f"{base_name}_transcription.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                                key=f"download_{base_name}"
+                            )
+                        else:
+                            st.error("Failed to create PDF")
+                            
+                except Exception as e:
+                    st.error(f"Error reading transcription {transcript_path}: {str(e)}")
+        else:
+            st.info("No audio transcriptions found. Upload an audio file to create transcriptions.")
+    else:
+        st.info("No file handler available. Upload an audio file first.")
 
     # Session Management Section
     st.markdown("---")
@@ -791,6 +849,96 @@ def install_system_dependencies():
         print("  Ubuntu/Debian: sudo apt-get install ffmpeg")
         print("  macOS: brew install ffmpeg")
         print("  Windows: Download from https://ffmpeg.org/download.html")
+
+def export_transcription_to_pdf(transcription_text: str, filename: str = "transcription"):
+    """Export transcription to PDF for download."""
+    try:
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.lib.colors import black, blue
+        from reportlab.lib.enums import TA_LEFT, TA_CENTER
+        
+        # Create temp directory
+        temp_dir = "temp"
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # Create PDF filename
+        pdf_filename = f"{filename}_transcription.pdf"
+        pdf_path = os.path.join(temp_dir, pdf_filename)
+        
+        # Create the PDF document
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        story = []
+        
+        # Get styles
+        styles = getSampleStyleSheet()
+        
+        # Create custom styles
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            spaceAfter=30,
+            alignment=TA_CENTER,
+            textColor=blue
+        )
+        
+        header_style = ParagraphStyle(
+            'CustomHeader',
+            parent=styles['Heading2'],
+            fontSize=12,
+            spaceAfter=20,
+            textColor=black
+        )
+        
+        body_style = ParagraphStyle(
+            'CustomBody',
+            parent=styles['Normal'],
+            fontSize=11,
+            spaceAfter=12,
+            alignment=TA_LEFT,
+            textColor=black
+        )
+        
+        # Add title
+        title = Paragraph(f"Audio Transcription", title_style)
+        story.append(title)
+        story.append(Spacer(1, 20))
+        
+        # Add metadata
+        metadata = f"""
+        <b>Original File:</b> {filename}<br/>
+        <b>Export Date:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br/>
+        <b>Character Count:</b> {len(transcription_text):,}<br/>
+        <b>Word Count:</b> {len(transcription_text.split()):,}
+        """
+        meta_para = Paragraph(metadata, header_style)
+        story.append(meta_para)
+        story.append(Spacer(1, 30))
+        
+        # Add transcription content
+        # Split transcription into paragraphs for better formatting
+        paragraphs = transcription_text.split('\n\n')
+        
+        for para in paragraphs:
+            if para.strip():
+                # Clean up the paragraph
+                clean_para = para.strip().replace('\n', ' ')
+                if clean_para:
+                    p = Paragraph(clean_para, body_style)
+                    story.append(p)
+                    story.append(Spacer(1, 12))
+        
+        # Build the PDF
+        doc.build(story)
+        
+        return pdf_path
+        
+    except Exception as e:
+        st.error(f"Error creating PDF: {str(e)}")
+        return None
 
 # Call this function when the app starts
 if __name__ == "__main__":
