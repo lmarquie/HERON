@@ -1463,9 +1463,7 @@ class RAGSystem:
         try:
             # Use the ClaudeHandler with internet mode system prompt
             internet_llm = ClaudeHandler(
-                system_prompt="You are a helpful assistant. Answer questions based on current internet knowledge. "
-                "Always include URLs/sources for every fact or statement in your answer. "
-                "If you use multiple sources, cite each one clearly with the URL."
+                system_prompt="You are a financial consultant with access to live web information. Answer questions based on the provided web search results. CRITICAL: When asked about financial data, revenue, projections, or specific figures, ALWAYS lead with the most specific and detailed numerical information available. Do NOT start with vague summaries or general statements. If the context contains specific numbers, dates, or financial figures, present those FIRST. Only provide general commentary AFTER presenting the specific data. Always cite your sources and provide accurate, up-to-date information from the web. No one sentence answers. Always provide a detailed answer."
             )
             
             # For now, return a simple response indicating internet mode
@@ -1818,7 +1816,7 @@ def generate_live_web_answer(question: str) -> str:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant with access to live web information. Answer questions based on the provided web search results. Always cite your sources and provide accurate, up-to-date information from the web."
+                    "content": "You are a financial consultant with access to live web information. Answer questions based on the provided web search results. CRITICAL: When asked about financial data, revenue, projections, or specific figures, ALWAYS lead with the most specific and detailed numerical information available. Do NOT start with vague summaries or general statements. If the context contains specific numbers, dates, or financial figures, present those FIRST. Only provide general commentary AFTER presenting the specific data. Always cite your sources and provide accurate, up-to-date information from the web. No one sentence answers. Always provide a detailed answer."
                 },
                 {
                     "role": "user",
