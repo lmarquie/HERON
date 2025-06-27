@@ -621,7 +621,7 @@ class AudioProcessor:
             else:
                 logger.error(f"Unknown transcription method: {method}")
                 return f"Error: Unknown transcription method {method}"
-                
+            
         except Exception as e:
             logger.error(f"Error processing {audio_path}: {str(e)}")
             return f"Error processing audio: {str(e)}"
@@ -1114,7 +1114,7 @@ class ClaudeHandler:
             "specific and detailed numerical information available. Do NOT start with vague summaries or general statements. "
             "If the context contains specific numbers, dates, or financial figures, present those FIRST. Only provide general "
             "commentary AFTER presenting the specific data. "
-        
+
             "You must provide comprehensive, detailed analysis in paragraph form. Never give one-sentence answers. "
             "Always provide thorough analysis with multiple data points, historical context, year-over-year comparisons, "
             "trend analysis, risk factors, market conditions, competitive analysis, and investment implications. "
@@ -1240,12 +1240,18 @@ class QuestionHandler:
                 results = self.vector_store.search(question, k=k)
                 if not results:
                     return "No relevant information found in the documents."
+                
                 # Build context with metadata for citation
                 context = "\n".join([
                     f"[source: {chunk['metadata'].get('source', 'unknown')}, chunk: {chunk['metadata'].get('chunk_id', '?')}]\n{chunk['text']}"
                     for chunk in results
                 ])
-                answer = self.llm.generate_answer(question, context, normalize_length)
+                
+                # Enhanced question processing - always request comprehensive answers
+                enhanced_question = f"Please provide a comprehensive, detailed analysis of: {question}. Include specific data points, historical context, trends, and implications. Do not provide brief answers - give the full analysis."
+                
+                answer = self.llm.generate_answer(enhanced_question, context, normalize_length=False)  # Force maximum length
+                
                 # Store conversation history with chunk metadata from top result
                 top_chunk = results[0] if results else None
                 self.conversation_history.append({
@@ -2374,37 +2380,6 @@ class PDFChartExtractor:
         except Exception as e:
             logger.error(f"Error processing PDF for charts: {str(e)}")
             return {}
-
-    def convert_single_page_to_image(self, pdf_path, page_number):
-        """Convert a single PDF page to an image."""
-        try:
-            import fitz  # PyMuPDF
-            
-            # Open the PDF
-            doc = fitz.open(pdf_path)
-            
-            if page_number > len(doc) or page_number < 1:
-                logger.error(f"Page {page_number} not found. PDF has {len(doc)} pages.")
-                return None
-            
-            # Get the specific page
-            page = doc.load_page(page_number - 1)  # 0-based index
-            
-            # Render page as image
-            pix = page.get_pixmap(dpi=200)
-            
-            # Save the page image
-            image_path = os.path.join(self.output_dir, f"page_{page_number}.png")
-            pix.save(image_path)
-            
-            doc.close()
-            
-            logger.info(f"Successfully converted page {page_number} to {image_path}")
-            return image_path
-            
-        except Exception as e:
-            logger.error(f"Error converting page {page_number} to image: {str(e)}")
-            return None
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
