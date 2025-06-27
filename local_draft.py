@@ -1107,7 +1107,7 @@ class ClaudeHandler:
         # Enhanced prompt that prioritizes specific, detailed information
         self.system_prompt = (
             system_prompt or
-            "You are a financial consultant. Answer questions based on the provided context. "
+            "You are a financial consultant. GO INTO DETAIL. Answer questions based on the provided context. "
             "IMPORTANT: Always prioritize specific, detailed information over vague summaries. "
             "When multiple sources contain information about the same topic, prefer the source with: "
             "- Specific numbers, dates, and figures "
