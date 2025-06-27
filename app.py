@@ -549,11 +549,12 @@ def submit_chat_message():
                 for i, chart_info in enumerate(chart_results):
                     st.subheader(f"Chart {i+1} - Page {chart_info['page']}")
                     
-                    # Display the image
-                    if os.path.exists(chart_info['image_path']):
-                        st.image(chart_info['image_path'], caption=chart_info['description'])
+                    # Display the image - use the correct key name
+                    image_path = chart_info.get('image_path')
+                    if image_path and os.path.exists(image_path):
+                        st.image(image_path, caption=chart_info.get('description', f"Page {chart_info['page']}"))
                     else:
-                        st.error(f"Image file not found: {chart_info['image_path']}")
+                        st.error(f"Image file not found: {image_path}")
             
             st.session_state.rag_system.add_to_conversation_history(chat_question, f"Displayed {len(chart_results)} charts", "chart_request", "document")
             st.rerun()
