@@ -960,54 +960,8 @@ def install_system_dependencies():
         print("  macOS: brew install ffmpeg")
         print("  Windows: Download from https://ffmpeg.org/download.html")
 
-# Call this function when the app starts
-if __name__ == "__main__":
-    install_system_dependencies()
+# Add this function definition before the install_system_dependencies function
 
-# Image Analysis Section
-st.markdown("---")
-st.markdown("### 🖼️ Image Analysis")
-
-# Create columns for layout
-col1, col2 = st.columns([3, 1])
-
-with col1:
-    uploaded_image = st.file_uploader(
-        "Upload image for analysis",
-        type=['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'],
-        key="image_uploader",
-        help="Upload an image to analyze its content, extract text, or analyze charts"
-    )
-
-with col2:
-    analysis_type = st.selectbox(
-        "Analysis Type",
-        ["General", "OCR", "Charts", "Custom"],
-        help="Choose analysis type"
-    )
-
-# Show uploaded image and custom question if needed
-if uploaded_image is not None:
-    # Display the uploaded image
-    st.image(uploaded_image, caption="Uploaded Image", width=300)
-    
-    # Custom question input if needed
-    custom_question = ""
-    if analysis_type == "Custom":
-        custom_question = st.text_area(
-            "Ask about this image:",
-            placeholder="e.g., What data does this chart show?",
-            height=60
-        )
-    
-    # Submit button for image analysis
-    if st.button("🔍 Analyze Image", use_container_width=True, type="primary"):
-        if uploaded_image is not None:
-            process_image_analysis(uploaded_image, analysis_type, custom_question)
-        else:
-            st.warning("Please upload an image first")
-
-# Add this function to handle image analysis
 def process_image_analysis(uploaded_image, analysis_type, custom_question=""):
     """Process uploaded image for analysis."""
     try:
@@ -1055,4 +1009,51 @@ def process_image_analysis(uploaded_image, analysis_type, custom_question=""):
         
     except Exception as e:
         st.error(f"Error analyzing image: {str(e)}")
-        logger.error(f"Image analysis error: {str(e)}") 
+        logger.error(f"Image analysis error: {str(e)}")
+
+# Call this function when the app starts
+if __name__ == "__main__":
+    install_system_dependencies()
+
+# Image Analysis Section
+st.markdown("---")
+st.markdown("### 🖼️ Image Analysis")
+
+# Create columns for layout
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    uploaded_image = st.file_uploader(
+        "Upload image for analysis",
+        type=['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'],
+        key="image_uploader",
+        help="Upload an image to analyze its content, extract text, or analyze charts"
+    )
+
+with col2:
+    analysis_type = st.selectbox(
+        "Analysis Type",
+        ["General", "OCR", "Charts", "Custom"],
+        help="Choose analysis type"
+    )
+
+# Show uploaded image and custom question if needed
+if uploaded_image is not None:
+    # Display the uploaded image
+    st.image(uploaded_image, caption="Uploaded Image", width=300)
+    
+    # Custom question input if needed
+    custom_question = ""
+    if analysis_type == "Custom":
+        custom_question = st.text_area(
+            "Ask about this image:",
+            placeholder="e.g., What data does this chart show?",
+            height=60
+        )
+    
+    # Submit button for image analysis
+    if st.button("🔍 Analyze Image", use_container_width=True, type="primary"):
+        if uploaded_image is not None:
+            process_image_analysis(uploaded_image, analysis_type, custom_question)
+        else:
+            st.warning("Please upload an image first") 
