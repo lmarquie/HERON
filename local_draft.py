@@ -1700,9 +1700,15 @@ class RAGSystem:
             relevant_pages = self._get_relevant_pages_for_question(question, pdf_path)
             
             if not relevant_pages:
-                # If no relevant pages found, try first few pages
-                relevant_pages = [1, 2, 3]
-                logger.info("No relevant pages found, using first 3 pages")
+                # If no relevant pages found, try first few pages (but check PDF length first)
+                import fitz
+                doc = fitz.open(pdf_path)
+                total_pages = len(doc)
+                doc.close()
+                
+                # Only use pages that actually exist
+                relevant_pages = [i for i in [1, 2, 3] if i <= total_pages]
+                logger.info(f"No relevant pages found, using first {len(relevant_pages)} pages: {relevant_pages}")
             
             logger.info(f"Converting pages to images: {relevant_pages}")
             
