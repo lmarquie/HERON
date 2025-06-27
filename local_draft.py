@@ -1643,8 +1643,8 @@ class RAGSystem:
             logger.error(f"Error processing image request: {str(e)}")
             return f"Error processing image request: {str(e)}"
 
-    def process_chart_request(self, question: str, pdf_path: str = None) -> str:
-        """Process requests for charts/graphs using the PDF to image conversion method."""
+    def process_chart_request(self, question: str, pdf_path: str = None) -> list:
+        """Process requests for charts/graphs and return actual image files."""
         try:
             # Determine which PDF to search
             if pdf_path is None:
@@ -1652,7 +1652,6 @@ class RAGSystem:
                 if hasattr(self, 'file_handler') and self.file_handler:
                     saved_paths = self.file_handler.get_saved_pdf_paths()
                     if saved_paths:
-                        # Use the first PDF path found
                         pdf_path = saved_paths[0]
                         logger.info(f"Using PDF path from file handler: {pdf_path}")
                 
@@ -1660,23 +1659,29 @@ class RAGSystem:
                 if not pdf_path:
                     conversation_history = self.get_conversation_history()
                     if conversation_history:
-                        # Find the most recent document source
                         for conv in reversed(conversation_history):
                             if 'source' in conv:
                                 pdf_path = conv['source']
                                 break
             
             if not pdf_path or not os.path.exists(pdf_path):
-                return "No document found to search for charts. Please make sure you have uploaded a PDF document."
+                return []
             
             # Check if asking for a specific page
             import re
             page_match = re.search(r'page\s+(\d+)', question.lower())
             if page_match:
                 page_number = int(page_match.group(1))
-                logger.info(f"Extracting chart data from page {page_number}")
-                extracted_text = self.chart_extractor.get_chart_data_by_page(pdf_path, page_number)
-                return f"**Chart Data from Page {page_number}:**\n\n{extracted_text}"
+                logger.info(f"Converting page {page_number} to image")
+                image_path = self.chart_extractor.convert_single_page_to_image(pdf_path, page_number)
+                if image_path and os.path.exists(image_path):
+                    return [{
+                        'path': image_path,
+                        'page': page_number,
+                        'description': f"Page {page_number} converted to image"
+                    }]
+                else:
+                    return []
             
             # Get relevant pages instead of processing entire PDF
             relevant_pages = self._get_relevant_pages_for_question(question, pdf_path)
@@ -1685,33 +1690,29 @@ class RAGSystem:
                 logger.info("No relevant pages found, processing first 3 pages only")
                 relevant_pages = [1, 2, 3]  # Default to first 3 pages
             
-            logger.info(f"Processing charts from relevant pages: {relevant_pages}")
+            logger.info(f"Converting relevant pages to images: {relevant_pages}")
             
-            # Process only relevant pages for charts
-            extracted_data = {}
+            # Convert only relevant pages to images
+            image_results = []
             for page_num in relevant_pages:
                 try:
-                    logger.info(f"Processing page {page_num} for chart data")
-                    page_text = self.chart_extractor.get_chart_data_by_page(pdf_path, page_num)
-                    if page_text and "No chart data found" not in page_text:
-                        extracted_data[page_num] = page_text
+                    logger.info(f"Converting page {page_num} to image")
+                    image_path = self.chart_extractor.convert_single_page_to_image(pdf_path, page_num)
+                    if image_path and os.path.exists(image_path):
+                        image_results.append({
+                            'path': image_path,
+                            'page': page_num,
+                            'description': f"Page {page_num} converted to image"
+                        })
                 except Exception as e:
-                    logger.error(f"Error processing page {page_num}: {str(e)}")
+                    logger.error(f"Error converting page {page_num}: {str(e)}")
                     continue
             
-            if not extracted_data:
-                return "No charts or text data found in the relevant pages."
-            
-            # Format the response
-            response_parts = []
-            for page_num, text in extracted_data.items():
-                response_parts.append(f"**Page {page_num}:**\n{text}\n")
-            
-            return "\n".join(response_parts)
+            return image_results
             
         except Exception as e:
             logger.error(f"Error processing chart request: {str(e)}")
-            return f"Error processing chart request: {str(e)}"
+            return []
 
     def _get_relevant_pages_for_question(self, question: str, pdf_path: str) -> list:
         """Get relevant page numbers for a question based on search results and conversation history."""
@@ -2121,6 +2122,37 @@ class PDFChartExtractor:
     def __init__(self):
         self.output_dir = "chart_extractions"
         os.makedirs(self.output_dir, exist_ok=True)
+    
+    def convert_single_page_to_image(self, pdf_path, page_number):
+        """Convert a single PDF page to an image."""
+        try:
+            import fitz  # PyMuPDF
+            
+            # Open the PDF
+            doc = fitz.open(pdf_path)
+            
+            if page_number > len(doc) or page_number < 1:
+                logger.error(f"Page {page_number} not found. PDF has {len(doc)} pages.")
+                return None
+            
+            # Get the specific page
+            page = doc.load_page(page_number - 1)  # 0-based index
+            
+            # Render page as image
+            pix = page.get_pixmap(dpi=200)
+            
+            # Save the page image
+            image_path = os.path.join(self.output_dir, f"page_{page_number}.png")
+            pix.save(image_path)
+            
+            doc.close()
+            
+            logger.info(f"Successfully converted page {page_number} to {image_path}")
+            return image_path
+            
+        except Exception as e:
+            logger.error(f"Error converting page {page_number} to image: {str(e)}")
+            return None
 
     def convert_pdf_to_images(self, pdf_path):
         """Convert PDF pages to images using PyMuPDF instead of pdf2image."""
@@ -2258,6 +2290,37 @@ class PDFChartExtractor:
         except Exception as e:
             logger.error(f"Error processing PDF for charts: {str(e)}")
             return {}
+
+    def convert_single_page_to_image(self, pdf_path, page_number):
+        """Convert a single PDF page to an image."""
+        try:
+            import fitz  # PyMuPDF
+            
+            # Open the PDF
+            doc = fitz.open(pdf_path)
+            
+            if page_number > len(doc) or page_number < 1:
+                logger.error(f"Page {page_number} not found. PDF has {len(doc)} pages.")
+                return None
+            
+            # Get the specific page
+            page = doc.load_page(page_number - 1)  # 0-based index
+            
+            # Render page as image
+            pix = page.get_pixmap(dpi=200)
+            
+            # Save the page image
+            image_path = os.path.join(self.output_dir, f"page_{page_number}.png")
+            pix.save(image_path)
+            
+            doc.close()
+            
+            logger.info(f"Successfully converted page {page_number} to {image_path}")
+            return image_path
+            
+        except Exception as e:
+            logger.error(f"Error converting page {page_number} to image: {str(e)}")
+            return None
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
