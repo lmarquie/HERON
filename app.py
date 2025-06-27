@@ -445,12 +445,12 @@ if conversation_history:
                                 st.warning(f"Could not render source image. Expected path: {img_path}")
                         else:
                             st.warning(f"Source PDF not found: {source}")
-                                st.info("Available files in temp directory:")
-                                if os.path.exists("temp"):
-                                    for file in os.listdir("temp"):
-                                        st.text(f"  - {file}")
-                                else:
-                                    st.text("  - temp directory doesn't exist")
+                            st.info("Available files in temp directory:")
+                            if os.path.exists("temp"):
+                                for file in os.listdir("temp"):
+                                    st.text(f"  - {file}")
+                            else:
+                                st.text("  - temp directory doesn't exist")
                     else:
                         # Show button for other cases
                         show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
