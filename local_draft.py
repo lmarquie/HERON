@@ -33,6 +33,7 @@ from pydub import AudioSegment
 import whisper
 import tempfile
 import subprocess
+from pdf2image import convert_from_path
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -1284,6 +1285,7 @@ class RAGSystem:
             'avg_response_time': 0,
             'error_count': 0
         }
+        self.chart_extractor = PDFChartExtractor()  # Add this line
 
     def process_web_uploads(self, uploaded_files):
         """Process multiple uploaded files."""
@@ -1533,6 +1535,50 @@ class RAGSystem:
         except Exception as e:
             logger.error(f"Error processing image request: {str(e)}")
             return f"Error processing image request: {str(e)}"
+
+    def process_chart_request(self, question: str, pdf_path: str = None) -> str:
+        """Process requests for charts/graphs using the PDF to image conversion method."""
+        try:
+            # Determine which PDF to search
+            if pdf_path is None:
+                # Use the most recent document from conversation history
+                conversation_history = self.get_conversation_history()
+                if conversation_history:
+                    # Find the most recent document source
+                    for conv in reversed(conversation_history):
+                        if 'source' in conv:
+                            pdf_path = conv['source']
+                            break
+            
+            if not pdf_path or not os.path.exists(pdf_path):
+                return "No document found to search for charts."
+            
+            # Check if asking for a specific page
+            import re
+            page_match = re.search(r'page\s+(\d+)', question.lower())
+            if page_match:
+                page_number = int(page_match.group(1))
+                logger.info(f"Extracting chart data from page {page_number}")
+                extracted_text = self.chart_extractor.get_chart_data_by_page(pdf_path, page_number)
+                return f"**Chart Data from Page {page_number}:**\n\n{extracted_text}"
+            
+            # Process entire PDF for charts
+            logger.info("Processing entire PDF for charts")
+            extracted_data = self.chart_extractor.process_pdf_for_charts(pdf_path)
+            
+            if not extracted_data:
+                return "No charts or text data found in the document."
+            
+            # Format the response
+            response_parts = []
+            for page_num, text in extracted_data.items():
+                response_parts.append(f"**Page {page_num}:**\n{text}\n")
+            
+            return "\n".join(response_parts)
+            
+        except Exception as e:
+            logger.error(f"Error processing chart request: {str(e)}")
+            return f"Error processing chart request: {str(e)}"
 
 # --- Add helper functions for text extraction ---
 def extract_text_from_docx(path):
@@ -1828,6 +1874,129 @@ class OnDemandImageProcessor:
         except Exception as e:
             logger.error(f"Error analyzing image with GPT-4: {str(e)}")
             return f"Error analyzing image: {str(e)}"
+
+# Add this new class for PDF to image conversion and chart extraction
+class PDFChartExtractor:
+    def __init__(self):
+        self.output_dir = "chart_extractions"
+        os.makedirs(self.output_dir, exist_ok=True)
+
+    def convert_pdf_to_images(self, pdf_path):
+        """Convert PDF pages to images using pdf2image."""
+        try:
+            # Convert PDF to images
+            images = convert_from_path(pdf_path, dpi=200)
+            
+            # Save images
+            image_paths = []
+            for i, image in enumerate(images):
+                image_path = os.path.join(self.output_dir, f"page_{i+1}.png")
+                image.save(image_path, "PNG")
+                image_paths.append(image_path)
+            
+            return image_paths
+        except Exception as e:
+            logger.error(f"Error converting PDF to images: {str(e)}")
+            return []
+
+    def process_image_and_extract_text(self, image_path, output_dir=None):
+        """Process a single image and extract text/chart data using GPT-4 Vision."""
+        try:
+            if output_dir is None:
+                output_dir = self.output_dir
+            
+            # Open and encode image
+            with open(image_path, "rb") as image_file:
+                image_data = base64.b64encode(image_file.read()).decode('utf-8')
+            
+            # Use OpenAI Vision API to extract text and chart data
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Extract all text and chart data from this image. If there are charts, graphs, or tables, convert them to a tabular format. Include all text content and organize chart data in a clear, structured way."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{image_data}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=4096,
+                temperature=0.1
+            )
+            
+            extracted_text = response.choices[0].message.content
+            
+            # Save extracted text to file
+            page_num = os.path.basename(image_path).split('_')[1].split('.')[0]
+            output_file = os.path.join(output_dir, f"page_{page_num}_extracted.txt")
+            
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(extracted_text)
+            
+            return extracted_text
+            
+        except Exception as e:
+            logger.error(f"Error processing image {image_path}: {str(e)}")
+            return f"Error processing image: {str(e)}"
+
+    def process_pdf_for_charts(self, pdf_path):
+        """Process entire PDF and extract chart data from all pages."""
+        try:
+            # Convert PDF to images
+            image_paths = self.convert_pdf_to_images(pdf_path)
+            
+            if not image_paths:
+                return {}
+            
+            extracted_data = {}
+            
+            # Process each page
+            for i, image_path in enumerate(image_paths):
+                page_num = i + 1
+                logger.info(f"Processing page {page_num} for chart data")
+                
+                extracted_text = self.process_image_and_extract_text(image_path)
+                if extracted_text and not extracted_text.startswith("Error"):
+                    extracted_data[page_num] = extracted_text
+            
+            return extracted_data
+            
+        except Exception as e:
+            logger.error(f"Error processing PDF for charts: {str(e)}")
+            return {}
+
+    def get_chart_data_by_page(self, pdf_path, page_number):
+        """Extract chart data from a specific page."""
+        try:
+            # Convert specific page to image
+            images = convert_from_path(pdf_path, dpi=200, first_page=page_number, last_page=page_number)
+            
+            if not images:
+                return f"No data found on page {page_number}"
+            
+            # Save the page image
+            image_path = os.path.join(self.output_dir, f"page_{page_number}.png")
+            images[0].save(image_path, "PNG")
+            
+            # Process the image
+            extracted_text = self.process_image_and_extract_text(image_path)
+            
+            return extracted_text if extracted_text else f"No chart data found on page {page_number}"
+            
+        except Exception as e:
+            logger.error(f"Error extracting chart data from page {page_number}: {str(e)}")
+            return f"Error processing page {page_number}: {str(e)}"
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
