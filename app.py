@@ -445,12 +445,12 @@ if conversation_history:
                                 st.warning(f"Could not render source image. Expected path: {img_path}")
                         else:
                             st.warning(f"Source PDF not found: {source}")
-                                st.info("Available files in temp directory:")
-                                if os.path.exists("temp"):
-                                    for file in os.listdir("temp"):
-                                        st.text(f"  - {file}")
-                                else:
-                                    st.text("  - temp directory doesn't exist")
+                            st.info("Available files in temp directory:")
+                            if os.path.exists("temp"):
+                                for file in os.listdir("temp"):
+                                    st.text(f"  - {file}")
+                            else:
+                                st.text("  - temp directory doesn't exist")
                     else:
                         # Show button for other cases
                         show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
@@ -607,7 +607,7 @@ def submit_chat_message():
             st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
             st.rerun()
             
-                    else:
+        else:
             # Add loading indicator for all question processing
             with st.spinner("🤔 Thinking..."):
                 # Check if both modes are enabled
@@ -620,18 +620,18 @@ def submit_chat_message():
                     answer = st.session_state.rag_system.process_live_web_question(chat_question)
                 else:
                     # Use document search only
-                current_history = st.session_state.rag_system.get_conversation_history()
-                has_real_conversation = any(
-                    conv.get('question_type') not in ['error'] 
-                    for conv in current_history
-                )
-                
-                if has_real_conversation:
-                    # Use follow-up processing for actual follow-up questions
-                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
-                else:
-                    # Use regular question processing for new questions
-                    answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+                    current_history = st.session_state.rag_system.get_conversation_history()
+                    has_real_conversation = any(
+                        conv.get('question_type') not in ['error'] 
+                        for conv in current_history
+                    )
+                    
+                    if has_real_conversation:
+                        # Use follow-up processing for actual follow-up questions
+                        answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+                    else:
+                        # Use regular question processing for new questions
+                        answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             
             st.rerun()
     
