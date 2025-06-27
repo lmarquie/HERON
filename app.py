@@ -32,6 +32,97 @@ st.set_page_config(
 if 'local_draft' in sys.modules:
     importlib.reload(sys.modules['local_draft'])
 
+# Add this right after your imports at the very top of app.py
+def export_transcription_to_pdf(transcription_text: str, filename: str = "transcription"):
+    """Export transcription to PDF for download."""
+    try:
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.lib.colors import black, blue
+        from reportlab.lib.enums import TA_LEFT, TA_CENTER
+        
+        # Create temp directory
+        temp_dir = "temp"
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # Create PDF filename
+        pdf_filename = f"{filename}_transcription.pdf"
+        pdf_path = os.path.join(temp_dir, pdf_filename)
+        
+        # Create the PDF document
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        story = []
+        
+        # Get styles
+        styles = getSampleStyleSheet()
+        
+        # Create custom styles
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            spaceAfter=30,
+            alignment=TA_CENTER,
+            textColor=blue
+        )
+        
+        header_style = ParagraphStyle(
+            'CustomHeader',
+            parent=styles['Heading2'],
+            fontSize=12,
+            spaceAfter=20,
+            textColor=black
+        )
+        
+        body_style = ParagraphStyle(
+            'CustomBody',
+            parent=styles['Normal'],
+            fontSize=11,
+            spaceAfter=12,
+            alignment=TA_LEFT,
+            textColor=black
+        )
+        
+        # Add title
+        title = Paragraph(f"Audio Transcription", title_style)
+        story.append(title)
+        story.append(Spacer(1, 20))
+        
+        # Add metadata
+        metadata = f"""
+        <b>Original File:</b> {filename}<br/>
+        <b>Export Date:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br/>
+        <b>Character Count:</b> {len(transcription_text):,}<br/>
+        <b>Word Count:</b> {len(transcription_text.split()):,}
+        """
+        meta_para = Paragraph(metadata, header_style)
+        story.append(meta_para)
+        story.append(Spacer(1, 30))
+        
+        # Add transcription content
+        # Split transcription into paragraphs for better formatting
+        paragraphs = transcription_text.split('\n\n')
+        
+        for para in paragraphs:
+            if para.strip():
+                # Clean up the paragraph
+                clean_para = para.strip().replace('\n', ' ')
+                if clean_para:
+                    p = Paragraph(clean_para, body_style)
+                    story.append(p)
+                    story.append(Spacer(1, 12))
+        
+        # Build the PDF
+        doc.build(story)
+        
+        return pdf_path
+        
+    except Exception as e:
+        st.error(f"Error creating PDF: {str(e)}")
+        return None
+
 # Initialize RAG system with improved session management
 def initialize_rag_system():
     if 'rag_system' not in st.session_state:
@@ -854,96 +945,6 @@ def install_system_dependencies():
         print("  Ubuntu/Debian: sudo apt-get install ffmpeg")
         print("  macOS: brew install ffmpeg")
         print("  Windows: Download from https://ffmpeg.org/download.html")
-
-def export_transcription_to_pdf(transcription_text: str, filename: str = "transcription"):
-    """Export transcription to PDF for download."""
-    try:
-        from reportlab.lib.pagesizes import letter, A4
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import inch
-        from reportlab.lib.colors import black, blue
-        from reportlab.lib.enums import TA_LEFT, TA_CENTER
-        
-        # Create temp directory
-        temp_dir = "temp"
-        os.makedirs(temp_dir, exist_ok=True)
-        
-        # Create PDF filename
-        pdf_filename = f"{filename}_transcription.pdf"
-        pdf_path = os.path.join(temp_dir, pdf_filename)
-        
-        # Create the PDF document
-        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
-        story = []
-        
-        # Get styles
-        styles = getSampleStyleSheet()
-        
-        # Create custom styles
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=16,
-            spaceAfter=30,
-            alignment=TA_CENTER,
-            textColor=blue
-        )
-        
-        header_style = ParagraphStyle(
-            'CustomHeader',
-            parent=styles['Heading2'],
-            fontSize=12,
-            spaceAfter=20,
-            textColor=black
-        )
-        
-        body_style = ParagraphStyle(
-            'CustomBody',
-            parent=styles['Normal'],
-            fontSize=11,
-            spaceAfter=12,
-            alignment=TA_LEFT,
-            textColor=black
-        )
-        
-        # Add title
-        title = Paragraph(f"Audio Transcription", title_style)
-        story.append(title)
-        story.append(Spacer(1, 20))
-        
-        # Add metadata
-        metadata = f"""
-        <b>Original File:</b> {filename}<br/>
-        <b>Export Date:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br/>
-        <b>Character Count:</b> {len(transcription_text):,}<br/>
-        <b>Word Count:</b> {len(transcription_text.split()):,}
-        """
-        meta_para = Paragraph(metadata, header_style)
-        story.append(meta_para)
-        story.append(Spacer(1, 30))
-        
-        # Add transcription content
-        # Split transcription into paragraphs for better formatting
-        paragraphs = transcription_text.split('\n\n')
-        
-        for para in paragraphs:
-            if para.strip():
-                # Clean up the paragraph
-                clean_para = para.strip().replace('\n', ' ')
-                if clean_para:
-                    p = Paragraph(clean_para, body_style)
-                    story.append(p)
-                    story.append(Spacer(1, 12))
-        
-        # Build the PDF
-        doc.build(story)
-        
-        return pdf_path
-        
-    except Exception as e:
-        st.error(f"Error creating PDF: {str(e)}")
-        return None
 
 # Call this function when the app starts
 if __name__ == "__main__":
