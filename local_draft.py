@@ -1114,7 +1114,7 @@ class ClaudeHandler:
             "specific and detailed numerical information available. Do NOT start with vague summaries or general statements. "
             "If the context contains specific numbers, dates, or financial figures, present those FIRST. Only provide general "
             "commentary AFTER presenting the specific data. "
-            
+        
             "You must provide comprehensive, detailed analysis in paragraph form. Never give one-sentence answers. "
             "Always provide thorough analysis with multiple data points, historical context, year-over-year comparisons, "
             "trend analysis, risk factors, market conditions, competitive analysis, and investment implications. "
@@ -1566,7 +1566,7 @@ class RAGSystem:
             return f"Error: {str(e)}"
 
     def process_image_request(self, question: str, pdf_path: str = None) -> str:
-        """Process a request for images from a document."""
+        """Process a request for images from a document, focusing on relevant pages."""
         try:
             logger.info(f"Processing image request: {question}")
             
@@ -1591,12 +1591,20 @@ class RAGSystem:
                 else:
                     return f"Document not found: {pdf_path}"
             
-            # ACTUALLY EXTRACT IMAGES
-            logger.info(f"Extracting images from: {pdf_path}")
-            all_images = self.image_processor.extract_images_from_pdf(pdf_path)
+            # Get relevant pages from recent conversation or search results
+            relevant_pages = self._get_relevant_pages_for_question(question, pdf_path)
+            
+            if not relevant_pages:
+                # Fallback to processing all pages if no relevant pages found
+                logger.info("No specific relevant pages found, processing entire document")
+                all_images = self.image_processor.extract_images_from_pdf(pdf_path)
+            else:
+                # Process only relevant pages
+                logger.info(f"Processing images from relevant pages: {relevant_pages}")
+                all_images = self.image_processor.extract_images_from_relevant_pages(pdf_path, relevant_pages)
             
             if not all_images:
-                return "No images found in the document. This PDF may only contain text."
+                return "No images found in the relevant pages of the document."
             
             logger.info(f"Found {len(all_images)} images, analyzing...")
             
@@ -1621,7 +1629,7 @@ class RAGSystem:
             
             # FORMAT THE RESPONSE
             response_parts = []
-            response_parts.append(f"📊 **Found {len(results)} image(s) in the document:**")
+            response_parts.append(f"📊 **Found {len(results)} image(s) in relevant pages:**")
             response_parts.append("")
             
             for i, img_info in enumerate(results, 1):
@@ -1687,6 +1695,40 @@ class RAGSystem:
         except Exception as e:
             logger.error(f"Error processing chart request: {str(e)}")
             return f"Error processing chart request: {str(e)}"
+
+    def _get_relevant_pages_for_question(self, question: str, pdf_path: str) -> list:
+        """Get relevant page numbers for a question based on search results and conversation history."""
+        try:
+            relevant_pages = set()
+            
+            # Method 1: Get pages from recent search results
+            if hasattr(self, 'question_handler') and self.question_handler:
+                # Search for the question to get relevant chunks
+                search_results = self.vector_store.search(question, k=5)
+                for chunk in search_results:
+                    page = chunk['metadata'].get('page')
+                    if page:
+                        relevant_pages.add(int(page))
+            
+            # Method 2: Get pages from recent conversation history
+            conversation_history = self.get_conversation_history()
+            for conv in conversation_history[-5:]:  # Last 5 conversations
+                page = conv.get('page')
+                if page:
+                    relevant_pages.add(int(page))
+            
+            # Method 3: Check if question mentions specific pages
+            import re
+            page_matches = re.findall(r'page\s+(\d+)', question.lower())
+            for page_match in page_matches:
+                relevant_pages.add(int(page_match))
+            
+            logger.info(f"Found relevant pages: {sorted(relevant_pages)}")
+            return sorted(relevant_pages)
+            
+        except Exception as e:
+            logger.error(f"Error getting relevant pages: {str(e)}")
+            return []
 
 # --- Add helper functions for text extraction ---
 def extract_text_from_docx(path):
@@ -1982,6 +2024,80 @@ class OnDemandImageProcessor:
         except Exception as e:
             logger.error(f"Error analyzing image with GPT-4: {str(e)}")
             return f"Error analyzing image: {str(e)}"
+
+    # Add this new method to the OnDemandImageProcessor class
+    def extract_images_from_relevant_pages(self, pdf_path: str, relevant_pages: list, buffer_pages: int = 2) -> list:
+        """Extract images only from pages near the relevant chunks."""
+        try:
+            if not os.path.exists(pdf_path):
+                logger.error(f"PDF file not found: {pdf_path}")
+                return []
+            
+            doc = fitz.open(pdf_path)
+            total_pages = len(doc)
+            images = []
+            
+            # Expand relevant pages with buffer
+            pages_to_process = set()
+            for page in relevant_pages:
+                # Add the page itself and buffer pages around it
+                for i in range(max(1, page - buffer_pages), min(total_pages + 1, page + buffer_pages + 1)):
+                    pages_to_process.add(i)
+            
+            logger.info(f"Processing images from pages: {sorted(pages_to_process)} (out of {total_pages} total pages)")
+            
+            for page_num in sorted(pages_to_process):
+                try:
+                    page_idx = page_num - 1  # Convert to 0-based index
+                    page = doc.load_page(page_idx)
+                    image_list = page.get_images()
+                    
+                    for img_index, img in enumerate(image_list):
+                        try:
+                            # Get image data
+                            xref = img[0]
+                            pix = fitz.Pixmap(doc, xref)
+                            
+                            # Convert to PNG format
+                            if pix.n - pix.alpha < 4:  # GRAY or RGB
+                                img_data = pix.tobytes("png")
+                            else:  # CMYK: convert to RGB first
+                                pix1 = fitz.Pixmap(fitz.csRGB, pix)
+                                img_data = pix1.tobytes("png")
+                                pix1 = None
+                            
+                            # Save image
+                            img_filename = f"page_{page_num}_image_{img_index + 1}.png"
+                            img_path = os.path.join("temp", img_filename)
+                            os.makedirs("temp", exist_ok=True)
+                            
+                            with open(img_path, "wb") as img_file:
+                                img_file.write(img_data)
+                            
+                            images.append({
+                                'path': img_path,
+                                'page': page_num,
+                                'image_index': img_index + 1,
+                                'description': f"Image from page {page_num}"
+                            })
+                            
+                            pix = None
+                            
+                        except Exception as e:
+                            logger.warning(f"Error extracting image {img_index} from page {page_num}: {str(e)}")
+                            continue
+                            
+                except Exception as e:
+                    logger.warning(f"Error processing page {page_num}: {str(e)}")
+                    continue
+            
+            doc.close()
+            logger.info(f"Extracted {len(images)} images from {len(pages_to_process)} relevant pages")
+            return images
+            
+        except Exception as e:
+            logger.error(f"Error extracting images from relevant pages: {str(e)}")
+            return []
 
 # Add this new class for PDF to image conversion and chart extraction
 class PDFChartExtractor:
