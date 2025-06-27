@@ -537,9 +537,25 @@ def submit_chat_message():
         # Check if this is a chart request
         if is_chart_request(chat_question):
             # Process chart request with progress indicator
-            with st.spinner("🔄 Converting PDF to images and extracting chart data..."):
-                answer = st.session_state.rag_system.process_chart_request(chat_question)
-            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "chart_request", "document")
+            with st.spinner("🔄 Converting PDF pages to images..."):
+                chart_results = st.session_state.rag_system.process_chart_request(chat_question)
+            
+            if not chart_results:
+                st.warning("No charts found or error processing charts")
+            else:
+                st.success(f"Found {len(chart_results)} chart(s)")
+                
+                # Display each chart image
+                for i, chart_info in enumerate(chart_results):
+                    st.subheader(f"Chart {i+1} - Page {chart_info['page']}")
+                    
+                    # Display the image
+                    if os.path.exists(chart_info['image_path']):
+                        st.image(chart_info['image_path'], caption=chart_info['description'])
+                    else:
+                        st.error(f"Image file not found: {chart_info['image_path']}")
+            
+            st.session_state.rag_system.add_to_conversation_history(chat_question, f"Displayed {len(chart_results)} charts", "chart_request", "document")
             st.rerun()
         else:
             # Check if this is an image request FIRST
