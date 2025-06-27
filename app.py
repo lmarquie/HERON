@@ -625,10 +625,17 @@ def submit_chat_message():
                     else:
                         # Add loading indicator for all question processing
                         with st.spinner("🤔 Thinking..."):
-                            # FIXED: Check if both modes are enabled
-                            if st.session_state.get('use_both_modes', False):
-                                # Both modes enabled - use the new method
-                                answer = st.session_state.rag_system.process_question_both_modes(chat_question, normalize_length=True)
+                            # Check if both modes are enabled
+                            if st.session_state.get('use_both_modes', False) and st.session_state.get('documents_loaded', False):
+                                # Try document search first, then web search if no good results
+                                doc_answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+                                
+                                # If document answer is generic, try web search
+                                if "No relevant information found" in doc_answer or "No documents loaded" in doc_answer:
+                                    web_answer = st.session_state.rag_system.process_live_web_question(chat_question)
+                                    answer = f"Document Search: {doc_answer}\n\nWeb Search: {web_answer}"
+                                else:
+                                    answer = f"Document Search: {doc_answer}"
                                     
                             elif st.session_state.get('internet_mode', False):
                                 # Use live web search only
@@ -688,9 +695,6 @@ with st.sidebar:
             
             if audio_files:
                 st.info(f"🎵 Found {len(audio_files)} audio file(s) - will transcribe to text")
-                # Add specific progress for audio files
-                if len(audio_files) > 0:
-                    st.warning("⚠️ Audio transcription may take several minutes for large files. Please be patient.")
             
             with st.spinner("Processing..."):
                 if st.session_state.rag_system.process_web_uploads(uploaded_files):
@@ -937,46 +941,6 @@ with st.sidebar:
     if st.button("🔍 Test Image Extraction", use_container_width=True):
         result = test_image_extraction()
         st.info(result)
-
-    # Add this debug function to test chart processing
-    def test_chart_processing():
-        """Test function to debug chart processing."""
-        try:
-            # Test the chart processing directly
-            if hasattr(st.session_state, 'rag_system'):
-                # Get the first PDF path
-                pdf_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
-                if pdf_paths:
-                    pdf_path = pdf_paths[0]
-                    st.write(f"Testing with PDF: {pdf_path}")
-                    
-                    # Test converting page 1
-                    chart_extractor = st.session_state.rag_system.chart_extractor
-                    image_path = chart_extractor.convert_single_page_to_image(pdf_path, 1)
-                    
-                    if image_path:
-                        st.write(f"Image created at: {image_path}")
-                        st.write(f"File exists: {os.path.exists(image_path)}")
-                        
-                        # Try to display the image
-                        if os.path.exists(image_path):
-                            with open(image_path, "rb") as img_file:
-                                st.image(img_file, caption="Test Image")
-                            st.success("✅ Image displayed successfully!")
-                        else:
-                            st.error("❌ Image file not found on disk")
-                    else:
-                        st.error("❌ Failed to create image")
-                else:
-                    st.error("❌ No PDF paths found")
-            else:
-                st.error("❌ RAG system not initialized")
-        except Exception as e:
-            st.error(f"❌ Error in test: {str(e)}")
-
-    # Add this to the sidebar for testing
-    if st.button("🔧 Test Chart Processing"):
-        test_chart_processing()
 
 # Minimal error display in main area
 if st.session_state.error_count > 0:
