@@ -1106,7 +1106,7 @@ class ClaudeHandler:
         }
         # Enhanced prompt that prioritizes specific, detailed information
         self.system_prompt = (
-            "act like chatgpt but with a financial consultant background"
+            "Act like chatgpt but with a financial consultant background. Data is very important, go into detail and cite the sources of the data."
         )
         self.response_cache = {}  # Simple cache for repeated queries
 
