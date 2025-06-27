@@ -3,3 +3,4 @@ tesseract-ocr-eng
 tesseract-ocr-osd 
 libgl1-mesa-glx
 ffmpeg
+poppler-utils
