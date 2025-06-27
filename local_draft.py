@@ -1296,47 +1296,47 @@ class RAGSystem:
 
     def process_chart_request(self, question: str, pdf_path: str = None) -> str:
     """Process requests for charts/graphs using the PDF to image conversion method."""
-    try:
-        # Determine which PDF to search
-        if pdf_path is None:
-            # Use the most recent document from conversation history
-            conversation_history = self.get_conversation_history()
-            if conversation_history:
-                # Find the most recent document source
-                for conv in reversed(conversation_history):
-                    if 'source' in conv:
-                        pdf_path = conv['source']
-                        break
-        
-        if not pdf_path or not os.path.exists(pdf_path):
-            return "No document found to search for charts."
-        
-        # Check if asking for a specific page
-        import re
-        page_match = re.search(r'page\s+(\d+)', question.lower())
-        if page_match:
-            page_number = int(page_match.group(1))
-            logger.info(f"Extracting chart data from page {page_number}")
-            extracted_text = self.chart_extractor.get_chart_data_by_page(pdf_path, page_number)
-            return f"**Chart Data from Page {page_number}:**\n\n{extracted_text}"
-        
-        # Process entire PDF for charts
-        logger.info("Processing entire PDF for charts")
-        extracted_data = self.chart_extractor.process_pdf_for_charts(pdf_path)
-        
-        if not extracted_data:
-            return "No charts or text data found in the document."
-        
-        # Format the response
-        response_parts = []
-        for page_num, text in extracted_data.items():
-            response_parts.append(f"**Page {page_num}:**\n{text}\n")
-        
-        return "\n".join(response_parts)
-        
-    except Exception as e:
-        logger.error(f"Error processing chart request: {str(e)}")
-        return f"Error processing chart request: {str(e)}"
+        try:
+            # Determine which PDF to search
+            if pdf_path is None:
+                # Use the most recent document from conversation history
+                conversation_history = self.get_conversation_history()
+                if conversation_history:
+                    # Find the most recent document source
+                    for conv in reversed(conversation_history):
+                        if 'source' in conv:
+                            pdf_path = conv['source']
+                            break
+            
+            if not pdf_path or not os.path.exists(pdf_path):
+                return "No document found to search for charts."
+            
+            # Check if asking for a specific page
+            import re
+            page_match = re.search(r'page\s+(\d+)', question.lower())
+            if page_match:
+                page_number = int(page_match.group(1))
+                logger.info(f"Extracting chart data from page {page_number}")
+                extracted_text = self.chart_extractor.get_chart_data_by_page(pdf_path, page_number)
+                return f"**Chart Data from Page {page_number}:**\n\n{extracted_text}"
+            
+            # Process entire PDF for charts
+            logger.info("Processing entire PDF for charts")
+            extracted_data = self.chart_extractor.process_pdf_for_charts(pdf_path)
+            
+            if not extracted_data:
+                return "No charts or text data found in the document."
+            
+            # Format the response
+            response_parts = []
+            for page_num, text in extracted_data.items():
+                response_parts.append(f"**Page {page_num}:**\n{text}\n")
+            
+            return "\n".join(response_parts)
+            
+        except Exception as e:
+            logger.error(f"Error processing chart request: {str(e)}")
+            return f"Error processing chart request: {str(e)}"
 
     def process_web_uploads(self, uploaded_files):
         """Process multiple uploaded files."""
