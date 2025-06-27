@@ -887,8 +887,32 @@ class VectorStore:
         if VectorStore._model is None:  # Only load if not already loaded
             try:
                 from sentence_transformers import SentenceTransformer
-                VectorStore._model = SentenceTransformer('all-MiniLM-L6-v2')
+                import torch
+                
+                # Force CPU usage and handle meta tensor issue
+                logger.info("Loading sentence transformers model...")
+                
+                # Try different approaches to handle the device issue
+                try:
+                    # Method 1: Load with device specification
+                    VectorStore._model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
+                except Exception as e1:
+                    logger.warning(f"Method 1 failed: {e1}")
+                    try:
+                        # Method 2: Load normally then move to CPU
+                        VectorStore._model = SentenceTransformer('all-MiniLM-L6-v2')
+                        VectorStore._model.to('cpu')
+                    except Exception as e2:
+                        logger.warning(f"Method 2 failed: {e2}")
+                        # Method 3: Use to_empty() for meta tensor handling
+                        VectorStore._model = SentenceTransformer('all-MiniLM-L6-v2')
+                        if hasattr(VectorStore._model, 'to_empty'):
+                            VectorStore._model.to_empty(device='cpu')
+                        else:
+                            VectorStore._model.to('cpu')
+                
                 logger.info("Hugging Face embedding model initialized successfully")
+                
             except Exception as e:
                 logger.error(f"Failed to initialize Hugging Face model: {str(e)}")
                 self.initialized = False
@@ -919,6 +943,8 @@ class VectorStore:
         
         if not self.initialized:
             logger.error("Model not initialized, cannot add documents")
+            logger.error("This usually means the sentence transformers model failed to load")
+            logger.error("Check the logs above for Hugging Face model initialization errors")
             return
         
         try:
