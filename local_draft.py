@@ -1963,6 +1963,38 @@ class RAGSystem:
             logger.error(f"Debug error: {str(e)}")
             return f"Debug error: {str(e)}"
 
+    def process_question_both_modes(self, question: str, normalize_length: bool = True) -> str:
+        """Process question using both document and internet modes."""
+        try:
+            logger.info("Processing question using both modes")
+            
+            # Try document search first (if documents are loaded)
+            doc_answer = ""
+            if self.vector_store.is_ready():
+                doc_answer = self.question_handler.process_question(question, normalize_length=normalize_length)
+            else:
+                doc_answer = "No documents loaded for document search."
+            
+            # Always try web search
+            web_answer = generate_live_web_answer(question)
+            
+            # Combine both answers
+            if doc_answer and web_answer:
+                combined_answer = f"📄 **Document Search Results:**\n{doc_answer}\n\n🌐 **Live Web Search Results:**\n{web_answer}"
+            elif doc_answer:
+                combined_answer = f"📄 **Document Search Results:**\n{doc_answer}"
+            else:
+                combined_answer = f"🌐 **Live Web Search Results:**\n{web_answer}"
+            
+            # Add to conversation history with both mode
+            self.add_to_conversation_history(question, combined_answer, "both_modes", "both")
+            
+            return combined_answer
+            
+        except Exception as e:
+            logger.error(f"Error processing question with both modes: {str(e)}")
+            return f"Error processing question: {str(e)}"
+
 # --- Add helper functions for text extraction ---
 def extract_text_from_docx(path):
     try:
