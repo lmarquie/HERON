@@ -34,6 +34,12 @@ import whisper
 import tempfile
 import subprocess
 from pdf2image import convert_from_path
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib.colors import black, blue
+from reportlab.lib.enums import TA_LEFT, TA_CENTER
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -641,6 +647,81 @@ class AudioProcessor:
         except Exception as e:
             logger.error(f"Error creating transcript file: {str(e)}")
             return None
+
+    def _create_transcript_pdf(self, transcription: str, pdf_path: str, filename: str):
+        """Create a PDF file from transcription using reportlab."""
+        try:
+            # Create the PDF document
+            doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+            story = []
+            
+            # Get styles
+            styles = getSampleStyleSheet()
+            
+            # Create custom styles
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=16,
+                spaceAfter=30,
+                alignment=TA_CENTER,
+                textColor=blue
+            )
+            
+            header_style = ParagraphStyle(
+                'CustomHeader',
+                parent=styles['Heading2'],
+                fontSize=12,
+                spaceAfter=20,
+                textColor=black
+            )
+            
+            body_style = ParagraphStyle(
+                'CustomBody',
+                parent=styles['Normal'],
+                fontSize=11,
+                spaceAfter=12,
+                alignment=TA_LEFT,
+                textColor=black
+            )
+            
+            # Add title
+            title = Paragraph(f"Audio Transcription: {filename}", title_style)
+            story.append(title)
+            story.append(Spacer(1, 20))
+            
+            # Add metadata
+            metadata = f"""
+            <b>File:</b> {filename}<br/>
+            <b>Transcription Date:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br/>
+            <b>Character Count:</b> {len(transcription):,}<br/>
+            <b>Word Count:</b> {len(transcription.split()):,}
+            """
+            meta_para = Paragraph(metadata, header_style)
+            story.append(meta_para)
+            story.append(Spacer(1, 30))
+            
+            # Add transcription content
+            # Split transcription into paragraphs for better formatting
+            paragraphs = transcription.split('\n\n')
+            
+            for para in paragraphs:
+                if para.strip():
+                    # Clean up the paragraph
+                    clean_para = para.strip().replace('\n', ' ')
+                    if clean_para:
+                        p = Paragraph(clean_para, body_style)
+                        story.append(p)
+                        story.append(Spacer(1, 12))
+            
+            # Build the PDF
+            doc.build(story)
+            logger.info(f"PDF transcript created: {pdf_path}")
+            
+        except Exception as e:
+            logger.error(f"Error creating PDF transcript: {str(e)}")
+            # If PDF creation fails, just continue with text file
+            pass
 
     def _transcribe_long_audio_chunked(self, audio_path: str, duration: float) -> str:
         """Transcribe long audio files in parallel chunks."""
