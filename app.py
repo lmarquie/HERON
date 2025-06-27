@@ -445,12 +445,12 @@ if conversation_history:
                                 st.warning(f"Could not render source image. Expected path: {img_path}")
                         else:
                             st.warning(f"Source PDF not found: {source}")
-                            st.info("Available files in temp directory:")
-                            if os.path.exists("temp"):
-                                for file in os.listdir("temp"):
-                                    st.text(f"  - {file}")
-                            else:
-                                st.text("  - temp directory doesn't exist")
+                                st.info("Available files in temp directory:")
+                                if os.path.exists("temp"):
+                                    for file in os.listdir("temp"):
+                                        st.text(f"  - {file}")
+                                else:
+                                    st.text("  - temp directory doesn't exist")
                     else:
                         # Show button for other cases
                         show_source = st.button(f"Show Source for Q{i+1}", key=f"show_source_{i}")
@@ -605,21 +605,21 @@ def submit_chat_message():
                     # Quick message for no documents and no internet mode
                     answer = "Please upload a document first or enable Live Web Search."
                     st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
-                    st.rerun()
-                else:
-                    # Check if this is a source/graph request
-                    question_lower = chat_question.lower()
-                    trigger_phrases = [
-                        'show me the source', 'show me the graph', 'show me the chart', 'show me the figure',
+            st.rerun()
+        else:
+            # Check if this is a source/graph request
+            question_lower = chat_question.lower()
+            trigger_phrases = [
+                'show me the source', 'show me the graph', 'show me the chart', 'show me the figure',
                         'show me the table', 'show the source', 'show the graph',
                         'show the chart', 'show the figure', 'show the table',
-                        'source for this', 'graph for this', 'chart for this', 'figure for this',
+                'source for this', 'graph for this', 'chart for this', 'figure for this',
                         'table for this'
-                    ]
-                    
-                    is_source_request = any(phrase in question_lower for phrase in trigger_phrases)
-                    
-                    if is_source_request:
+            ]
+            
+            is_source_request = any(phrase in question_lower for phrase in trigger_phrases)
+            
+            if is_source_request:
                         # Source request logic (your existing code)
                         pass  # Add your existing source request code here
                     else:
@@ -634,28 +634,28 @@ def submit_chat_message():
                                 if "No relevant information found" in doc_answer or "No documents loaded" in doc_answer:
                                     web_answer = st.session_state.rag_system.process_live_web_question(chat_question)
                                     answer = f"Document Search: {doc_answer}\n\nWeb Search: {web_answer}"
-                                else:
+                else:
                                     answer = f"Document Search: {doc_answer}"
                                     
                             elif st.session_state.get('internet_mode', False):
                                 # Use live web search only
                                 answer = st.session_state.rag_system.process_live_web_question(chat_question)
-                            else:
+            else:
                                 # Use document search only
-                                current_history = st.session_state.rag_system.get_conversation_history()
-                                has_real_conversation = any(
-                                    conv.get('question_type') not in ['error'] 
-                                    for conv in current_history
-                                )
-                                
-                                if has_real_conversation:
-                                    # Use follow-up processing for actual follow-up questions
-                                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
-                                else:
-                                    # Use regular question processing for new questions
-                                    answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
-                st.rerun()
-        # Only increment after rerun, so the key stays in sync
+                current_history = st.session_state.rag_system.get_conversation_history()
+                has_real_conversation = any(
+                    conv.get('question_type') not in ['error'] 
+                    for conv in current_history
+                )
+                
+                if has_real_conversation:
+                    # Use follow-up processing for actual follow-up questions
+                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+                else:
+                    # Use regular question processing for new questions
+                    answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+            st.rerun()
+    # Only increment after rerun, so the key stays in sync
         st.session_state.chat_input_key += 1
 
 # Show current mode in the placeholder
@@ -982,4 +982,97 @@ def install_system_dependencies():
 
 # Call this function when the app starts
 if __name__ == "__main__":
-    install_system_dependencies() 
+    install_system_dependencies()
+
+# Image Analysis Section
+st.markdown("---")
+st.markdown("### 🖼️ Image Analysis")
+
+# Create columns for layout
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    uploaded_image = st.file_uploader(
+        "Upload image for analysis",
+        type=['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'],
+        key="image_uploader",
+        help="Upload an image to analyze its content, extract text, or analyze charts"
+    )
+
+with col2:
+    analysis_type = st.selectbox(
+        "Analysis Type",
+        ["General", "OCR", "Charts", "Custom"],
+        help="Choose analysis type"
+    )
+
+# Show uploaded image and custom question if needed
+if uploaded_image is not None:
+    # Display the uploaded image
+    st.image(uploaded_image, caption="Uploaded Image", width=300)
+    
+    # Custom question input if needed
+    custom_question = ""
+    if analysis_type == "Custom":
+        custom_question = st.text_area(
+            "Ask about this image:",
+            placeholder="e.g., What data does this chart show?",
+            height=60
+        )
+    
+    # Submit button for image analysis
+    if st.button("🔍 Analyze Image", use_container_width=True, type="primary"):
+        if uploaded_image is not None:
+            process_image_analysis(uploaded_image, analysis_type, custom_question)
+        else:
+            st.warning("Please upload an image first")
+
+# Add this function to handle image analysis
+def process_image_analysis(uploaded_image, analysis_type, custom_question=""):
+    """Process uploaded image for analysis."""
+    try:
+        # Save uploaded image temporarily
+        temp_image_path = f"temp_uploaded_image_{int(time.time())}.png"
+        with open(temp_image_path, "wb") as f:
+            f.write(uploaded_image.getbuffer())
+        
+        # Process based on analysis type
+        if analysis_type == "General":
+            question = "Please analyze this image and describe what you see in detail."
+        elif analysis_type == "OCR":
+            question = "Please extract and transcribe all text visible in this image."
+        elif analysis_type == "Charts":
+            question = "Please analyze this chart or graph and extract the data, trends, and key insights."
+        elif analysis_type == "Custom":
+            question = custom_question if custom_question else "Please analyze this image."
+        
+        # Add to conversation history
+        st.session_state.rag_system.add_to_conversation_history(
+            f"[Image Analysis: {analysis_type}] {question}",
+            "Processing image...",
+            "image_analysis",
+            "image"
+        )
+        
+        # Process with GPT-4 Vision
+        with st.spinner("Analyzing image..."):
+            answer = st.session_state.rag_system.analyze_image_with_gpt4(temp_image_path, question)
+            
+            # Update conversation history with result
+            st.session_state.rag_system.add_to_conversation_history(
+                f"[Image Analysis: {analysis_type}] {question}",
+                answer,
+                "image_analysis",
+                "image"
+            )
+        
+        # Clean up temp file
+        if os.path.exists(temp_image_path):
+            os.remove(temp_image_path)
+        
+        st.success("Image analysis completed!")
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"Error analyzing image: {str(e)}")
+        logger.error(f"Image analysis error: {str(e)}") 
