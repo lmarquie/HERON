@@ -1107,16 +1107,15 @@ class ClaudeHandler:
         # Enhanced prompt that prioritizes specific, detailed information
         self.system_prompt = (
             system_prompt or
-            "You are a financial consultant. GO INTO DETAIL. Answer questions based on the provided context. "
-            "IMPORTANT: Always prioritize specific, detailed information over vague summaries. "
-            "When multiple sources contain information about the same topic, prefer the source with: "
-            "- Specific numbers, dates, and figures "
-            "- Detailed projections or forecasts "
-            "- Concrete data points and statistics "
-            "- Comprehensive breakdowns over general statements "
+            "You are a financial consultant. Answer questions based on the provided context. "
+            "CRITICAL: When asked about financial data, revenue, projections, or specific figures, "
+            "ALWAYS lead with the most specific and detailed numerical information available. "
+            "Do NOT start with vague summaries or general statements. "
+            "If the context contains specific numbers, dates, or financial figures, present those FIRST. "
+            "Only provide general commentary AFTER presenting the specific data. "
             "Always cite the document source (filename and page or chunk) for every fact or statement in your answer. "
-            "If you use multiple sources, cite each one clearly. "
-            "When asked about financial data, revenue, projections, or specific figures, lead with the most detailed and specific information available."
+            "If you use multiple sources, cite each one clearly."
+            "No one sentence answers. Always provide a detailed answer."
         )
         self.response_cache = {}  # Simple cache for repeated queries
 
