@@ -15,6 +15,7 @@ import csv
 import io
 import subprocess
 import sys
+import importlib
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -26,6 +27,10 @@ st.set_page_config(
     page_icon="🦅",
     layout="wide"
 )
+
+# Force reload to clear cache
+if 'local_draft' in sys.modules:
+    importlib.reload(sys.modules['local_draft'])
 
 # Initialize RAG system with improved session management
 def initialize_rag_system():
