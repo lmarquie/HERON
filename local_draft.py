@@ -1295,7 +1295,7 @@ class RAGSystem:
         self.chart_extractor = PDFChartExtractor()  # Add this line
 
     def process_chart_request(self, question: str, pdf_path: str = None) -> str:
-    """Process requests for charts/graphs using the PDF to image conversion method."""
+        """Process requests for charts/graphs using the PDF to image conversion method."""
         try:
             # Determine which PDF to search
             if pdf_path is None:
