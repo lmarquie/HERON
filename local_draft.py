@@ -426,6 +426,7 @@ class AudioProcessor:
         self.whisper_model = None
         self.recognizer = sr.Recognizer()
         self.ffmpeg_available = self._check_ffmpeg()
+        self._model_cache = {}  # Cache for different model sizes
         
     def _check_ffmpeg(self):
         """Check if FFmpeg is available."""
@@ -436,12 +437,17 @@ class AudioProcessor:
         except (subprocess.CalledProcessError, FileNotFoundError):
             return False
     
-    def load_whisper_model(self):
-        """Load Whisper model for transcription."""
+    def load_whisper_model(self, model_size="tiny"):
+        """Load Whisper model with caching - use tiny for speed."""
+        if model_size in self._model_cache:
+            self.whisper_model = self._model_cache[model_size]
+            return
+        
         try:
-            logger.info("Loading Whisper model...")
-            # Use "base" model for speed (still very accurate)
-            self.whisper_model = whisper.load_model("base")  # Much faster than "medium" or "large"
+            logger.info(f"Loading Whisper model: {model_size}")
+            # Use tiny model for maximum speed (still very accurate)
+            self.whisper_model = whisper.load_model(model_size)
+            self._model_cache[model_size] = self.whisper_model
             logger.info("Whisper model loaded successfully")
         except Exception as e:
             logger.error(f"Error loading Whisper model: {str(e)}")
@@ -488,10 +494,10 @@ class AudioProcessor:
             return audio_path
     
     def transcribe_with_whisper(self, audio_path: str) -> str:
-        """Transcribe audio using Whisper with better error handling."""
+        """Transcribe audio using Whisper with speed optimizations."""
         try:
             if self.whisper_model is None:
-                self.load_whisper_model()
+                self.load_whisper_model("tiny")  # Use tiny model for speed
             
             logger.info(f"Transcribing audio with Whisper: {audio_path}")
             
@@ -503,8 +509,6 @@ class AudioProcessor:
             if file_size == 0:
                 raise ValueError(f"Audio file is empty: {audio_path}")
             
-            logger.info(f"Audio file size: {file_size} bytes")
-            
             # Get audio duration
             import librosa
             duration = librosa.get_duration(path=audio_path)
@@ -512,30 +516,22 @@ class AudioProcessor:
             
             print(f"🎵 Transcribing {duration/60:.1f} minute audio file...")
             
-            # For very long files, use a more conservative approach
-            if duration > 1800:  # Longer than 30 minutes
-                print("🔄 Long file detected, using conservative transcription settings")
-                result = self.whisper_model.transcribe(
-                    audio_path,
-                    language="en",
-                    task="transcribe",
-                    verbose=True,
-                    fp16=False,  # Force FP32
-                    condition_on_previous_text=False,  # Don't condition on previous text
-                    temperature=0.0,  # More deterministic
-                    compression_ratio_threshold=2.4,  # More lenient
-                    logprob_threshold=-1.0,  # More lenient
-                    no_speech_threshold=0.6  # More lenient
-                )
-            else:
-                # Standard transcription for shorter files
-                result = self.whisper_model.transcribe(
-                    audio_path,
-                    language="en",
-                    task="transcribe",
-                    verbose=True,
-                    fp16=False  # Force FP32 to avoid warnings
-                )
+            # SPEED OPTIMIZED settings
+            result = self.whisper_model.transcribe(
+                audio_path,
+                language="en",
+                task="transcribe",
+                verbose=False,  # Disable verbose for speed
+                fp16=False,  # Force FP32 for stability
+                condition_on_previous_text=False,  # Disable for speed
+                temperature=0.0,  # Deterministic for speed
+                compression_ratio_threshold=1.0,  # More lenient for speed
+                logprob_threshold=-2.0,  # More lenient for speed
+                no_speech_threshold=0.8,  # More lenient for speed
+                word_timestamps=False,  # Disable for speed
+                prepend_punctuations=False,  # Disable for speed
+                append_punctuations=False  # Disable for speed
+            )
             
             logger.info("Whisper transcription completed")
             
@@ -565,7 +561,7 @@ class AudioProcessor:
                         audio_path,
                         language="en",
                         task="transcribe",
-                        verbose=True,
+                        verbose=False,
                         fp16=False,
                         condition_on_previous_text=False,
                         temperature=0.0,
@@ -597,34 +593,54 @@ class AudioProcessor:
             logger.error(f"Error transcribing with SpeechRecognition: {str(e)}")
             return f"Error transcribing audio: {str(e)}"
     
-    def transcribe_audio(self, audio_path: str, method: str = "whisper") -> str:
-        """Transcribe audio with fallback methods."""
+    def preprocess_audio_for_speed(self, audio_path: str) -> str:
+        """Preprocess audio to speed up transcription."""
         try:
-            logger.info(f"Processing audio file: {audio_path}")
+            import librosa
+            import soundfile as sf
             
-            # Convert to WAV if needed
-            if not audio_path.lower().endswith('.wav'):
-                logger.info("Converting audio to WAV format...")
-                wav_path = self.convert_audio_format(audio_path, "wav")
-                
-                if wav_path != audio_path and os.path.exists(wav_path):
-                    audio_path = wav_path
-                    logger.info(f"Using converted file: {wav_path}")
-                else:
-                    logger.warning("Audio conversion failed, using original file")
+            # Load audio with lower sample rate for speed
+            audio, sr = librosa.load(audio_path, sr=16000)  # 16kHz is sufficient for speech
             
-            # Transcribe based on method
-            if method == "whisper":
-                return self.transcribe_with_whisper(audio_path)  # This now does full transcription
-            elif method == "speechrecognition":
-                return self.transcribe_with_speechrecognition(audio_path)
-            else:
-                logger.error(f"Unknown transcription method: {method}")
-                return f"Error: Unknown transcription method {method}"
+            # Apply noise reduction and normalization
+            # Simple normalization
+            audio = librosa.util.normalize(audio)
+            
+            # Save preprocessed audio
+            preprocessed_path = audio_path.replace('.', '_preprocessed.')
+            sf.write(preprocessed_path, audio, sr)
+            
+            logger.info(f"Audio preprocessed and saved to: {preprocessed_path}")
+            return preprocessed_path
             
         except Exception as e:
-            logger.error(f"Error processing {audio_path}: {str(e)}")
-            return f"Error processing audio: {str(e)}"
+            logger.warning(f"Audio preprocessing failed: {str(e)}")
+            return audio_path  # Return original if preprocessing fails
+
+    def transcribe_audio(self, audio_path: str, method: str = "whisper") -> str:
+        """Transcribe audio with preprocessing for speed."""
+        try:
+            if method == "whisper":
+                # Preprocess audio for speed
+                preprocessed_path = self.preprocess_audio_for_speed(audio_path)
+                
+                # Transcribe with Whisper
+                transcription = self.transcribe_with_whisper(preprocessed_path)
+                
+                # Clean up preprocessed file
+                if preprocessed_path != audio_path and os.path.exists(preprocessed_path):
+                    try:
+                        os.remove(preprocessed_path)
+                    except:
+                        pass
+                
+                return transcription
+            else:
+                return self.transcribe_with_speechrecognition(audio_path)
+                
+        except Exception as e:
+            logger.error(f"Error transcribing audio: {str(e)}")
+            return f"Error transcribing audio: {str(e)}"
     
     def create_transcript_file(self, transcription: str, original_filename: str) -> str:
         """Create a text file from transcription."""
@@ -808,33 +824,106 @@ class AudioProcessor:
             logger.error(f"Error in parallel chunked transcription: {str(e)}")
             return f"Error transcribing long audio: {str(e)}"
 
-class WebFileHandler:
-    def __init__(self):
-        self.saved_pdf_paths = []
-        self.processing_status = {}
-        self.text_processor = TextProcessor()
-        self.audio_processor = AudioProcessor()
-        self.processed_audio_files = set()
-        self.is_processing = False
-
-    def process_web_uploads(self, uploaded_files):
-        """Process multiple uploaded files."""
+    def transcribe_long_audio_parallel(self, audio_path: str, chunk_duration: int = 300) -> str:
+        """Transcribe long audio files using parallel processing for speed."""
         try:
-            if not uploaded_files:
-                return []
+            import librosa
+            import soundfile as sf
+            from concurrent.futures import ThreadPoolExecutor, as_completed
             
-            all_documents = []
+            # Load audio
+            audio, sr = librosa.load(audio_path, sr=16000)
+            duration = len(audio) / sr
             
-            for uploaded_file in uploaded_files:
-                documents = self._process_single_file(uploaded_file)
-                if documents:
-                    all_documents.extend(documents)
+            logger.info(f"Processing {duration/60:.1f} minute audio in parallel chunks")
             
-            return all_documents
+            # Split into chunks (5 minutes each)
+            chunk_samples = int(chunk_duration * sr)
+            
+            # Prepare chunks
+            chunks = []
+            for i in range(0, len(audio), chunk_samples):
+                chunk = audio[i:i + chunk_samples]
+                chunk_start = i / sr
+                chunk_end = min((i + chunk_samples) / sr, duration)
+                chunk_num = len(chunks) + 1
+                
+                # Save chunk to temporary file
+                chunk_path = f"temp_chunk_{chunk_num}.wav"
+                sf.write(chunk_path, chunk, sr, subtype='PCM_16')
+                chunks.append((chunk_num, chunk_path, chunk_start, chunk_end))
+            
+            print(f" Processing {len(chunks)} chunks in parallel...")
+            
+            # Process chunks in parallel
+            transcriptions = [None] * len(chunks)
+            
+            def transcribe_chunk(chunk_info):
+                chunk_num, chunk_path, chunk_start, chunk_end = chunk_info
+                try:
+                    print(f" Processing chunk {chunk_num}: {chunk_start/60:.1f}m - {chunk_end/60:.1f}m")
+                    
+                    # Use tiny model for speed
+                    if self.whisper_model is None:
+                        self.load_whisper_model("tiny")
+                    
+                    result = self.whisper_model.transcribe(
+                        chunk_path,
+                        language="en",
+                        task="transcribe",
+                        verbose=False,
+                        fp16=False,
+                        condition_on_previous_text=False,
+                        temperature=0.0,
+                        compression_ratio_threshold=1.0,
+                        logprob_threshold=-2.0,
+                        no_speech_threshold=0.8
+                    )
+                    
+                    chunk_text = result.get('text', '').strip()
+                    
+                    # Clean up temporary file
+                    os.remove(chunk_path)
+                    
+                    if chunk_text:
+                        print(f"✅ Chunk {chunk_num} completed: {len(chunk_text)} characters")
+                        return chunk_num - 1, chunk_text
+                    else:
+                        print(f"⚠️ Chunk {chunk_num} returned no text")
+                        return chunk_num - 1, ""
+                    
+                except Exception as e:
+                    print(f"❌ Error transcribing chunk {chunk_num}: {str(e)}")
+                    if os.path.exists(chunk_path):
+                        os.remove(chunk_path)
+                    return chunk_num - 1, ""
+            
+            # Use ThreadPoolExecutor for parallel processing
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_chunk = {executor.submit(transcribe_chunk, chunk): chunk for chunk in chunks}
+                
+                for future in as_completed(future_to_chunk):
+                    chunk_idx, text = future.result()
+                    if text:
+                        transcriptions[chunk_idx] = text
+            
+            # Combine transcriptions in order
+            final_transcription = " ".join([t for t in transcriptions if t])
+            
+            logger.info(f"Parallel transcription completed: {len(final_transcription)} characters")
+            return final_transcription
             
         except Exception as e:
-            logger.error(f"Error processing web uploads: {str(e)}")
-            return []
+            logger.error(f"Error in parallel transcription: {str(e)}")
+            return f"Error in parallel transcription: {str(e)}"
+
+class WebFileHandler:
+    def __init__(self):
+        self.text_processor = TextProcessor()
+        self.audio_processor = AudioProcessor()
+        self.saved_pdf_paths = []
+        self.processing_status = {}
+        self.is_processing = False
 
     def _process_single_file(self, uploaded_file):
         # Prevent double processing
@@ -846,7 +935,7 @@ class WebFileHandler:
         
         try:
             # Check if this audio file has already been processed
-            if uploaded_file.name in self.processed_audio_files:
+            if uploaded_file.name in self.processing_status:
                 logger.info(f"Audio file {uploaded_file.name} already processed, skipping")
                 self.is_processing = False
                 return None
@@ -872,11 +961,19 @@ class WebFileHandler:
                 self.saved_pdf_paths.append(temp_path)
                 
             elif ext in ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac']:
-                # Audio file processing
+                # Audio file processing with speed optimization
                 logger.info(f"Processing audio file: {uploaded_file.name}")
                 
-                # Transcribe audio
-                transcription = self.audio_processor.transcribe_audio(temp_path, method="whisper")
+                # Check file size to decide on processing method
+                file_size = os.path.getsize(temp_path)
+                file_size_mb = file_size / (1024 * 1024)
+                
+                if file_size_mb > 50:  # Large files (>50MB)
+                    logger.info("Large audio file detected, using parallel processing")
+                    transcription = self.audio_processor.transcribe_long_audio_parallel(temp_path)
+                else:
+                    # Smaller files use regular processing
+                    transcription = self.audio_processor.transcribe_audio(temp_path, method="whisper")
                 
                 logger.info(f"Transcription result: {len(transcription)} characters")
                 
@@ -889,21 +986,14 @@ class WebFileHandler:
                 # Create transcript file
                 transcript_path = self.audio_processor.create_transcript_file(transcription, uploaded_file.name)
                 
-                if transcript_path:
-                    logger.info(f"Transcript saved to: {transcript_path}")
-                    # Read the transcript as text content
-                    with open(transcript_path, 'r', encoding='utf-8') as f:
-                        text_content = f.read()
-                    
-                    # Add transcript path to saved paths
-                    self.saved_pdf_paths.append(transcript_path)
-                else:
-                    logger.warning("Failed to create transcript file, using transcription directly")
-                    text_content = transcription
-                
-                # Mark this audio file as processed
-                self.processed_audio_files.add(uploaded_file.name)
-                
+                # Process transcription as text content
+                text_content = transcription
+                self.processing_status[uploaded_file.name] = {
+                    'status': 'completed',
+                    'transcript_path': transcript_path,
+                    'characters': len(transcription)
+                }
+
             else:
                 logger.warning(f"Unsupported file type: {uploaded_file.name}")
                 self.is_processing = False
