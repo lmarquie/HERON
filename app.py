@@ -642,6 +642,56 @@ def submit_chat_message():
 current_mode = "Internet Search" if st.session_state.get('internet_mode', False) else "Document Search"
 placeholder_text = f"Ask a question (using {current_mode})..."
 
+# Add this function definition before the sidebar code
+def process_image_analysis(uploaded_image, analysis_type, custom_question=""):
+    """Process uploaded image for analysis."""
+    try:
+        # Save uploaded image temporarily
+        temp_image_path = f"temp_uploaded_image_{int(time.time())}.png"
+        with open(temp_image_path, "wb") as f:
+            f.write(uploaded_image.getbuffer())
+        
+        # Process based on analysis type
+        if analysis_type == "General":
+            question = "Please analyze this image and describe what you see in detail."
+        elif analysis_type == "OCR":
+            question = "Please extract and transcribe all text visible in this image."
+        elif analysis_type == "Charts":
+            question = "Please analyze this chart or graph and extract the data, trends, and key insights."
+        elif analysis_type == "Custom":
+            question = custom_question if custom_question else "Please analyze this image."
+        
+        # Add to conversation history
+        st.session_state.rag_system.add_to_conversation_history(
+            f"[Image Analysis: {analysis_type}] {question}",
+            "Processing image...",
+            "image_analysis",
+            "image"
+        )
+        
+        # Process with GPT-4 Vision
+        with st.spinner("Analyzing image..."):
+            answer = st.session_state.rag_system.analyze_image_with_gpt4(temp_image_path, question)
+            
+            # Update conversation history with result
+            st.session_state.rag_system.add_to_conversation_history(
+                f"[Image Analysis: {analysis_type}] {question}",
+                answer,
+                "image_analysis",
+                "image"
+            )
+        
+        # Clean up temp file
+        if os.path.exists(temp_image_path):
+            os.remove(temp_image_path)
+        
+        st.success("Image analysis completed!")
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"Error analyzing image: {str(e)}")
+        logger.error(f"Image analysis error: {str(e)}")
+
 # Sidebar - Clean, organized controls
 with st.sidebar:
     # Document Management Section
@@ -997,57 +1047,6 @@ def install_system_dependencies():
         print("  Ubuntu/Debian: sudo apt-get install ffmpeg")
         print("  macOS: brew install ffmpeg")
         print("  Windows: Download from https://ffmpeg.org/download.html")
-
-# Add this function definition before the install_system_dependencies function
-
-def process_image_analysis(uploaded_image, analysis_type, custom_question=""):
-    """Process uploaded image for analysis."""
-    try:
-        # Save uploaded image temporarily
-        temp_image_path = f"temp_uploaded_image_{int(time.time())}.png"
-        with open(temp_image_path, "wb") as f:
-            f.write(uploaded_image.getbuffer())
-        
-        # Process based on analysis type
-        if analysis_type == "General":
-            question = "Please analyze this image and describe what you see in detail."
-        elif analysis_type == "OCR":
-            question = "Please extract and transcribe all text visible in this image."
-        elif analysis_type == "Charts":
-            question = "Please analyze this chart or graph and extract the data, trends, and key insights."
-        elif analysis_type == "Custom":
-            question = custom_question if custom_question else "Please analyze this image."
-        
-        # Add to conversation history
-        st.session_state.rag_system.add_to_conversation_history(
-            f"[Image Analysis: {analysis_type}] {question}",
-            "Processing image...",
-            "image_analysis",
-            "image"
-        )
-        
-        # Process with GPT-4 Vision
-        with st.spinner("Analyzing image..."):
-            answer = st.session_state.rag_system.analyze_image_with_gpt4(temp_image_path, question)
-            
-            # Update conversation history with result
-            st.session_state.rag_system.add_to_conversation_history(
-                f"[Image Analysis: {analysis_type}] {question}",
-                answer,
-                "image_analysis",
-                "image"
-            )
-        
-        # Clean up temp file
-        if os.path.exists(temp_image_path):
-            os.remove(temp_image_path)
-        
-        st.success("Image analysis completed!")
-        st.rerun()
-        
-    except Exception as e:
-        st.error(f"Error analyzing image: {str(e)}")
-        logger.error(f"Image analysis error: {str(e)}")
 
 # Call this function when the app starts
 if __name__ == "__main__":
