@@ -431,6 +431,23 @@ class AudioProcessor:
         # Pre-load the tiny model for speed
         self.load_whisper_model("tiny")
     
+    def _check_ffmpeg(self):
+        """Check if FFmpeg is available on the system."""
+        try:
+            result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                logger.info("FFmpeg is available")
+                return True
+            else:
+                logger.warning("FFmpeg check failed")
+                return False
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            logger.warning("FFmpeg not found or not accessible")
+            return False
+        except Exception as e:
+            logger.error(f"Error checking FFmpeg: {str(e)}")
+            return False
+    
     def load_whisper_model(self, model_size="tiny"):
         """Load Whisper model with caching - use tiny for speed."""
         if model_size in self._model_cache:
@@ -604,6 +621,30 @@ class AudioProcessor:
         except Exception as e:
             logger.warning(f"Audio preprocessing failed: {str(e)}")
             return audio_path  # Return original if preprocessing fails
+    
+    def transcribe_audio(self, audio_path: str, method: str = "whisper") -> str:
+        """Transcribe audio with preprocessing for speed."""
+        try:
+            if method == "whisper":
+                # Preprocess audio for speed
+                preprocessed_path = self.preprocess_audio_for_speed(audio_path)
+                
+                # Transcribe with Whisper
+                transcription = self.transcribe_with_whisper(preprocessed_path)
+                
+                # Clean up preprocessed file
+                if preprocessed_path != audio_path and os.path.exists(preprocessed_path):
+                    try:
+                        os.remove(preprocessed_path)
+                    except:
+                        pass
+                
+                return transcription
+            else:
+                return self.transcribe_with_speechrecognition(audio_path)
+        except Exception as e:
+            logger.error(f"Error in transcribe_audio: {str(e)}")
+            return f"Error transcribing audio: {str(e)}"
     
     def transcribe_with_speechrecognition(self, audio_path: str) -> str:
         """Transcribe audio using SpeechRecognition (Google Speech API)."""
