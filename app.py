@@ -922,6 +922,44 @@ with st.sidebar:
         result = test_image_extraction()
         st.info(result)
 
+    # Image Analysis Section - moved to sidebar
+    st.markdown("---")
+    st.subheader("🖼️ Image Analysis")
+    
+    uploaded_image = st.file_uploader(
+        "Upload image",
+        type=['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'],
+        key="image_uploader",
+        help="Upload an image to analyze"
+    )
+    
+    analysis_type = st.selectbox(
+        "Analysis type",
+        ["General", "OCR", "Charts", "Custom"],
+        help="Choose analysis type"
+    )
+    
+    # Show image preview and custom question only when image is uploaded
+    if uploaded_image is not None:
+        # Display image with compact styling for sidebar
+        st.image(uploaded_image, caption="", width=200)
+        
+        # Custom question only if needed
+        custom_question = ""
+        if analysis_type == "Custom":
+            custom_question = st.text_input(
+                "Ask about this image:",
+                placeholder="e.g., What data does this chart show?",
+                help="Enter your specific question"
+            )
+        
+        # Clean analyze button
+        if st.button("🔍 Analyze", use_container_width=True, type="primary"):
+            if uploaded_image is not None:
+                process_image_analysis(uploaded_image, analysis_type, custom_question)
+            else:
+                st.warning("Please upload an image first")
+
 # Minimal error display in main area
 if st.session_state.error_count > 0:
     st.error(f"{st.session_state.error_count} error(s) - check sidebar for details.")
@@ -1013,47 +1051,4 @@ def process_image_analysis(uploaded_image, analysis_type, custom_question=""):
 
 # Call this function when the app starts
 if __name__ == "__main__":
-    install_system_dependencies()
-
-# Image Analysis Section
-st.markdown("---")
-st.markdown("### 🖼️ Image Analysis")
-
-# Create columns for layout
-col1, col2 = st.columns([3, 1])
-
-with col1:
-    uploaded_image = st.file_uploader(
-        "Upload image for analysis",
-        type=['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'],
-        key="image_uploader",
-        help="Upload an image to analyze its content, extract text, or analyze charts"
-    )
-
-with col2:
-    analysis_type = st.selectbox(
-        "Analysis Type",
-        ["General", "OCR", "Charts", "Custom"],
-        help="Choose analysis type"
-    )
-
-# Show uploaded image and custom question if needed
-if uploaded_image is not None:
-    # Display the uploaded image
-    st.image(uploaded_image, caption="Uploaded Image", width=300)
-    
-    # Custom question input if needed
-    custom_question = ""
-    if analysis_type == "Custom":
-        custom_question = st.text_area(
-            "Ask about this image:",
-            placeholder="e.g., What data does this chart show?",
-            height=60
-        )
-    
-    # Submit button for image analysis
-    if st.button("🔍 Analyze Image", use_container_width=True, type="primary"):
-        if uploaded_image is not None:
-            process_image_analysis(uploaded_image, analysis_type, custom_question)
-        else:
-            st.warning("Please upload an image first") 
+    install_system_dependencies() 
