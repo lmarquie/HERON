@@ -464,90 +464,29 @@ class AudioProcessor:
             logger.error(f"Error loading Whisper model: {str(e)}")
     
     def transcribe_with_whisper(self, audio_path: str) -> str:
-        """Transcribe audio using Whisper with ULTRA speed optimizations."""
+        """Fast Whisper transcription with minimal settings."""
         try:
             if self.whisper_model is None:
-                self.load_whisper_model("tiny")  # Use tiny model for speed
+                self.load_whisper_model("tiny")
             
-            logger.info(f"Transcribing audio with Whisper: {audio_path}")
+            logger.info(f"Transcribing: {audio_path}")
             
-            # Check if file exists and has content
-            if not os.path.exists(audio_path):
-                raise FileNotFoundError(f"Audio file not found: {audio_path}")
-            
-            file_size = os.path.getsize(audio_path)
-            if file_size == 0:
-                raise ValueError(f"Audio file is empty: {audio_path}")
-            
-            # Get audio duration
-            import librosa
-            duration = librosa.get_duration(path=audio_path)
-            logger.info(f"Audio duration: {duration:.2f} seconds ({duration/60:.2f} minutes)")
-            
-            print(f"🎵 Transcribing {duration/60:.1f} minute audio file...")
-            
-            # ULTRA SPEED OPTIMIZED settings
+            # Simple, fast settings
             result = self.whisper_model.transcribe(
                 audio_path,
                 language="en",
                 task="transcribe",
-                verbose=False,  # Disable verbose for speed
-                fp16=True,  # Enable FP16 for speed (if supported)
-                condition_on_previous_text=False,  # Disable for speed
-                temperature=0.0,  # Deterministic for speed
-                compression_ratio_threshold=2.0,  # More lenient for speed
-                logprob_threshold=-3.0,  # More lenient for speed
-                no_speech_threshold=0.9,  # More lenient for speed
-                word_timestamps=False,  # Disable for speed
-                prepend_punctuations=False,  # Disable for speed
-                append_punctuations=False,  # Disable for speed
-                initial_prompt=None,  # Disable for speed
-                suppress_tokens=[-1],  # Suppress end token for speed
-                without_timestamps=True  # Disable timestamps for speed
+                verbose=False,
+                fp16=False,  # Disable for stability
+                temperature=0.0
             )
             
-            logger.info("Whisper transcription completed")
-            
             transcription = result.get('text', '').strip()
-            
-            if not transcription:
-                logger.warning("Whisper returned empty transcription")
-                return "No speech detected in audio file."
-            
             logger.info(f"Transcription completed: {len(transcription)} characters")
-            print(f"🎉 Transcription completed! Total: {len(transcription)} characters")
             return transcription
             
         except Exception as e:
-            # FIX: Capture the actual error details
-            import traceback
-            error_details = traceback.format_exc()
-            logger.error(f"Error transcribing with Whisper: {str(e)}")
-            logger.error(f"Full traceback: {error_details}")
-            print(f"❌ Transcription error: {str(e)}")
-            
-            # If it's a tensor error, try with even more conservative settings
-            if "tensor" in str(e).lower() and "reshape" in str(e).lower():
-                print("🔄 Trying with ultra-conservative settings...")
-                try:
-                    result = self.whisper_model.transcribe(
-                        audio_path,
-                        language="en",
-                        task="transcribe",
-                        verbose=False,
-                        fp16=False,  # Disable FP16 for stability
-                        condition_on_previous_text=False,
-                        temperature=0.0,
-                        compression_ratio_threshold=2.0,
-                        logprob_threshold=-3.0,
-                        no_speech_threshold=0.9
-                    )
-                    transcription = result.get('text', '').strip()
-                    if transcription:
-                        return transcription
-                except Exception as e2:
-                    logger.error(f"Second attempt also failed: {str(e2)}")
-            
+            logger.error(f"Whisper error: {str(e)}")
             return f"Error transcribing audio: {str(e)}"
     
     def convert_audio_format(self, audio_path: str, target_format: str = "wav") -> str:
@@ -623,23 +562,11 @@ class AudioProcessor:
             return audio_path  # Return original if preprocessing fails
     
     def transcribe_audio(self, audio_path: str, method: str = "whisper") -> str:
-        """Transcribe audio with preprocessing for speed."""
+        """Simplified fast transcription."""
         try:
             if method == "whisper":
-                # Preprocess audio for speed
-                preprocessed_path = self.preprocess_audio_for_speed(audio_path)
-                
-                # Transcribe with Whisper
-                transcription = self.transcribe_with_whisper(preprocessed_path)
-                
-                # Clean up preprocessed file
-                if preprocessed_path != audio_path and os.path.exists(preprocessed_path):
-                    try:
-                        os.remove(preprocessed_path)
-                    except:
-                        pass
-                
-                return transcription
+                # Skip preprocessing - go directly to Whisper
+                return self.transcribe_with_whisper(audio_path)
             else:
                 return self.transcribe_with_speechrecognition(audio_path)
         except Exception as e:
