@@ -2192,69 +2192,40 @@ def batch_documents_by_token_limit(documents, max_tokens=16384):
         batches.append(current_batch)
     return batches
 
-def search_web_live(query: str, num_results: int = 7) -> list:
-    """Enhanced web search using DuckDuckGo for live results."""
+def search_web_live(query: str, num_results: int = 5) -> list:
+    """Search the web using DuckDuckGo for live results."""
     try:
         with DDGS() as ddgs:
-            # Try different search strategies
-            results = []
-            
-            # Primary search
-            primary_results = list(ddgs.text(query, max_results=num_results))
-            results.extend(primary_results)
-            
-            # If we don't have enough results, try a broader search
-            if len(results) < 3:
-                # Try with different keywords
-                broader_query = query.replace("what is", "").replace("define", "").strip()
-                if broader_query != query:
-                    broader_results = list(ddgs.text(broader_query, max_results=3))
-                    results.extend(broader_results)
-            
-            # Remove duplicates and format
-            seen_urls = set()
-            web_results = []
-            
-            for result in results:
-                url = result.get("link", "")
-                if url not in seen_urls and len(web_results) < num_results:
-                    seen_urls.add(url)
-                    web_results.append({
-                        "title": result.get("title", ""),
-                        "snippet": result.get("body", ""),
-                        "link": url,
-                        "source": "DuckDuckGo Live Search"
-                    })
-            
-            return web_results
-            
+            results = list(ddgs.text(query, max_results=num_results))
+        
+        web_results = []
+        for result in results:
+            web_results.append({
+                "title": result.get("title", ""),
+                "snippet": result.get("body", ""),
+                "link": result.get("link", ""),
+                "source": "DuckDuckGo Live Search"
+            })
+        
+        return web_results
     except Exception as e:
         logger.error(f"DuckDuckGo search error: {str(e)}")
         return []
 
 def generate_live_web_answer(question: str) -> str:
-    """Generate intelligent answer using live web search results."""
+    """Generate answer using live web search results."""
     try:
-        # Analyze the question type to determine search strategy
-        question_type = analyze_question_type(question)
-        
-        # Adjust search query based on question type
-        search_query = optimize_search_query(question, question_type)
-        
-        # Search the web live with optimized query
-        web_results = search_web_live(search_query, num_results=7)  # Increased results
+        # Search the web live
+        web_results = search_web_live(question, num_results=5)
         
         if not web_results:
-            return f"I couldn't find any current information about '{question}'. Please try rephrasing your question or ask something more specific."
+            return "No live web results found for your question."
         
         # Format web results for context
         web_context = "\n\n".join([
             f"Source: {result['title']}\n{result['snippet']}\nURL: {result['link']}"
             for result in web_results
         ])
-        
-        # Create dynamic system prompt based on question type
-        system_prompt = create_dynamic_system_prompt(question_type, question)
         
         # Use OpenAI to generate answer from live web results
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
@@ -2264,14 +2235,14 @@ def generate_live_web_answer(question: str) -> str:
             messages=[
                 {
                     "role": "system",
-                    "content": system_prompt
+                    "content": "You are a financial consultant with access to live web information. Answer questions based on the provided web search results. CRITICAL: When asked about financial data, revenue, projections, or specific figures, ALWAYS lead with the most specific and detailed numerical information available. Do NOT start with vague summaries or general statements. If the context contains specific numbers, dates, or financial figures, present those FIRST. Only provide general commentary AFTER presenting the specific data. Always cite your sources and provide accurate, up-to-date information from the web. No one sentence answers. Always provide a detailed answer."
                 },
                 {
                     "role": "user",
-                    "content": f"Live Web Search Results:\n{web_context}\n\nQuestion: {question}\n\nPlease provide a helpful, accurate answer based on the web search results above. Include relevant source citations when appropriate."
+                    "content": f"Live Web Search Results:\n{web_context}\n\nQuestion: {question}\n\nPlease answer based on the live web results above. Include source citations."
                 }
             ],
-            max_tokens=2048,  # Reduced for faster responses
+            max_tokens=16384,
             temperature=0.3
         )
         
@@ -2279,101 +2250,7 @@ def generate_live_web_answer(question: str) -> str:
         
     except Exception as e:
         logger.error(f"Error generating live web answer: {str(e)}")
-        return f"I'm having trouble accessing current information right now. Please try again in a moment."
-
-def analyze_question_type(question: str) -> str:
-    """Analyze the type of question to determine appropriate search strategy."""
-    question_lower = question.lower()
-    
-    # Greeting/General questions
-    if any(word in question_lower for word in ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']):
-        return 'greeting'
-    
-    # Definition questions
-    if any(word in question_lower for word in ['what is', 'define', 'definition', 'meaning of', 'what does']):
-        return 'definition'
-    
-    # Current events/News
-    if any(word in question_lower for word in ['latest', 'recent', 'news', 'today', 'current', 'update']):
-        return 'news'
-    
-    # Financial/Stock questions
-    if any(word in question_lower for word in ['stock', 'price', 'market', 'earnings', 'revenue', 'financial', 'company']):
-        return 'financial'
-    
-    # Technical/How-to questions
-    if any(word in question_lower for word in ['how to', 'how do', 'tutorial', 'guide', 'steps']):
-        return 'how_to'
-    
-    # Factual questions
-    if any(word in question_lower for word in ['when', 'where', 'who', 'why', 'how many', 'what year']):
-        return 'factual'
-    
-    # Default to general
-    return 'general'
-
-def optimize_search_query(question: str, question_type: str) -> str:
-    """Optimize the search query based on question type."""
-    question_lower = question.lower()
-    
-    if question_type == 'greeting':
-        # For greetings, search for general information about greetings or current time
-        return "greeting etiquette current time"
-    
-    elif question_type == 'definition':
-        # For definitions, add "definition" to make search more specific
-        if 'what is' in question_lower:
-            return question  # Keep as is, it's already well-formed
-        else:
-            return f"{question} definition"
-    
-    elif question_type == 'news':
-        # For news, add "latest news" to get current information
-        return f"{question} latest news 2024"
-    
-    elif question_type == 'financial':
-        # For financial questions, add "stock price" or "financial data"
-        return f"{question} stock price financial data"
-    
-    elif question_type == 'how_to':
-        # For how-to questions, add "tutorial" or "guide"
-        return f"{question} tutorial guide"
-    
-    elif question_type == 'factual':
-        # For factual questions, keep as is
-        return question
-    
-    else:
-        # For general questions, add context
-        return f"{question} information"
-    
-    return question
-
-def create_dynamic_system_prompt(question_type: str, question: str) -> str:
-    """Create a dynamic system prompt based on question type."""
-    
-    base_prompt = "You are a helpful AI assistant with access to live web information. Answer questions based on the provided web search results."
-    
-    if question_type == 'greeting':
-        return f"{base_prompt} For greetings, provide a friendly response and optionally mention current time or general information. Be conversational and helpful."
-    
-    elif question_type == 'definition':
-        return f"{base_prompt} For definition questions, provide clear, accurate definitions with examples when helpful. Cite sources for technical or specialized terms."
-    
-    elif question_type == 'news':
-        return f"{base_prompt} For news questions, focus on the most recent and relevant information. Prioritize current events and recent developments. Always cite sources."
-    
-    elif question_type == 'financial':
-        return f"{base_prompt} For financial questions, lead with specific data, numbers, and current figures when available. Provide context and cite sources. Be precise with financial information."
-    
-    elif question_type == 'how_to':
-        return f"{base_prompt} For how-to questions, provide step-by-step instructions when possible. Include practical tips and safety considerations when relevant."
-    
-    elif question_type == 'factual':
-        return f"{base_prompt} For factual questions, provide accurate, well-sourced information. Include relevant details and context."
-    
-    else:
-        return f"{base_prompt} Provide helpful, accurate information based on the search results. Include relevant context and cite sources when appropriate."
+        return f"Error accessing live web: {str(e)}"
 
 # Add this new class for on-demand image processing
 class OnDemandImageProcessor:
