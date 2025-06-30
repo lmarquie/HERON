@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Set page config
 st.set_page_config(
     page_title="HERON",
-    page_icon="🦅",
+    page_icon="",
     layout="wide"
 )
 
@@ -380,13 +380,13 @@ if conversation_history:
     with chat_container:
         for i, conv in enumerate(conversation_history):
             # Show mode indicator
-            mode_icon = "🌐" if conv.get('mode') == 'internet' else "📄"
+            mode_icon = "Internet" if conv.get('mode') == 'internet' else "Document"
             mode_text = "Internet" if conv.get('mode') == 'internet' else "Document"
             
             # Add audio indicator
             file_type = conv.get('metadata', {}).get('file_type', 'document')
             if file_type == 'audio':
-                mode_icon = "🎵"
+                mode_icon = "Audio"
                 mode_text = "Audio"
             
             # Question bubble (user)
@@ -555,7 +555,7 @@ def submit_chat_message():
         
         # If this is a follow-up to image analysis, use the follow-up handler
         if is_image_followup:
-            with st.spinner("🤔 Processing follow-up question..."):
+            with st.spinner("Processing follow-up question..."):
                 answer = st.session_state.rag_system.handle_follow_up(chat_question)
             st.rerun()
             return
@@ -563,7 +563,7 @@ def submit_chat_message():
         # Check if this is a chart request
         if is_chart_request(chat_question):
             # Process chart request with progress indicator
-            with st.spinner("🔄 Converting PDF pages to images..."):
+            with st.spinner("Converting PDF pages to images..."):
                 chart_results = st.session_state.rag_system.process_chart_request(chat_question)
             
             if not chart_results:
@@ -587,7 +587,7 @@ def submit_chat_message():
                             # Display the image
                             with open(image_path, "rb") as img_file:
                                 st.image(img_file, caption=chart_info.get('description', f"Page {chart_info['page']}"))
-                            st.write(f"✅ Successfully displayed image from {image_path}")
+                            st.write(f"Successfully displayed image from {image_path}")
                         except Exception as e:
                             st.error(f"Error displaying image: {str(e)}")
                     else:
@@ -607,7 +607,7 @@ def submit_chat_message():
         elif is_image_request(chat_question):
             # Process image request with visual feedback
             progress_placeholder = st.empty()
-            progress_placeholder.info("🔍 Searching for images in document...")
+            progress_placeholder.info("Searching for images in document...")
             
             try:
                 answer = st.session_state.rag_system.process_image_request(chat_question)
@@ -637,7 +637,7 @@ def submit_chat_message():
             
         else:
             # Add loading indicator for all question processing
-            with st.spinner("🤔 Thinking..."):
+            with st.spinner("Thinking..."):
                 # Process based on mode - simplified logic
                 if st.session_state.get('internet_mode', False):
                     # Use live web search - this method already adds to conversation history
@@ -681,7 +681,7 @@ def process_image_analysis(uploaded_image, analysis_type, custom_question=""):
             
             # Add to conversation history with just the answer (no question prefix)
             st.session_state.rag_system.add_to_conversation_history(
-                f"🖼️ Image Analysis ({analysis_type})",
+                f"Image Analysis ({analysis_type})",
                 answer,
                 "image_analysis",
                 "image"
@@ -730,7 +730,7 @@ with st.sidebar:
             document_files = [f for f in uploaded_files if f.name.lower().endswith(('.pdf', '.docx', '.pptx', '.doc', '.xls', '.xlsx', '.ppt'))]
             
             if audio_files:
-                st.info(f"🎵 Found {len(audio_files)} audio file(s) - will transcribe to text")
+                st.info(f"Found {len(audio_files)} audio file(s) - will transcribe to text")
             
             # Process files in smaller batches to avoid memory issues
             batch_size = 3  # Process 3 files at a time
@@ -746,21 +746,20 @@ with st.sidebar:
                     try:
                         if st.session_state.rag_system.process_web_uploads(batch):
                             success_count += len(batch)
-                            st.success(f"✅ Processed {len(batch)} files successfully")
+                            st.success(f"Processed {len(batch)} files successfully")
                         else:
-                            st.error(f"❌ Failed to process batch: {', '.join(batch_names)}")
+                            st.error(f"Failed to process batch: {', '.join(batch_names)}")
                     except Exception as e:
-                        st.error(f"❌ Error processing batch: {str(e)}")
+                        st.error(f"Error processing batch: {str(e)}")
                         logger.error(f"Error processing batch: {str(e)}")
             
             if success_count > 0:
-                st.success(f"✅ Successfully processed {success_count}/{len(uploaded_files)} files")
+                st.success(f"Successfully processed {success_count}/{len(uploaded_files)} files")
                 st.session_state.documents_loaded = True
                 st.session_state.processing_status = st.session_state.rag_system.file_handler.get_processing_status()
             else:
-                st.error("❌ Failed to process any files")
-                st.session_state.documents_loaded = False
-        
+                st.error("Failed to process any files")
+            
             st.session_state.is_processing_files = False
         else:
             # Files haven't changed or currently processing, just show status
@@ -802,17 +801,17 @@ with st.sidebar:
     # Now set the internet mode based on current selection
     if search_mode == "Live Web Search":
         st.session_state.internet_mode = True
-        st.success("🌐 Live Web Search Enabled")
+        st.success("Live Web Search Enabled")
     elif search_mode == "Documents":
         st.session_state.internet_mode = False
         if st.session_state.get('documents_loaded'):
-            st.info(f"📄 Document Mode ({len(st.session_state.get('last_uploaded_files', []))} docs)")
+            st.info(f"Document Mode ({len(st.session_state.get('last_uploaded_files', []))} docs)")
         else:
             st.warning("No documents loaded")
     elif search_mode == "Both":
         st.session_state.internet_mode = True
         st.session_state.use_both_modes = True
-        st.success("🌐 Both Modes Enabled")
+        st.success("Both Modes Enabled")
 
     # Export Section (only show if there's conversation history)
     if conversation_history:
@@ -822,7 +821,7 @@ with st.sidebar:
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("📄 PDF", use_container_width=True):
+            if st.button("PDF", use_container_width=True):
                 pdf_path = export_conversation_to_pdf()
                 if pdf_path and os.path.exists(pdf_path):
                     with open(pdf_path, "rb") as pdf_file:
@@ -836,7 +835,7 @@ with st.sidebar:
                     )
         
         with col2:
-            if st.button("📝 Markdown", use_container_width=True):
+            if st.button("Markdown", use_container_width=True):
                 md_path = export_conversation_to_markdown()
                 if md_path and os.path.exists(md_path):
                     with open(md_path, "r", encoding='utf-8') as md_file:
@@ -850,7 +849,7 @@ with st.sidebar:
                     )
         
         with col3:
-            if st.button("📊 CSV", use_container_width=True):
+            if st.button("CSV", use_container_width=True):
                 csv_path = export_conversation_to_csv()
                 if csv_path and os.path.exists(csv_path):
                     with open(csv_path, "r", encoding='utf-8') as csv_file:
@@ -976,11 +975,11 @@ with st.sidebar:
         try:
             uploaded_files = st.session_state.get('last_uploaded_files', [])
             if not uploaded_files:
-                return "❌ No documents uploaded"
+                return "No documents uploaded"
             
             pdf_path = os.path.join("temp", uploaded_files[0])
             if not os.path.exists(pdf_path):
-                return "❌ Document not found in temp directory"
+                return "Document not found in temp directory"
             
             # Actually extract images
             processor = OnDemandImageProcessor()
@@ -988,7 +987,7 @@ with st.sidebar:
             
             if images:
                 # Show the actual images found
-                st.write(f"✅ Found {len(images)} images:")
+                st.write(f"Found {len(images)} images:")
                 for i, img_info in enumerate(images, 1):
                     st.write(f"  - Image {i}: Page {img_info['page']} ({img_info['path']})")
                 
@@ -996,21 +995,21 @@ with st.sidebar:
                 if os.path.exists(images[0]['path']):
                     st.image(images[0]['path'], caption=f"Preview: {images[0]['description']}", width=300)
                 
-                return f"✅ Successfully extracted {len(images)} images"
+                return f"Successfully extracted {len(images)} images"
             else:
-                return "⚠️ No images found in document (PDF may only contain text)"
+                return "No images found in document (PDF may only contain text)"
             
         except Exception as e:
-            return f"❌ Error: {str(e)}"
+            return f"Error: {str(e)}"
 
     # Add this to your sidebar
-    if st.button("🔍 Test Image Extraction", use_container_width=True):
+    if st.button("Test Image Extraction", use_container_width=True):
         result = test_image_extraction()
         st.info(result)
 
     # Image Analysis Section - moved to sidebar
     st.markdown("---")
-    st.subheader("🖼️ Image Analysis")
+    st.subheader("Image Analysis")
     
     uploaded_image = st.file_uploader(
         "Upload image",
@@ -1040,7 +1039,7 @@ with st.sidebar:
             )
         
         # Clean analyze button
-        if st.button("🔍 Analyze", use_container_width=True, type="primary"):
+        if st.button("Analyze", use_container_width=True, type="primary"):
             if uploaded_image is not None:
                 process_image_analysis(uploaded_image, analysis_type, custom_question)
             else:
@@ -1076,9 +1075,9 @@ def install_system_dependencies():
     try:
         # Check if ffmpeg is available
         subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-        print("✅ FFmpeg is available")
+        print("FFmpeg is available")
     except (subprocess.CalledProcessError, FileNotFoundError):
-        print("⚠️ FFmpeg not found. Audio processing may not work properly.")
+        print("FFmpeg not found. Audio processing may not work properly.")
         print("To install FFmpeg:")
         print("  Ubuntu/Debian: sudo apt-get install ffmpeg")
         print("  macOS: brew install ffmpeg")
