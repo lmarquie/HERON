@@ -541,6 +541,22 @@ def submit_chat_message():
         # Store the question to prevent duplicate processing
         st.session_state.last_processed_question = chat_question.strip()
         
+        # Check if this is a follow-up to an image analysis
+        conversation_history = st.session_state.rag_system.get_conversation_history()
+        is_image_followup = False
+        if conversation_history:
+            # Check if the last message was an image analysis
+            last_message = conversation_history[-1]
+            if last_message.get('question_type') == 'image_analysis':
+                is_image_followup = True
+        
+        # If this is a follow-up to image analysis, use the follow-up handler
+        if is_image_followup:
+            with st.spinner("🤔 Processing follow-up question..."):
+                answer = st.session_state.rag_system.handle_follow_up(chat_question)
+            st.rerun()
+            return
+        
         # Check if this is a chart request
         if is_chart_request(chat_question):
             # Process chart request with progress indicator
