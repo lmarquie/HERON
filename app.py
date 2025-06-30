@@ -637,16 +637,12 @@ def submit_chat_message():
         else:
             # Add loading indicator for all question processing
             with st.spinner("🤔 Thinking..."):
-                # Check if both modes are enabled
-                if st.session_state.get('use_both_modes', False):
-                    # Both modes enabled - use the existing method
-                    answer = st.session_state.rag_system.process_question_both_modes(chat_question, normalize_length=True)
-                    
-                elif st.session_state.get('internet_mode', False):
+                # IMPORTANT: Only process once based on current mode
+                if st.session_state.get('internet_mode', False):
                     # Use live web search only
                     answer = st.session_state.rag_system.process_live_web_question(chat_question)
                 else:
-                    # Use regular question processing for new questions
+                    # Use document search only
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             
             # Add to conversation history and rerun
@@ -768,21 +764,25 @@ with st.sidebar:
     if 'previous_search_mode' not in st.session_state:
         st.session_state.previous_search_mode = search_mode
 
-    # If search mode changed, force rerun to update session state
+    # If search mode changed, update RAG system FIRST, then force rerun
     if st.session_state.previous_search_mode != search_mode:
+        # Update the RAG system's internet mode BEFORE rerun
+        if search_mode == "Live Web Search":
+            st.session_state.rag_system.set_internet_mode(True)
+        elif search_mode == "Documents":
+            st.session_state.rag_system.set_internet_mode(False)
+        elif search_mode == "Both":
+            st.session_state.rag_system.set_internet_mode(True)
+        
         st.session_state.previous_search_mode = search_mode
         st.rerun()
 
     # Now set the internet mode based on current selection
     if search_mode == "Live Web Search":
         st.session_state.internet_mode = True
-        # Update the RAG system's internet mode
-        st.session_state.rag_system.set_internet_mode(True)
         st.success("🌐 Live Web Search Enabled")
     elif search_mode == "Documents":
         st.session_state.internet_mode = False
-        # Update the RAG system's internet mode
-        st.session_state.rag_system.set_internet_mode(False)
         if st.session_state.get('documents_loaded'):
             st.info(f"📄 Document Mode ({len(st.session_state.get('last_uploaded_files', []))} docs)")
         else:
@@ -790,8 +790,6 @@ with st.sidebar:
     elif search_mode == "Both":
         st.session_state.internet_mode = True
         st.session_state.use_both_modes = True
-        # Update the RAG system's internet mode
-        st.session_state.rag_system.set_internet_mode(True)
         st.success("🌐 Both Modes Enabled")
 
     # Export Section (only show if there's conversation history)
