@@ -545,10 +545,13 @@ def submit_chat_message():
         conversation_history = st.session_state.rag_system.get_conversation_history()
         is_image_followup = False
         if conversation_history:
-            # Check if the last message was an image analysis
-            last_message = conversation_history[-1]
-            if last_message.get('question_type') == 'image_analysis':
-                is_image_followup = True
+            # Look for any recent image analysis in the last few messages
+            # Check the last 3 messages to see if any were image analysis
+            recent_messages = conversation_history[-3:] if len(conversation_history) >= 3 else conversation_history
+            for msg in recent_messages:
+                if msg.get('question_type') == 'image_analysis':
+                    is_image_followup = True
+                    break
         
         # If this is a follow-up to image analysis, use the follow-up handler
         if is_image_followup:
