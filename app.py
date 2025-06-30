@@ -772,7 +772,7 @@ with st.sidebar:
     
     search_mode = st.selectbox(
         "Choose search mode:",
-        ["Documents", "Live Web Search", "Both"],
+        ["Documents", "Live Web Search"],
         index=0,
         help="Live Web Search uses DuckDuckGo for real-time information"
     )
@@ -790,10 +790,6 @@ with st.sidebar:
         elif search_mode == "Documents":
             st.session_state.rag_system.set_internet_mode(False)
             st.session_state.internet_mode = False  # Also update session state
-        elif search_mode == "Both":
-            st.session_state.rag_system.set_internet_mode(True)
-            st.session_state.internet_mode = True  # Also update session state
-            st.session_state.use_both_modes = True
         
         st.session_state.previous_search_mode = search_mode
         st.rerun()
@@ -808,10 +804,6 @@ with st.sidebar:
             st.info(f"Document Mode ({len(st.session_state.get('last_uploaded_files', []))} docs)")
         else:
             st.warning("No documents loaded")
-    elif search_mode == "Both":
-        st.session_state.internet_mode = True
-        st.session_state.use_both_modes = True
-        st.success("Both Modes Enabled")
 
     # Export Section (only show if there's conversation history)
     if conversation_history:
