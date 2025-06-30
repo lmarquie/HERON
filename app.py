@@ -533,7 +533,14 @@ def submit_chat_message():
     chat_input_key = f"chat_input_{st.session_state.chat_input_key}"
     chat_question = st.session_state.get(chat_input_key, "")
     
+    # Check if this question has already been processed
+    if chat_question.strip() == st.session_state.get('last_processed_question', ""):
+        return  # Skip if already processed
+    
     if chat_question.strip():
+        # Store the question to prevent duplicate processing
+        st.session_state.last_processed_question = chat_question.strip()
+        
         # Check if this is a chart request
         if is_chart_request(chat_question):
             # Process chart request with progress indicator
