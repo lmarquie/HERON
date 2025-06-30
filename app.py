@@ -610,22 +610,12 @@ def submit_chat_message():
         else:
             # Add loading indicator for all question processing
             with st.spinner("🤔 Thinking..."):
-                # Check if there's existing conversation history (including image analysis)
-                current_history = st.session_state.rag_system.get_conversation_history()
-                has_real_conversation = any(
-                    conv.get('question_type') not in ['error'] 
-                    for conv in current_history
-                )
-                
-                # Process based on mode and conversation history
+                # Process based on mode - simplified logic
                 if st.session_state.get('internet_mode', False):
                     # Use live web search
                     answer = st.session_state.rag_system.process_live_web_question(chat_question)
-                elif has_real_conversation:
-                    # Use follow-up processing for existing conversation (including image analysis)
-                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
                 else:
-                    # Use document search for new questions
+                    # Use document search
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             
             # Add to conversation history and rerun
