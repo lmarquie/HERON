@@ -485,7 +485,6 @@ class AudioProcessor:
                 prepend_punctuations=False,  # Disable for speed
                 append_punctuations=False,  # Disable for speed
                 initial_prompt=None,  # Disable for speed
-                condition_on_previous_text=False,  # Disable for speed
                 suppress_tokens=[-1],  # Suppress end token for speed
                 without_timestamps=True  # Disable timestamps for speed
             )
