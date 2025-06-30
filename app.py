@@ -600,7 +600,34 @@ def submit_chat_message():
             st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "image_request", "document")
             st.rerun()
             
-        # Check if documents are loaded OR internet mode is enabled
+        # Check if there's existing conversation history first
+        current_history = st.session_state.rag_system.get_conversation_history()
+        has_real_conversation = any(
+            conv.get('question_type') not in ['error'] 
+            for conv in current_history
+        )
+        
+        # If there's conversation history, allow follow-up questions regardless of documents/internet
+        if has_real_conversation:
+            # Add loading indicator for all question processing
+            with st.spinner("🤔 Thinking..."):
+                # Check if both modes are enabled
+                if st.session_state.get('use_both_modes', False):
+                    # Both modes enabled - use the existing method
+                    answer = st.session_state.rag_system.process_question_both_modes(chat_question, normalize_length=True)
+                    
+                elif st.session_state.get('internet_mode', False):
+                    # Use live web search only
+                    answer = st.session_state.rag_system.process_live_web_question(chat_question)
+                else:
+                    # Use follow-up processing for existing conversation
+                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
+            
+            # Add to conversation history and rerun
+            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "followup", "conversation")
+            st.rerun()
+            
+        # Check if documents are loaded OR internet mode is enabled (only for new conversations)
         elif not st.session_state.get('documents_loaded', False) and not st.session_state.get('internet_mode', False):
             # Quick message for no documents and no internet mode
             answer = "Please upload a document first or enable Live Web Search."
@@ -610,22 +637,12 @@ def submit_chat_message():
         else:
             # Add loading indicator for all question processing
             with st.spinner("🤔 Thinking..."):
-                # Check if there's existing conversation history
-                current_history = st.session_state.rag_system.get_conversation_history()
-                has_real_conversation = any(
-                    conv.get('question_type') not in ['error'] 
-                    for conv in current_history
-                )
-                
-                # Process based on mode and conversation history
+                # IMPORTANT: Only process once based on current mode
                 if st.session_state.get('internet_mode', False):
-                    # Use live web search
+                    # Use live web search only
                     answer = st.session_state.rag_system.process_live_web_question(chat_question)
-                elif has_real_conversation:
-                    # Use follow-up processing for existing conversation
-                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
                 else:
-                    # Use document search for new questions
+                    # Use document search only
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             
             # Add to conversation history and rerun
