@@ -857,47 +857,79 @@ with st.sidebar:
     # Add transcription export section
     st.markdown("---")
     st.subheader("Audio Transcriptions")
-    
+
     # Check if there are any audio transcriptions available
-    if hasattr(st.session_state.rag_system, 'file_handler') and st.session_state.rag_system.file_handler:
-        saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
-        audio_transcripts = [path for path in saved_paths if '_transcript.txt' in path]
+    def get_audio_transcripts():
+        """Get all audio transcript files from temp directory."""
+        transcript_files = []
+        temp_dir = "temp"
         
-        if audio_transcripts:
-            st.info(f"Found {len(audio_transcripts)} audio transcription(s)")
-            
-            for transcript_path in audio_transcripts:
-                try:
-                    # Read the transcription
-                    with open(transcript_path, 'r', encoding='utf-8') as f:
-                        transcription_text = f.read()
+        if os.path.exists(temp_dir):
+            for file in os.listdir(temp_dir):
+                if file.endswith('_transcript.txt'):
+                    transcript_files.append(os.path.join(temp_dir, file))
+        
+        return transcript_files
+
+    audio_transcripts = get_audio_transcripts()
+
+    if audio_transcripts:
+        st.info(f"Found {len(audio_transcripts)} audio transcription(s)")
+        
+        for transcript_path in audio_transcripts:
+            try:
+                # Read the transcription
+                with open(transcript_path, 'r', encoding='utf-8') as f:
+                    transcription_text = f.read()
+                
+                # Get original filename
+                base_name = os.path.basename(transcript_path).replace('_transcript.txt', '')
+                
+                # Create a container for this transcript
+                with st.container():
+                    st.markdown(f"**{base_name}**")
                     
-                    # Get original filename
-                    base_name = os.path.basename(transcript_path).replace('_transcript.txt', '')
+                    # Show transcription preview
+                    with st.expander("Preview transcription"):
+                        st.text_area("Transcription content", transcription_text, height=200, disabled=True)
                     
-                    # Create export button
-                    if st.button(f"Export {base_name} PDF", key=f"export_{base_name}"):
-                        pdf_path = export_transcription_to_pdf(transcription_text, base_name)
-                        if pdf_path and os.path.exists(pdf_path):
-                            with open(pdf_path, "rb") as pdf_file:
-                                pdf_bytes = pdf_file.read()
-                            st.download_button(
-                                label=f"Download {base_name} PDF",
-                                data=pdf_bytes,
-                                file_name=f"{base_name}_transcription.pdf",
-                                mime="application/pdf",
-                                use_container_width=True,
-                                key=f"download_{base_name}"
-                            )
-                        else:
-                            st.error("Failed to create PDF")
-                            
-                except Exception as e:
-                    st.error(f"Error reading transcription {transcript_path}: {str(e)}")
-        else:
-            st.info("No audio transcriptions found. Upload an audio file to create transcriptions.")
+                    # Create export buttons
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        if st.button(f"Export {base_name} PDF", key=f"export_pdf_{base_name}"):
+                            pdf_path = export_transcription_to_pdf(transcription_text, base_name)
+                            if pdf_path and os.path.exists(pdf_path):
+                                with open(pdf_path, "rb") as pdf_file:
+                                    pdf_bytes = pdf_file.read()
+                                st.download_button(
+                                    label=f"Download {base_name} PDF",
+                                    data=pdf_bytes,
+                                    file_name=f"{base_name}_transcription.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True,
+                                    key=f"download_pdf_{base_name}"
+                                )
+                            else:
+                                st.error("Failed to create PDF")
+                    
+                    with col2:
+                        # Add direct text download option
+                        st.download_button(
+                            label=f"Download {base_name} TXT",
+                            data=transcription_text,
+                            file_name=f"{base_name}_transcription.txt",
+                            mime="text/plain",
+                            use_container_width=True,
+                            key=f"download_txt_{base_name}"
+                        )
+                    
+                    st.markdown("---")
+                
+            except Exception as e:
+                st.error(f"Error reading transcription {transcript_path}: {str(e)}")
     else:
-        st.info("No file handler available. Upload an audio file first.")
+        st.info("No audio transcriptions found. Upload an audio file to create transcriptions.")
 
     # Session Management Section
     st.markdown("---")
