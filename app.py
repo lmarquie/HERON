@@ -623,8 +623,6 @@ def submit_chat_message():
                     # Use follow-up processing for existing conversation
                     answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
             
-            # Add to conversation history and rerun
-            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "followup", "conversation")
             st.rerun()
             
         # Check if documents are loaded OR internet mode is enabled (only for new conversations)
@@ -649,8 +647,6 @@ def submit_chat_message():
                     # Use regular question processing for new questions
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             
-            # Add to conversation history and rerun
-            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "question", "document")
             st.rerun()
     
     # Only increment after rerun, so the key stays in sync
