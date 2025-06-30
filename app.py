@@ -623,6 +623,8 @@ def submit_chat_message():
                     # Use follow-up processing for existing conversation
                     answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
             
+            # Add to conversation history and rerun
+            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "followup", "conversation")
             st.rerun()
             
         # Check if documents are loaded OR internet mode is enabled (only for new conversations)
@@ -647,6 +649,8 @@ def submit_chat_message():
                     # Use regular question processing for new questions
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             
+            # Add to conversation history and rerun
+            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "question", "document")
             st.rerun()
     
     # Only increment after rerun, so the key stays in sync
@@ -772,9 +776,13 @@ with st.sidebar:
     # Now set the internet mode based on current selection
     if search_mode == "Live Web Search":
         st.session_state.internet_mode = True
+        # Update the RAG system's internet mode
+        st.session_state.rag_system.set_internet_mode(True)
         st.success("🌐 Live Web Search Enabled")
     elif search_mode == "Documents":
         st.session_state.internet_mode = False
+        # Update the RAG system's internet mode
+        st.session_state.rag_system.set_internet_mode(False)
         if st.session_state.get('documents_loaded'):
             st.info(f"📄 Document Mode ({len(st.session_state.get('last_uploaded_files', []))} docs)")
         else:
@@ -782,6 +790,8 @@ with st.sidebar:
     elif search_mode == "Both":
         st.session_state.internet_mode = True
         st.session_state.use_both_modes = True
+        # Update the RAG system's internet mode
+        st.session_state.rag_system.set_internet_mode(True)
         st.success("🌐 Both Modes Enabled")
 
     # Export Section (only show if there's conversation history)
