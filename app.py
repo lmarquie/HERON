@@ -580,6 +580,8 @@ def submit_chat_message():
                                 files = os.listdir(dir_path)
                                 st.write(f"Files in directory {dir_path}: {files}")
             
+            # Add to conversation history for chart requests
+            st.session_state.rag_system.add_to_conversation_history(chat_question, f"Displayed {len(chart_results)} charts", "chart_request", "document")
             st.rerun()
             
         # Check if this is an image request
@@ -603,12 +605,15 @@ def submit_chat_message():
                 progress_placeholder.error(f"Error: {str(e)}")
                 answer = f"Error processing image request: {str(e)}"
             
+            # Add to conversation history for image requests
+            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "image_request", "document")
             st.rerun()
             
         # Check if documents are loaded OR internet mode is enabled
         elif not st.session_state.get('documents_loaded', False) and not st.session_state.get('internet_mode', False):
             # Quick message for no documents and no internet mode
             answer = "Please upload a document first or enable Live Web Search."
+            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "error", "document")
             st.rerun()
             
         else:
@@ -616,12 +621,13 @@ def submit_chat_message():
             with st.spinner("🤔 Thinking..."):
                 # Process based on mode - simplified logic
                 if st.session_state.get('internet_mode', False):
-                    # Use live web search
+                    # Use live web search - this method already adds to conversation history
                     answer = st.session_state.rag_system.process_live_web_question(chat_question)
                 else:
-                    # Use document search
+                    # Use document search - this method already adds to conversation history
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             
+            # Don't add to conversation history here since the RAG methods already do it
             st.rerun()
     
     # Only increment after rerun, so the key stays in sync
