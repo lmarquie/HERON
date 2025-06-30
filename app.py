@@ -600,34 +600,7 @@ def submit_chat_message():
             st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "image_request", "document")
             st.rerun()
             
-        # Check if there's existing conversation history first
-        current_history = st.session_state.rag_system.get_conversation_history()
-        has_real_conversation = any(
-            conv.get('question_type') not in ['error'] 
-            for conv in current_history
-        )
-        
-        # If there's conversation history, allow follow-up questions regardless of documents/internet
-        if has_real_conversation:
-            # Add loading indicator for all question processing
-            with st.spinner("🤔 Thinking..."):
-                # Check if both modes are enabled
-                if st.session_state.get('use_both_modes', False):
-                    # Both modes enabled - use the existing method
-                    answer = st.session_state.rag_system.process_question_both_modes(chat_question, normalize_length=True)
-                    
-                elif st.session_state.get('internet_mode', False):
-                    # Use live web search only
-                    answer = st.session_state.rag_system.process_live_web_question(chat_question)
-                else:
-                    # Use follow-up processing for existing conversation
-                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
-            
-            # Add to conversation history and rerun
-            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "followup", "conversation")
-            st.rerun()
-            
-        # Check if documents are loaded OR internet mode is enabled (only for new conversations)
+        # Check if documents are loaded OR internet mode is enabled
         elif not st.session_state.get('documents_loaded', False) and not st.session_state.get('internet_mode', False):
             # Quick message for no documents and no internet mode
             answer = "Please upload a document first or enable Live Web Search."
@@ -637,12 +610,22 @@ def submit_chat_message():
         else:
             # Add loading indicator for all question processing
             with st.spinner("🤔 Thinking..."):
-                # IMPORTANT: Only process once based on current mode
+                # Check if there's existing conversation history (including image analysis)
+                current_history = st.session_state.rag_system.get_conversation_history()
+                has_real_conversation = any(
+                    conv.get('question_type') not in ['error'] 
+                    for conv in current_history
+                )
+                
+                # Process based on mode and conversation history
                 if st.session_state.get('internet_mode', False):
-                    # Use live web search only
+                    # Use live web search
                     answer = st.session_state.rag_system.process_live_web_question(chat_question)
+                elif has_real_conversation:
+                    # Use follow-up processing for existing conversation (including image analysis)
+                    answer = st.session_state.rag_system.process_follow_up_with_mode(chat_question, normalize_length=True)
                 else:
-                    # Use document search only
+                    # Use document search for new questions
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
             
             # Add to conversation history and rerun
@@ -732,16 +715,34 @@ with st.sidebar:
             if audio_files:
                 st.info(f"🎵 Found {len(audio_files)} audio file(s) - will transcribe to text")
             
-            with st.spinner("Processing..."):
-                if st.session_state.rag_system.process_web_uploads(uploaded_files):
-                    st.success(f"{len(uploaded_files)} file(s) loaded")
-                    if audio_files:
-                        st.success("🎵 Audio files transcribed successfully")
-                    st.session_state.documents_loaded = True
-                    st.session_state.processing_status = st.session_state.rag_system.file_handler.get_processing_status()
-                else:
-                    st.error("Processing failed")
-                    st.session_state.documents_loaded = False
+            # Process files in smaller batches to avoid memory issues
+            batch_size = 3  # Process 3 files at a time
+            success_count = 0
+            
+            with st.spinner(f"Processing {len(uploaded_files)} files..."):
+                for i in range(0, len(uploaded_files), batch_size):
+                    batch = uploaded_files[i:i+batch_size]
+                    batch_names = [f.name for f in batch]
+                    
+                    st.info(f"Processing batch {i//batch_size + 1}: {', '.join(batch_names)}")
+                    
+                    try:
+                        if st.session_state.rag_system.process_web_uploads(batch):
+                            success_count += len(batch)
+                            st.success(f"✅ Processed {len(batch)} files successfully")
+                        else:
+                            st.error(f"❌ Failed to process batch: {', '.join(batch_names)}")
+                    except Exception as e:
+                        st.error(f"❌ Error processing batch: {str(e)}")
+                        logger.error(f"Error processing batch: {str(e)}")
+            
+            if success_count > 0:
+                st.success(f"✅ Successfully processed {success_count}/{len(uploaded_files)} files")
+                st.session_state.documents_loaded = True
+                st.session_state.processing_status = st.session_state.rag_system.file_handler.get_processing_status()
+            else:
+                st.error("❌ Failed to process any files")
+                st.session_state.documents_loaded = False
         
             st.session_state.is_processing_files = False
         else:
@@ -769,10 +770,14 @@ with st.sidebar:
         # Update the RAG system's internet mode BEFORE rerun
         if search_mode == "Live Web Search":
             st.session_state.rag_system.set_internet_mode(True)
+            st.session_state.internet_mode = True  # Also update session state
         elif search_mode == "Documents":
             st.session_state.rag_system.set_internet_mode(False)
+            st.session_state.internet_mode = False  # Also update session state
         elif search_mode == "Both":
             st.session_state.rag_system.set_internet_mode(True)
+            st.session_state.internet_mode = True  # Also update session state
+            st.session_state.use_both_modes = True
         
         st.session_state.previous_search_mode = search_mode
         st.rerun()
