@@ -1640,33 +1640,15 @@ class RAGSystem:
             return f"Error generating internet answer: {str(e)}"
 
     def process_question_with_mode(self, question: str, normalize_length: bool = True) -> str:
-        """Enhanced processing with minimal speed impact."""
+        """Process question with current mode (internet or document)."""
         start_time = time.time()
         
         try:
             if self.internet_mode:
                 answer = self.process_live_web_question(question)
             else:
-                # Get search results (same speed)
-                results = self.vector_store.search(question, k=5)
-                
-                # Filter for relevance (fast)
-                filtered_results = filter_relevant_results(results, question)
-                
-                # Get relevant context (fast)
-                context = self.context_manager.get_relevant_context(question, filtered_results)
-                
-                # Detect question type (fast)
-                question_type = detect_question_type(question)
-                
-                # Create better prompt (fast)
-                enhanced_prompt = create_better_prompt(question, context)
-                
-                # Generate answer (same speed)
-                answer = self.question_handler.llm.generate_answer(question, enhanced_prompt, normalize_length)
-                
-                # Format with sources (fast)
-                answer = format_answer_with_sources(answer, filtered_results)
+                # Use the existing question handler
+                answer = self.question_handler.process_question(question, "document", k=5, normalize_length=normalize_length)
             
             # Update metrics
             response_time = time.time() - start_time
