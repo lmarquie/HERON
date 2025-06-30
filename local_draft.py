@@ -1660,24 +1660,52 @@ class RAGSystem:
             return answer
 
     def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
-        """Process follow-up question using either document mode or internet mode."""
-        if self.internet_mode:
-            # Use internet mode for follow-up
-            logger.info("Processing follow-up using internet mode")
-            answer = generate_live_web_answer(follow_up_question)  # ← USE THE WORKING FUNCTION
-            self.add_to_conversation_history(follow_up_question, answer, "internet_followup")
-            return answer
+        # Get conversation history
+        history = self.get_conversation_history()
+        # Find the last image analysis in the history
+        last_image_analysis = None
+        for msg in reversed(history):
+            if msg.get('question_type') == 'image_analysis':
+                last_image_analysis = msg['answer']
+                break
+
+        # Build context for the LLM
+        if last_image_analysis:
+            system_prompt = (
+                "You are a helpful assistant. The user previously uploaded an image and you analyzed it. "
+                "Use the following image analysis as context for the user's follow-up question. "
+                "Be specific and only use the information from the analysis and the follow-up question."
+            )
+            user_prompt = (
+                f"Previous image analysis:\n{last_image_analysis}\n\n"
+                f"Follow-up question: {follow_up_question}"
+            )
         else:
-            # Use document mode (existing logic)
-            if not self.vector_store.is_ready():
-                answer = "No documents loaded. Please upload documents first or enable internet mode."
-                self.add_to_conversation_history(follow_up_question, answer, "error", "document")
-                return answer
-            
-            logger.info("Processing follow-up using document mode")
-            answer = self.question_handler.process_follow_up(follow_up_question, normalize_length=normalize_length)
-            self.add_to_conversation_history(follow_up_question, answer, "document_followup")
-            return answer
+            system_prompt = "You are a helpful assistant. Answer the user's question based on the conversation so far."
+            user_prompt = follow_up_question
+
+        # Call OpenAI API
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",  # or "gpt-4" if you have access
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=600,
+                temperature=0.3
+            )
+            answer = response.choices[0].message.content.strip()
+        except Exception as e:
+            answer = f"Error generating answer: {str(e)}"
+
+        # Add to conversation history as a follow-up
+        self.add_to_conversation_history(
+            follow_up_question,
+            answer,
+            "image_followup" if last_image_analysis else "document_followup"
+        )
+        return answer
 
     def get_mode_status(self) -> Dict:
         """Get current mode status and information."""
