@@ -464,29 +464,90 @@ class AudioProcessor:
             logger.error(f"Error loading Whisper model: {str(e)}")
     
     def transcribe_with_whisper(self, audio_path: str) -> str:
-        """Fast Whisper transcription with minimal settings."""
+        """Transcribe audio using Whisper with ULTRA speed optimizations."""
         try:
             if self.whisper_model is None:
-                self.load_whisper_model("tiny")
+                self.load_whisper_model("tiny")  # Use tiny model for speed
             
-            logger.info(f"Transcribing: {audio_path}")
+            logger.info(f"Transcribing audio with Whisper: {audio_path}")
             
-            # Simple, fast settings
+            # Check if file exists and has content
+            if not os.path.exists(audio_path):
+                raise FileNotFoundError(f"Audio file not found: {audio_path}")
+            
+            file_size = os.path.getsize(audio_path)
+            if file_size == 0:
+                raise ValueError(f"Audio file is empty: {audio_path}")
+            
+            # Get audio duration
+            import librosa
+            duration = librosa.get_duration(path=audio_path)
+            logger.info(f"Audio duration: {duration:.2f} seconds ({duration/60:.2f} minutes)")
+            
+            print(f"🎵 Transcribing {duration/60:.1f} minute audio file...")
+            
+            # ULTRA SPEED OPTIMIZED settings
             result = self.whisper_model.transcribe(
                 audio_path,
                 language="en",
                 task="transcribe",
-                verbose=False,
-                fp16=False,  # Disable for stability
-                temperature=0.0
+                verbose=False,  # Disable verbose for speed
+                fp16=True,  # Enable FP16 for speed (if supported)
+                condition_on_previous_text=False,  # Disable for speed
+                temperature=0.0,  # Deterministic for speed
+                compression_ratio_threshold=2.0,  # More lenient for speed
+                logprob_threshold=-3.0,  # More lenient for speed
+                no_speech_threshold=0.9,  # More lenient for speed
+                word_timestamps=False,  # Disable for speed
+                prepend_punctuations=False,  # Disable for speed
+                append_punctuations=False,  # Disable for speed
+                initial_prompt=None,  # Disable for speed
+                suppress_tokens=[-1],  # Suppress end token for speed
+                without_timestamps=True  # Disable timestamps for speed
             )
             
+            logger.info("Whisper transcription completed")
+            
             transcription = result.get('text', '').strip()
+            
+            if not transcription:
+                logger.warning("Whisper returned empty transcription")
+                return "No speech detected in audio file."
+            
             logger.info(f"Transcription completed: {len(transcription)} characters")
+            print(f"🎉 Transcription completed! Total: {len(transcription)} characters")
             return transcription
             
         except Exception as e:
-            logger.error(f"Whisper error: {str(e)}")
+            # FIX: Capture the actual error details
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"Error transcribing with Whisper: {str(e)}")
+            logger.error(f"Full traceback: {error_details}")
+            print(f"❌ Transcription error: {str(e)}")
+            
+            # If it's a tensor error, try with even more conservative settings
+            if "tensor" in str(e).lower() and "reshape" in str(e).lower():
+                print("🔄 Trying with ultra-conservative settings...")
+                try:
+                    result = self.whisper_model.transcribe(
+                        audio_path,
+                        language="en",
+                        task="transcribe",
+                        verbose=False,
+                        fp16=False,  # Disable FP16 for stability
+                        condition_on_previous_text=False,
+                        temperature=0.0,
+                        compression_ratio_threshold=2.0,
+                        logprob_threshold=-3.0,
+                        no_speech_threshold=0.9
+                    )
+                    transcription = result.get('text', '').strip()
+                    if transcription:
+                        return transcription
+                except Exception as e2:
+                    logger.error(f"Second attempt also failed: {str(e2)}")
+            
             return f"Error transcribing audio: {str(e)}"
     
     def convert_audio_format(self, audio_path: str, target_format: str = "wav") -> str:
@@ -562,11 +623,23 @@ class AudioProcessor:
             return audio_path  # Return original if preprocessing fails
     
     def transcribe_audio(self, audio_path: str, method: str = "whisper") -> str:
-        """Simplified fast transcription."""
+        """Transcribe audio with preprocessing for speed."""
         try:
             if method == "whisper":
-                # Skip preprocessing - go directly to Whisper
-                return self.transcribe_with_whisper(audio_path)
+                # Preprocess audio for speed
+                preprocessed_path = self.preprocess_audio_for_speed(audio_path)
+                
+                # Transcribe with Whisper
+                transcription = self.transcribe_with_whisper(preprocessed_path)
+                
+                # Clean up preprocessed file
+                if preprocessed_path != audio_path and os.path.exists(preprocessed_path):
+                    try:
+                        os.remove(preprocessed_path)
+                    except:
+                        pass
+                
+                return transcription
             else:
                 return self.transcribe_with_speechrecognition(audio_path)
         except Exception as e:
@@ -1465,8 +1538,7 @@ class RAGSystem:
             'error_count': 0
         }
         self.chart_extractor = PDFChartExtractor()  # Add this line
-        self.context_manager = SmartContextManager()
-    
+
     def process_web_uploads(self, uploaded_files):
         """Process multiple uploaded files."""
         try:
@@ -1567,28 +1639,25 @@ class RAGSystem:
             return f"Error generating internet answer: {str(e)}"
 
     def process_question_with_mode(self, question: str, normalize_length: bool = True) -> str:
-        """Process question with current mode (internet or document)."""
-        start_time = time.time()
-        
-        try:
-            if self.internet_mode:
-                answer = self.process_live_web_question(question)
-            else:
-                # Use the existing question handler
-                answer = self.question_handler.process_question(question, "document", k=5, normalize_length=normalize_length)
-            
-            # Update metrics
-            response_time = time.time() - start_time
-            self.performance_metrics['last_response_time'] = response_time
-            
-            # Add to conversation history
-            self.add_to_conversation_history(question, answer, "enhanced_question", "document")
-            
+        """Process question using either document mode or internet mode."""
+        # Always use the working function for internet mode
+        if self.internet_mode:
+            # Use internet mode
+            logger.info("Processing question using internet mode")
+            answer = generate_live_web_answer(question)  # ← USE THE WORKING FUNCTION
+            self.add_to_conversation_history(question, answer, "internet")
             return answer
+        else:
+            # Use document mode (existing logic)
+            if not self.vector_store.is_ready():
+                answer = "No documents loaded. Please upload documents first or enable internet mode."
+                self.add_to_conversation_history(question, answer, "error", "document")
+                return answer
             
-        except Exception as e:
-            logger.error(f"Error in enhanced question processing: {str(e)}")
-            return f"Error processing your question: {str(e)}"
+            logger.info("Processing question using document mode")
+            answer = self.question_handler.process_question(question, normalize_length=normalize_length)
+            self.add_to_conversation_history(question, answer, "document")
+            return answer
 
     def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
         # Get conversation history
@@ -2689,103 +2758,6 @@ class PDFChartExtractor:
         except Exception as e:
             logger.error(f"Error processing PDF for charts: {str(e)}")
             return {}
-
-class SmartContextManager:
-    def __init__(self):
-        self.context_cache = {}
-        self.relevant_context = {}
-    
-    def get_relevant_context(self, question: str, documents: List[Dict]) -> str:
-        """Get only the most relevant context without additional processing."""
-        # Use existing search results, just organize them better
-        question_keywords = set(question.lower().split())
-        
-        # Score chunks by keyword overlap (fast)
-        scored_chunks = []
-        for doc in documents:
-            chunk_keywords = set(doc['text'].lower().split())
-            overlap = len(question_keywords & chunk_keywords)
-            if overlap > 0:
-                scored_chunks.append((overlap, doc))
-        
-        # Sort by relevance and take top chunks
-        scored_chunks.sort(reverse=True)
-        relevant_chunks = [chunk for score, chunk in scored_chunks[:3]]
-        
-        return "\n\n".join([chunk['text'] for chunk in relevant_chunks])
-
-def score_source_quality(source_path: str) -> float:
-    """Quick source quality scoring based on file characteristics."""
-    if not source_path:
-        return 0.5
-    
-    # Fast heuristics for source quality
-    quality_score = 0.5  # Base score
-    
-    # File type scoring
-    if source_path.endswith('.pdf'):
-        quality_score += 0.2  # PDFs often more reliable
-    elif source_path.endswith('.docx'):
-        quality_score += 0.1  # Word docs
-    elif source_path.endswith('.txt'):
-        quality_score += 0.05  # Plain text
-    
-    # File size scoring (larger files often more comprehensive)
-    try:
-        file_size = os.path.getsize(source_path)
-        if file_size > 100000:  # >100KB
-            quality_score += 0.1
-        elif file_size > 10000:  # >10KB
-            quality_score += 0.05
-    except:
-        pass
-    
-    # Page number scoring (if available)
-    if 'page' in source_path:
-        try:
-            page_num = int(re.search(r'page_(\d+)', source_path).group(1))
-            if page_num <= 10:  # Early pages often more important
-                quality_score += 0.1
-        except:
-            pass
-    
-    return min(quality_score, 1.0)
-
-def filter_relevant_results(results: List[Dict], question: str) -> List[Dict]:
-    """Filter results for relevance without additional processing."""
-    question_lower = question.lower()
-    question_words = set(question_lower.split())
-    
-    filtered_results = []
-    for result in results:
-        text_lower = result['text'].lower()
-        
-        # Quick relevance check
-        word_overlap = sum(1 for word in question_words if word in text_lower)
-        if word_overlap >= 2:  # At least 2 question words present
-            filtered_results.append(result)
-    
-    return filtered_results[:5]  # Keep top 5
-
-def detect_question_type(question: str) -> str:
-    """Detect question type for better prompting."""
-    question_lower = question.lower()
-    
-    # Fast keyword matching
-    if any(word in question_lower for word in ['what is', 'define', 'meaning']):
-        return 'definition'
-    elif any(word in question_lower for word in ['how', 'steps', 'process']):
-        return 'process'
-    elif any(word in question_lower for word in ['why', 'cause', 'reason']):
-        return 'explanation'
-    elif any(word in question_lower for word in ['compare', 'difference', 'versus']):
-        return 'comparison'
-    elif any(word in question_lower for word in ['when', 'date', 'time']):
-        return 'temporal'
-    elif any(word in question_lower for word in ['where', 'location', 'place']):
-        return 'location'
-    else:
-        return 'general'
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
