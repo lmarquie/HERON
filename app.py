@@ -661,21 +661,13 @@ def process_image_analysis(uploaded_image, analysis_type, custom_question=""):
         elif analysis_type == "Custom":
             question = custom_question if custom_question else "Please analyze this image."
         
-        # Add to conversation history
-        st.session_state.rag_system.add_to_conversation_history(
-            f"[Image Analysis: {analysis_type}] {question}",
-            "Processing image...",
-            "image_analysis",
-            "image"
-        )
-        
         # Process with GPT-4 Vision
         with st.spinner("Analyzing image..."):
             answer = st.session_state.rag_system.analyze_image_with_gpt4(temp_image_path, question)
             
-            # Update conversation history with result
+            # Add to conversation history with just the answer (no question prefix)
             st.session_state.rag_system.add_to_conversation_history(
-                f"[Image Analysis: {analysis_type}] {question}",
+                f"🖼️ Image Analysis ({analysis_type})",
                 answer,
                 "image_analysis",
                 "image"
