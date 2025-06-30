@@ -1538,7 +1538,8 @@ class RAGSystem:
             'error_count': 0
         }
         self.chart_extractor = PDFChartExtractor()  # Add this line
-
+        self.context_manager = SmartContextManager()
+    
     def process_web_uploads(self, uploaded_files):
         """Process multiple uploaded files."""
         try:
@@ -1639,25 +1640,46 @@ class RAGSystem:
             return f"Error generating internet answer: {str(e)}"
 
     def process_question_with_mode(self, question: str, normalize_length: bool = True) -> str:
-        """Process question using either document mode or internet mode."""
-        # Always use the working function for internet mode
-        if self.internet_mode:
-            # Use internet mode
-            logger.info("Processing question using internet mode")
-            answer = generate_live_web_answer(question)  # ← USE THE WORKING FUNCTION
-            self.add_to_conversation_history(question, answer, "internet")
-            return answer
-        else:
-            # Use document mode (existing logic)
-            if not self.vector_store.is_ready():
-                answer = "No documents loaded. Please upload documents first or enable internet mode."
-                self.add_to_conversation_history(question, answer, "error", "document")
-                return answer
+        """Enhanced processing with minimal speed impact."""
+        start_time = time.time()
+        
+        try:
+            if self.internet_mode:
+                answer = self.process_live_web_question(question)
+            else:
+                # Get search results (same speed)
+                results = self.vector_store.search(question, k=5)
+                
+                # Filter for relevance (fast)
+                filtered_results = filter_relevant_results(results, question)
+                
+                # Get relevant context (fast)
+                context = self.context_manager.get_relevant_context(question, filtered_results)
+                
+                # Detect question type (fast)
+                question_type = detect_question_type(question)
+                
+                # Create better prompt (fast)
+                enhanced_prompt = create_better_prompt(question, context)
+                
+                # Generate answer (same speed)
+                answer = self.question_handler.llm.generate_answer(question, enhanced_prompt, normalize_length)
+                
+                # Format with sources (fast)
+                answer = format_answer_with_sources(answer, filtered_results)
             
-            logger.info("Processing question using document mode")
-            answer = self.question_handler.process_question(question, normalize_length=normalize_length)
-            self.add_to_conversation_history(question, answer, "document")
+            # Update metrics
+            response_time = time.time() - start_time
+            self.performance_metrics['last_response_time'] = response_time
+            
+            # Add to conversation history
+            self.add_to_conversation_history(question, answer, "enhanced_question", "document")
+            
             return answer
+            
+        except Exception as e:
+            logger.error(f"Error in enhanced question processing: {str(e)}")
+            return f"Error processing your question: {str(e)}"
 
     def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
         # Get conversation history
@@ -2758,6 +2780,103 @@ class PDFChartExtractor:
         except Exception as e:
             logger.error(f"Error processing PDF for charts: {str(e)}")
             return {}
+
+class SmartContextManager:
+    def __init__(self):
+        self.context_cache = {}
+        self.relevant_context = {}
+    
+    def get_relevant_context(self, question: str, documents: List[Dict]) -> str:
+        """Get only the most relevant context without additional processing."""
+        # Use existing search results, just organize them better
+        question_keywords = set(question.lower().split())
+        
+        # Score chunks by keyword overlap (fast)
+        scored_chunks = []
+        for doc in documents:
+            chunk_keywords = set(doc['text'].lower().split())
+            overlap = len(question_keywords & chunk_keywords)
+            if overlap > 0:
+                scored_chunks.append((overlap, doc))
+        
+        # Sort by relevance and take top chunks
+        scored_chunks.sort(reverse=True)
+        relevant_chunks = [chunk for score, chunk in scored_chunks[:3]]
+        
+        return "\n\n".join([chunk['text'] for chunk in relevant_chunks])
+
+def score_source_quality(source_path: str) -> float:
+    """Quick source quality scoring based on file characteristics."""
+    if not source_path:
+        return 0.5
+    
+    # Fast heuristics for source quality
+    quality_score = 0.5  # Base score
+    
+    # File type scoring
+    if source_path.endswith('.pdf'):
+        quality_score += 0.2  # PDFs often more reliable
+    elif source_path.endswith('.docx'):
+        quality_score += 0.1  # Word docs
+    elif source_path.endswith('.txt'):
+        quality_score += 0.05  # Plain text
+    
+    # File size scoring (larger files often more comprehensive)
+    try:
+        file_size = os.path.getsize(source_path)
+        if file_size > 100000:  # >100KB
+            quality_score += 0.1
+        elif file_size > 10000:  # >10KB
+            quality_score += 0.05
+    except:
+        pass
+    
+    # Page number scoring (if available)
+    if 'page' in source_path:
+        try:
+            page_num = int(re.search(r'page_(\d+)', source_path).group(1))
+            if page_num <= 10:  # Early pages often more important
+                quality_score += 0.1
+        except:
+            pass
+    
+    return min(quality_score, 1.0)
+
+def filter_relevant_results(results: List[Dict], question: str) -> List[Dict]:
+    """Filter results for relevance without additional processing."""
+    question_lower = question.lower()
+    question_words = set(question_lower.split())
+    
+    filtered_results = []
+    for result in results:
+        text_lower = result['text'].lower()
+        
+        # Quick relevance check
+        word_overlap = sum(1 for word in question_words if word in text_lower)
+        if word_overlap >= 2:  # At least 2 question words present
+            filtered_results.append(result)
+    
+    return filtered_results[:5]  # Keep top 5
+
+def detect_question_type(question: str) -> str:
+    """Detect question type for better prompting."""
+    question_lower = question.lower()
+    
+    # Fast keyword matching
+    if any(word in question_lower for word in ['what is', 'define', 'meaning']):
+        return 'definition'
+    elif any(word in question_lower for word in ['how', 'steps', 'process']):
+        return 'process'
+    elif any(word in question_lower for word in ['why', 'cause', 'reason']):
+        return 'explanation'
+    elif any(word in question_lower for word in ['compare', 'difference', 'versus']):
+        return 'comparison'
+    elif any(word in question_lower for word in ['when', 'date', 'time']):
+        return 'temporal'
+    elif any(word in question_lower for word in ['where', 'location', 'place']):
+        return 'location'
+    else:
+        return 'general'
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
