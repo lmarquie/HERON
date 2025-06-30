@@ -423,18 +423,29 @@ class TextProcessor:
 ### =================== Document Loading =================== ###
 class AudioProcessor:
     def __init__(self):
+        self.ffmpeg_available = self._check_ffmpeg()
         self.whisper_model = None
         self.recognizer = sr.Recognizer()
-        self.ffmpeg_available = self._check_ffmpeg()
         self._model_cache = {}  # Cache for different model sizes
         
+        # Pre-load the tiny model for speed
+        self.load_whisper_model("tiny")
+    
     def _check_ffmpeg(self):
-        """Check if FFmpeg is available."""
+        """Check if FFmpeg is available on the system."""
         try:
-            import subprocess
-            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-            return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
+            result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                logger.info("FFmpeg is available")
+                return True
+            else:
+                logger.warning("FFmpeg check failed")
+                return False
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            logger.warning("FFmpeg not found or not accessible")
+            return False
+        except Exception as e:
+            logger.error(f"Error checking FFmpeg: {str(e)}")
             return False
     
     def load_whisper_model(self, model_size="tiny"):
@@ -452,49 +463,8 @@ class AudioProcessor:
         except Exception as e:
             logger.error(f"Error loading Whisper model: {str(e)}")
     
-    def convert_audio_format(self, audio_path: str, target_format: str = "wav") -> str:
-        """Convert audio to WAV format using FFmpeg with optimized settings."""
-        try:
-            if not self.ffmpeg_available:
-                logger.error("FFmpeg not available for audio conversion")
-                return audio_path
-            
-            # Create output path
-            base_name = os.path.splitext(audio_path)[0]
-            output_path = f"{base_name}.{target_format}"
-            
-            logger.info(f"Converting {audio_path} to {output_path}")
-            
-            # Use optimized FFmpeg settings for speed
-            cmd = [
-                'ffmpeg', '-i', audio_path,
-                '-acodec', 'pcm_s16le',  # 16-bit PCM
-                '-ar', '16000',          # 16kHz sample rate (Whisper's preferred)
-                '-ac', '1',              # Mono
-                '-y',                    # Overwrite output
-                '-threads', '4',         # Use multiple threads
-                '-preset', 'ultrafast',  # Fastest encoding preset
-                output_path
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            
-            if result.returncode != 0:
-                logger.error(f"FFmpeg conversion failed: {result.stderr}")
-                return audio_path
-            
-            logger.info(f"Successfully converted to {output_path}")
-            return output_path
-            
-        except subprocess.TimeoutExpired:
-            logger.error("FFmpeg conversion timed out")
-            return audio_path
-        except Exception as e:
-            logger.error(f"Error converting audio format: {str(e)}")
-            return audio_path
-    
     def transcribe_with_whisper(self, audio_path: str) -> str:
-        """Transcribe audio using Whisper with speed optimizations."""
+        """Transcribe audio using Whisper with ULTRA speed optimizations."""
         try:
             if self.whisper_model is None:
                 self.load_whisper_model("tiny")  # Use tiny model for speed
@@ -516,21 +486,24 @@ class AudioProcessor:
             
             print(f"🎵 Transcribing {duration/60:.1f} minute audio file...")
             
-            # SPEED OPTIMIZED settings
+            # ULTRA SPEED OPTIMIZED settings
             result = self.whisper_model.transcribe(
                 audio_path,
                 language="en",
                 task="transcribe",
                 verbose=False,  # Disable verbose for speed
-                fp16=False,  # Force FP32 for stability
+                fp16=True,  # Enable FP16 for speed (if supported)
                 condition_on_previous_text=False,  # Disable for speed
                 temperature=0.0,  # Deterministic for speed
-                compression_ratio_threshold=1.0,  # More lenient for speed
-                logprob_threshold=-2.0,  # More lenient for speed
-                no_speech_threshold=0.8,  # More lenient for speed
+                compression_ratio_threshold=2.0,  # More lenient for speed
+                logprob_threshold=-3.0,  # More lenient for speed
+                no_speech_threshold=0.9,  # More lenient for speed
                 word_timestamps=False,  # Disable for speed
                 prepend_punctuations=False,  # Disable for speed
-                append_punctuations=False  # Disable for speed
+                append_punctuations=False,  # Disable for speed
+                initial_prompt=None,  # Disable for speed
+                suppress_tokens=[-1],  # Suppress end token for speed
+                without_timestamps=True  # Disable timestamps for speed
             )
             
             logger.info("Whisper transcription completed")
@@ -562,12 +535,12 @@ class AudioProcessor:
                         language="en",
                         task="transcribe",
                         verbose=False,
-                        fp16=False,
+                        fp16=False,  # Disable FP16 for stability
                         condition_on_previous_text=False,
                         temperature=0.0,
-                        compression_ratio_threshold=1.0,
-                        logprob_threshold=-2.0,
-                        no_speech_threshold=0.8
+                        compression_ratio_threshold=2.0,
+                        logprob_threshold=-3.0,
+                        no_speech_threshold=0.9
                     )
                     transcription = result.get('text', '').strip()
                     if transcription:
@@ -577,34 +550,66 @@ class AudioProcessor:
             
             return f"Error transcribing audio: {str(e)}"
     
-    def transcribe_with_speechrecognition(self, audio_path: str) -> str:
-        """Transcribe audio using SpeechRecognition (Google Speech API)."""
+    def convert_audio_format(self, audio_path: str, target_format: str = "wav") -> str:
+        """Convert audio to WAV format using FFmpeg with ULTRA optimized settings."""
         try:
-            logger.info(f"Transcribing audio with SpeechRecognition: {audio_path}")
+            if not self.ffmpeg_available:
+                logger.error("FFmpeg not available for audio conversion")
+                return audio_path
             
-            with sr.AudioFile(audio_path) as source:
-                audio = self.recognizer.record(source)
-                transcription = self.recognizer.recognize_google(audio)
+            # Create output path
+            base_name = os.path.splitext(audio_path)[0]
+            output_path = f"{base_name}.{target_format}"
             
-            logger.info(f"SpeechRecognition transcription completed: {len(transcription)} characters")
-            return transcription
+            logger.info(f"Converting {audio_path} to {output_path}")
             
+            # ULTRA OPTIMIZED FFmpeg settings for maximum speed
+            cmd = [
+                'ffmpeg', '-i', audio_path,
+                '-acodec', 'pcm_s16le',  # 16-bit PCM
+                '-ar', '8000',           # 8kHz sample rate (faster processing)
+                '-ac', '1',              # Mono
+                '-y',                    # Overwrite output
+                '-threads', '8',         # Use more threads
+                '-preset', 'ultrafast',  # Fastest encoding preset
+                '-loglevel', 'error',    # Reduce logging for speed
+                '-nostats',              # Disable stats for speed
+                output_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            
+            if result.returncode != 0:
+                logger.error(f"FFmpeg conversion failed: {result.stderr}")
+                return audio_path
+            
+            logger.info(f"Successfully converted to {output_path}")
+            return output_path
+            
+        except subprocess.TimeoutExpired:
+            logger.error("FFmpeg conversion timed out")
+            return audio_path
         except Exception as e:
-            logger.error(f"Error transcribing with SpeechRecognition: {str(e)}")
-            return f"Error transcribing audio: {str(e)}"
+            logger.error(f"Error converting audio format: {str(e)}")
+            return audio_path
     
     def preprocess_audio_for_speed(self, audio_path: str) -> str:
-        """Preprocess audio to speed up transcription."""
+        """Preprocess audio to speed up transcription with aggressive optimization."""
         try:
             import librosa
             import soundfile as sf
             
-            # Load audio with lower sample rate for speed
-            audio, sr = librosa.load(audio_path, sr=16000)  # 16kHz is sufficient for speech
+            # Load audio with even lower sample rate for speed
+            audio, sr = librosa.load(audio_path, sr=8000)  # 8kHz is sufficient for speech
             
-            # Apply noise reduction and normalization
+            # Apply aggressive noise reduction and normalization
             # Simple normalization
             audio = librosa.util.normalize(audio)
+            
+            # Optional: Apply simple noise reduction
+            # This is a basic noise gate - you can make it more sophisticated
+            noise_threshold = 0.01
+            audio[abs(audio) < noise_threshold] = 0
             
             # Save preprocessed audio
             preprocessed_path = audio_path.replace('.', '_preprocessed.')
@@ -616,7 +621,7 @@ class AudioProcessor:
         except Exception as e:
             logger.warning(f"Audio preprocessing failed: {str(e)}")
             return audio_path  # Return original if preprocessing fails
-
+    
     def transcribe_audio(self, audio_path: str, method: str = "whisper") -> str:
         """Transcribe audio with preprocessing for speed."""
         try:
@@ -637,9 +642,24 @@ class AudioProcessor:
                 return transcription
             else:
                 return self.transcribe_with_speechrecognition(audio_path)
-                
         except Exception as e:
-            logger.error(f"Error transcribing audio: {str(e)}")
+            logger.error(f"Error in transcribe_audio: {str(e)}")
+            return f"Error transcribing audio: {str(e)}"
+    
+    def transcribe_with_speechrecognition(self, audio_path: str) -> str:
+        """Transcribe audio using SpeechRecognition (Google Speech API)."""
+        try:
+            logger.info(f"Transcribing audio with SpeechRecognition: {audio_path}")
+            
+            with sr.AudioFile(audio_path) as source:
+                audio = self.recognizer.record(source)
+                transcription = self.recognizer.recognize_google(audio)
+            
+            logger.info(f"SpeechRecognition transcription completed: {len(transcription)} characters")
+            return transcription
+            
+        except Exception as e:
+            logger.error(f"Error transcribing with SpeechRecognition: {str(e)}")
             return f"Error transcribing audio: {str(e)}"
     
     def create_transcript_file(self, transcription: str, original_filename: str) -> str:
@@ -1640,24 +1660,54 @@ class RAGSystem:
             return answer
 
     def process_follow_up_with_mode(self, follow_up_question: str, normalize_length: bool = True) -> str:
-        """Process follow-up question using either document mode or internet mode."""
-        if self.internet_mode:
-            # Use internet mode for follow-up
-            logger.info("Processing follow-up using internet mode")
-            answer = generate_live_web_answer(follow_up_question)  # ← USE THE WORKING FUNCTION
-            self.add_to_conversation_history(follow_up_question, answer, "internet_followup")
-            return answer
+        # Get conversation history
+        history = self.get_conversation_history()
+        # Find the last image analysis in the history
+        last_image_analysis = None
+        for msg in reversed(history):
+            if msg.get('question_type') == 'image_analysis':
+                last_image_analysis = msg['answer']
+                break
+
+        # Build context for the LLM
+        if last_image_analysis:
+            system_prompt = (
+                "You are a helpful assistant. The user previously uploaded an image and you analyzed it. "
+                "Use the following image analysis as context for the user's follow-up question. "
+                "Be specific and only use the information from the analysis and the follow-up question."
+            )
+            user_prompt = (
+                f"Previous image analysis:\n{last_image_analysis}\n\n"
+                f"Follow-up question: {follow_up_question}"
+            )
         else:
-            # Use document mode (existing logic)
-            if not self.vector_store.is_ready():
-                answer = "No documents loaded. Please upload documents first or enable internet mode."
-                self.add_to_conversation_history(follow_up_question, answer, "error", "document")
-                return answer
-            
-            logger.info("Processing follow-up using document mode")
-            answer = self.question_handler.process_follow_up(follow_up_question, normalize_length=normalize_length)
-            self.add_to_conversation_history(follow_up_question, answer, "document_followup")
-            return answer
+            system_prompt = "You are a helpful assistant. Answer the user's question based on the conversation so far."
+            user_prompt = follow_up_question
+
+        # Call OpenAI API using the newer client approach
+        try:
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=600,
+                temperature=0.3
+            )
+            answer = response.choices[0].message.content.strip()
+        except Exception as e:
+            answer = f"Error generating answer: {str(e)}"
+
+        # Add to conversation history as a follow-up
+        self.add_to_conversation_history(
+            follow_up_question,
+            answer,
+            "image_followup" if last_image_analysis else "document_followup",
+            "image" if last_image_analysis else "document"
+        )
+        return answer
 
     def get_mode_status(self) -> Dict:
         """Get current mode status and information."""
