@@ -115,7 +115,7 @@ class TextProcessor:
                     except Exception as e:
                         logger.warning(f"Error processing images on page {page_num + 1}: {str(e)}")
                         continue
-                        
+            
             doc.close()
             final_content = "\n".join(text_content)
             return final_content
@@ -123,6 +123,50 @@ class TextProcessor:
             self.error_count += 1
             logger.error(f"Error extracting text from PDF: {str(e)}")
             return f"Error extracting text from PDF: {str(e)}"
+
+    def extract_text_from_docx(self, path):
+        try:
+            doc = DocxDocument(path)
+            return '\n'.join([p.text for p in doc.paragraphs if p.text.strip()])
+        except Exception as e:
+            return f"Error extracting text from Word: {str(e)}"
+
+    def extract_text_from_pptx(self, path):
+        try:
+            prs = Presentation(path)
+            text_runs = []
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text"):
+                        text_runs.append(shape.text)
+            return '\n'.join([t for t in text_runs if t.strip()])
+        except Exception as e:
+            return f"Error extracting text from PowerPoint: {str(e)}"
+
+    def extract_text_from_xlsx(self, path):
+        try:
+            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+            text = []
+            for ws in wb.worksheets:
+                for row in ws.iter_rows(values_only=True):
+                    row_text = ' '.join([str(cell) for cell in row if cell is not None])
+                    if row_text.strip():
+                        text.append(row_text)
+            return '\n'.join(text)
+        except Exception as e:
+            # Fallback to pandas for .xls or if openpyxl fails
+            try:
+                df = pd.read_excel(path, engine='openpyxl')
+                return df.to_string(index=False)
+            except Exception as e2:
+                return f"Error extracting text from Excel: {str(e)}; {str(e2)}"
+
+    def extract_text_from_xls(self, path):
+        try:
+            df = pd.read_excel(path)
+            return df.to_string(index=False)
+        except Exception as e:
+            return f"Error extracting text from Excel: {str(e)}"
 
     def detect_tables_and_graphs(self, img_cv):
         """Detect likely tables/graphs in a page image using OpenCV (returns list of bounding boxes)."""
@@ -969,7 +1013,7 @@ class WebFileHandler:
                 f.write(uploaded_file.getbuffer())
 
             # Handle different file types
-            if ext in ['.pdf', '.docx', '.pptx']:
+            if ext in ['.pdf', '.docx', '.pptx', '.xlsx', '.xls']:
                 # Existing document processing
                 if ext == ".pdf":
                     text_content = self.text_processor.extract_text_from_pdf(temp_path, enable_image_processing=True)
@@ -977,6 +1021,10 @@ class WebFileHandler:
                     text_content = self.text_processor.extract_text_from_docx(temp_path)
                 elif ext in [".pptx"]:
                     text_content = self.text_processor.extract_text_from_pptx(temp_path)
+                elif ext in [".xlsx"]:
+                    text_content = self.text_processor.extract_text_from_xlsx(temp_path)
+                elif ext in [".xls"]:
+                    text_content = self.text_processor.extract_text_from_xls(temp_path)
                 
                 self.saved_pdf_paths.append(temp_path)
                 
@@ -2094,49 +2142,6 @@ Be thorough and specific in your analysis."""
             return f"Error analyzing image: {str(e)}"
 
 # --- Add helper functions for text extraction ---
-def extract_text_from_docx(path):
-    try:
-        doc = DocxDocument(path)
-        return '\n'.join([p.text for p in doc.paragraphs if p.text.strip()])
-    except Exception as e:
-        return f"Error extracting text from Word: {str(e)}"
-
-def extract_text_from_pptx(path):
-    try:
-        prs = Presentation(path)
-        text_runs = []
-        for slide in prs.slides:
-            for shape in slide.shapes:
-                if hasattr(shape, "text"):
-                    text_runs.append(shape.text)
-        return '\n'.join([t for t in text_runs if t.strip()])
-    except Exception as e:
-        return f"Error extracting text from PowerPoint: {str(e)}"
-
-def extract_text_from_xlsx(path):
-    try:
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-        text = []
-        for ws in wb.worksheets:
-            for row in ws.iter_rows(values_only=True):
-                row_text = ' '.join([str(cell) for cell in row if cell is not None])
-                if row_text.strip():
-                    text.append(row_text)
-        return '\n'.join(text)
-    except Exception as e:
-        # Fallback to pandas for .xls or if openpyxl fails
-        try:
-            df = pd.read_excel(path, engine='openpyxl')
-            return df.to_string(index=False)
-        except Exception as e2:
-            return f"Error extracting text from Excel: {str(e)}; {str(e2)}"
-
-def extract_text_from_xls(path):
-    try:
-        df = pd.read_excel(path)
-        return df.to_string(index=False)
-    except Exception as e:
-        return f"Error extracting text from Excel: {str(e)}"
 
 def render_pdf_page_with_highlight(pdf_path, page_num, highlight_text=None):
     """Render a PDF page as an image, optionally highlighting the given text."""
