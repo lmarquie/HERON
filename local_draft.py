@@ -667,21 +667,34 @@ class AudioProcessor:
             return audio_path  # Return original if preprocessing fails
     
     def transcribe_audio(self, audio_path: str, method: str = "whisper") -> str:
-        """Transcribe audio with preprocessing for speed."""
+        """Transcribe audio with ffmpeg preprocessing for corrupted files."""
         try:
             if method == "whisper":
+                # First, convert to clean WAV using ffmpeg to handle corrupted files
+                if self.ffmpeg_available:
+                    logger.info(f"Converting audio to clean WAV format: {audio_path}")
+                    clean_wav_path = self.convert_audio_format(audio_path, "wav")
+                    if clean_wav_path != audio_path:
+                        logger.info(f"Successfully converted to: {clean_wav_path}")
+                        audio_path = clean_wav_path
+                    else:
+                        logger.warning("FFmpeg conversion failed, using original file")
+                else:
+                    logger.warning("FFmpeg not available, using original file")
+                
                 # Preprocess audio for speed
                 preprocessed_path = self.preprocess_audio_for_speed(audio_path)
                 
                 # Transcribe with Whisper
                 transcription = self.transcribe_with_whisper(preprocessed_path)
                 
-                # Clean up preprocessed file
-                if preprocessed_path != audio_path and os.path.exists(preprocessed_path):
-                    try:
-                        os.remove(preprocessed_path)
-                    except:
-                        pass
+                # Clean up temporary files
+                for temp_path in [preprocessed_path, clean_wav_path if 'clean_wav_path' in locals() else None]:
+                    if temp_path and temp_path != audio_path and os.path.exists(temp_path):
+                        try:
+                            os.remove(temp_path)
+                        except:
+                            pass
                 
                 return transcription
             else:
