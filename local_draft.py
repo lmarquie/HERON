@@ -2641,6 +2641,28 @@ class PDFChartExtractor:
             logger.error(f"Error processing PDF for charts: {str(e)}")
             return {}
 
+def convert_to_wav(input_path, output_path):
+    command = [
+        "ffmpeg",
+        "-y",  # Overwrite output file if it exists
+        "-i", input_path,
+        "-ar", "16000",
+        "-ac", "1",
+        "-sample_fmt", "s16",
+        output_path
+    ]
+    subprocess.run(command, check=True)
+
+def handle_uploaded_audio(uploaded_file):
+    # Save uploaded file to disk
+    input_path = f"/tmp/{uploaded_file.name}"
+    with open(input_path, "wb") as f:
+        f.write(uploaded_file.read())
+    # Convert to WAV
+    output_path = input_path.rsplit(".", 1)[0] + ".wav"
+    convert_to_wav(input_path, output_path)
+    return output_path
+
 if __name__ == "__main__": 
     rag_system = RAGSystem()
     rag_system.run() 
