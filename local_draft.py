@@ -536,7 +536,7 @@ class AudioProcessor:
                 language="en",
                 task="transcribe",
                 verbose=False,  # Disable verbose for speed
-                fp16=True,  # Enable FP16 for speed (if supported)
+                fp16=False,  # Disable FP16 for CPU compatibility and stability
                 condition_on_previous_text=False,  # Disable for speed
                 temperature=0.0,  # Deterministic for speed
                 compression_ratio_threshold=2.0,  # More lenient for speed
