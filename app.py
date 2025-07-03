@@ -112,7 +112,8 @@ def export_transcription_to_pdf(transcription_text: str, filename: str = "transc
                 if clean_para:
                     p = Paragraph(clean_para, body_style)
                     story.append(p)
-                    story.append(Spacer(1, 12))
+                    # Add extra space for readability
+                    story.append(Spacer(1, 24))  # Increased from 12 to 24
         
         # Build the PDF
         doc.build(story)
