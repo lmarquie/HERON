@@ -146,18 +146,41 @@ class TextProcessor:
     def extract_text_from_xlsx(self, path):
         try:
             wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-            text = []
+            output = []
             for ws in wb.worksheets:
-                for row in ws.iter_rows(values_only=True):
-                    row_text = ' '.join([str(cell) for cell in row if cell is not None])
-                    if row_text.strip():
-                        text.append(row_text)
-            return '\n'.join(text)
+                output.append(f"\n=== Sheet: {ws.title} ===\n")
+                # Get all rows as lists
+                rows = list(ws.iter_rows(values_only=True))
+                if not rows:
+                    output.append("(Sheet is empty)\n")
+                    continue
+                # Use first row as header if possible
+                headers = [str(cell) if cell is not None else "" for cell in rows[0]]
+                output.append(f"Columns: {', '.join(headers)}\n")
+                output.append(f"Rows: {len(rows)-1}\n")
+                # Show data types for each column (from first non-header row)
+                if len(rows) > 1:
+                    types = [type(cell).__name__ if cell is not None else "None" for cell in rows[1]]
+                    output.append(f"Types: {', '.join(types)}\n")
+                # Output as markdown table (limit to first 20 rows)
+                output.append("| " + " | ".join(headers) + " |\n")
+                output.append("|" + "---|" * len(headers) + "\n")
+                for row in rows[1:21]:
+                    row_str = [str(cell) if cell is not None else "" for cell in row]
+                    output.append("| " + " | ".join(row_str) + " |\n")
+                if len(rows) > 21:
+                    output.append(f"... ({len(rows)-1-20} more rows not shown)\n")
+            return "\n".join(output)
         except Exception as e:
             # Fallback to pandas for .xls or if openpyxl fails
             try:
                 df = pd.read_excel(path, engine='openpyxl')
-                return df.to_string(index=False)
+                # Show first 20 rows as markdown
+                output = [f"Sheet: {getattr(df, 'sheet_name', 'N/A')} (via pandas)\n"]
+                output.append(df.head(20).to_markdown(index=False))
+                if len(df) > 20:
+                    output.append(f"... ({len(df)-20} more rows not shown)\n")
+                return "\n".join(output)
             except Exception as e2:
                 return f"Error extracting text from Excel: {str(e)}; {str(e2)}"
 
@@ -1834,6 +1857,7 @@ class RAGSystem:
             return f"Error generating internet answer: {str(e)}"
 
     def process_question_with_mode(self, question: str, normalize_length: bool = True, analysis_mode: str = "General") -> str:
+        """Process question using either document mode or internet mode, supporting analysis_mode."""
         if self.internet_mode:
             logger.info("Processing question using internet mode")
             answer = generate_live_web_answer(question)
