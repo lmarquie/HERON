@@ -102,18 +102,17 @@ def export_transcription_to_pdf(transcription_text: str, filename: str = "transc
         story.append(Spacer(1, 30))
         
         # Add transcription content
-        # Split transcription into paragraphs for better formatting
-        paragraphs = transcription_text.split('\n\n')
+        # Split transcription into sentences for better formatting
+        sentences = re.split(r'(?<=[.!?]) +', transcription_text)
         
-        for para in paragraphs:
-            if para.strip():
-                # Clean up the paragraph
-                clean_para = para.strip().replace('\n', ' ')
-                if clean_para:
-                    p = Paragraph(clean_para, body_style)
+        for sentence in sentences:
+            if sentence.strip():
+                clean_sentence = sentence.strip().replace('\n', ' ')
+                if clean_sentence:
+                    p = Paragraph(clean_sentence, body_style)
                     story.append(p)
                     # Add extra space for readability
-                    story.append(Spacer(1, 24))  # Increased from 12 to 24
+                    story.append(Spacer(1, 36))  # Increased spacing between sentences
         
         # Build the PDF
         doc.build(story)
