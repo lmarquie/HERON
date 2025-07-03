@@ -1115,6 +1115,8 @@ class WebFileHandler:
                 
                 # Create transcript file
                 transcript_path = self.audio_processor.create_transcript_file(transcription, uploaded_file.name)
+                if transcript_path:
+                    self.saved_pdf_paths.append(transcript_path)
                 
                 # Process transcription as text content
                 text_content = transcription
