@@ -666,39 +666,65 @@ class AudioProcessor:
             logger.warning(f"Audio preprocessing failed: {str(e)}")
             return audio_path  # Return original if preprocessing fails
     
+    def split_audio_to_chunks(self, audio_path, chunk_length_ms=600000):
+        """Split audio into chunks of chunk_length_ms (default 10 min) and return list of temp file paths."""
+        audio = AudioSegment.from_file(audio_path)
+        chunks = []
+        for i in range(0, len(audio), chunk_length_ms):
+            chunk = audio[i:i+chunk_length_ms]
+            temp_fd, temp_path = tempfile.mkstemp(suffix='.wav')
+            os.close(temp_fd)
+            chunk.export(temp_path, format="wav")
+            chunks.append(temp_path)
+        return chunks
+
     def transcribe_audio(self, audio_path: str, method: str = "whisper") -> str:
-        """Transcribe audio with ffmpeg preprocessing for corrupted files."""
+        """Transcribe audio with chunking for long files (Streamlit safe)."""
         try:
-            if method == "whisper":
-                # First, convert to clean WAV using ffmpeg to handle corrupted files
-                if self.ffmpeg_available:
-                    logger.info(f"Converting audio to clean WAV format: {audio_path}")
-                    clean_wav_path = self.convert_audio_format(audio_path, "wav")
-                    if clean_wav_path != audio_path:
-                        logger.info(f"Successfully converted to: {clean_wav_path}")
-                        audio_path = clean_wav_path
-                    else:
-                        logger.warning("FFmpeg conversion failed, using original file")
-                else:
-                    logger.warning("FFmpeg not available, using original file")
-                
-                # Preprocess audio for speed
-                preprocessed_path = self.preprocess_audio_for_speed(audio_path)
-                
-                # Transcribe with Whisper
-                transcription = self.transcribe_with_whisper(preprocessed_path)
-                
-                # Clean up temporary files
-                for temp_path in [preprocessed_path, clean_wav_path if 'clean_wav_path' in locals() else None]:
-                    if temp_path and temp_path != audio_path and os.path.exists(temp_path):
-                        try:
-                            os.remove(temp_path)
-                        except:
-                            pass
-                
-                return transcription
+            import librosa
+            duration = librosa.get_duration(path=audio_path)
+            if duration > 600:  # If longer than 10 minutes, chunk
+                logger.info(f"Audio longer than 10 minutes ({duration/60:.2f} min), chunking...")
+                chunk_paths = self.split_audio_to_chunks(audio_path, chunk_length_ms=600000)
+                full_transcript = ""
+                for idx, chunk_path in enumerate(chunk_paths):
+                    logger.info(f"Transcribing chunk {idx+1}/{len(chunk_paths)}: {chunk_path}")
+                    # Preprocess for speed
+                    preprocessed_path = self.preprocess_audio_for_speed(chunk_path)
+                    transcript = self.transcribe_with_whisper(preprocessed_path)
+                    full_transcript += transcript + "\n"
+                    # Clean up temp files
+                    for temp in [chunk_path, preprocessed_path]:
+                        if temp and os.path.exists(temp):
+                            try:
+                                os.remove(temp)
+                            except Exception as e:
+                                logger.warning(f"Could not remove temp file {temp}: {e}")
+                return full_transcript.strip()
             else:
-                return self.transcribe_with_speechrecognition(audio_path)
+                # Original logic for short files
+                if method == "whisper":
+                    if self.ffmpeg_available:
+                        logger.info(f"Converting audio to clean WAV format: {audio_path}")
+                        clean_wav_path = self.convert_audio_format(audio_path, "wav")
+                        if clean_wav_path != audio_path:
+                            logger.info(f"Successfully converted to: {clean_wav_path}")
+                            audio_path = clean_wav_path
+                        else:
+                            logger.warning("FFmpeg conversion failed, using original file")
+                    else:
+                        logger.warning("FFmpeg not available, using original file")
+                    preprocessed_path = self.preprocess_audio_for_speed(audio_path)
+                    transcription = self.transcribe_with_whisper(preprocessed_path)
+                    for temp_path in [preprocessed_path, clean_wav_path if 'clean_wav_path' in locals() else None]:
+                        if temp_path and temp_path != audio_path and os.path.exists(temp_path):
+                            try:
+                                os.remove(temp_path)
+                            except:
+                                pass
+                    return transcription
+                else:
+                    return self.transcribe_with_speechrecognition(audio_path)
         except Exception as e:
             logger.error(f"Error in transcribe_audio: {str(e)}")
             return f"Error transcribing audio: {str(e)}"
