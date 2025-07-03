@@ -532,6 +532,7 @@ def is_chart_request(question: str) -> bool:
 def submit_chat_message():
     chat_input_key = f"chat_input_{st.session_state.chat_input_key}"
     chat_question = st.session_state.get(chat_input_key, "")
+    analysis_mode = st.session_state.get('analysis_mode', 'General')
     
     # Check if this question has already been processed
     if chat_question.strip() == st.session_state.get('last_processed_question', ""):
@@ -556,7 +557,7 @@ def submit_chat_message():
         # If this is a follow-up to image analysis, use the follow-up handler
         if is_image_followup:
             with st.spinner("Processing follow-up question..."):
-                answer = st.session_state.rag_system.handle_follow_up(chat_question)
+                answer = st.session_state.rag_system.handle_follow_up(chat_question, analysis_mode=analysis_mode)
             st.rerun()
             return
         
@@ -564,7 +565,7 @@ def submit_chat_message():
         if is_chart_request(chat_question):
             # Process chart request with progress indicator
             with st.spinner("Converting PDF pages to images..."):
-                chart_results = st.session_state.rag_system.process_chart_request(chat_question)
+                chart_results = st.session_state.rag_system.process_chart_request(chat_question, analysis_mode=analysis_mode)
             
             if not chart_results:
                 st.warning("No charts found or error processing charts")
@@ -610,7 +611,7 @@ def submit_chat_message():
             progress_placeholder.info("Searching for images in document...")
             
             try:
-                answer = st.session_state.rag_system.process_image_request(chat_question)
+                answer = st.session_state.rag_system.process_image_request(chat_question, analysis_mode=analysis_mode)
                 progress_placeholder.empty()
                 
                 if "No images found" in answer:
@@ -641,10 +642,10 @@ def submit_chat_message():
                 # Process based on mode - simplified logic
                 if st.session_state.get('internet_mode', False):
                     # Use live web search - this method already adds to conversation history
-                    answer = st.session_state.rag_system.process_live_web_question(chat_question)
+                    answer = st.session_state.rag_system.process_live_web_question(chat_question, analysis_mode=analysis_mode)
                 else:
                     # Use document search - this method already adds to conversation history
-                    answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True)
+                    answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True, analysis_mode=analysis_mode)
             
             # Don't add to conversation history here since the RAG methods already do it
             st.rerun()
@@ -770,6 +771,16 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Search Mode")
     
+    # Add Analysis Perspective selector
+    st.subheader("Analysis Perspective")
+    analysis_mode = st.selectbox(
+        "Choose analysis perspective:",
+        ["General", "Financial Document", "Company Evaluation", "Legal Document", "Financial Excel Document"],
+        index=0,
+        help="Choose the lens through which the document will be analyzed."
+    )
+    st.session_state["analysis_mode"] = analysis_mode
+
     search_mode = st.selectbox(
         "Choose search mode:",
         ["Documents", "Live Web Search", "Both"],
