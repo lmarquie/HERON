@@ -101,9 +101,22 @@ def export_transcription_to_pdf(transcription_text: str, filename: str = "transc
         story.append(meta_para)
         story.append(Spacer(1, 30))
         
-        # Add transcription content
+        # Remove excessive repeated phrases (e.g., 'be able to be able to ...')
+        def remove_repetitions(text, min_repeats=3):
+            # This regex finds 3 or more consecutive repeats of a short phrase (1-6 words)
+            pattern = re.compile(r'((?:\b\w+\b(?:\s+|\s*\n\s*)){1,6})\1{' + str(min_repeats-1) + ',}', re.IGNORECASE)
+            def repl(match):
+                return match.group(1)
+            # Apply repeatedly until no more matches
+            prev = None
+            while prev != text:
+                prev = text
+                text = pattern.sub(repl, text)
+            return text
+        
+        cleaned_transcription = remove_repetitions(transcription_text)
         # Split transcription into sentences for better formatting
-        sentences = re.split(r'(?<=[.!?]) +', transcription_text)
+        sentences = re.split(r'(?<=[.!?]) +', cleaned_transcription)
         
         for sentence in sentences:
             if sentence.strip():
