@@ -368,6 +368,8 @@ if 'chat_input_key' not in st.session_state:
     st.session_state.chat_input_key = 0
 if 'last_processed_question' not in st.session_state:
     st.session_state.last_processed_question = ""
+if 'question_input' not in st.session_state:
+    st.session_state['question_input'] = ""
 
 # Main content - Modern chat interface
 # (Do not display st.title("HERON") here)
@@ -531,7 +533,7 @@ def is_chart_request(question: str) -> bool:
 # Update the submit_chat_message function
 def submit_chat_message():
     chat_input_key = f"chat_input_{st.session_state.chat_input_key}"
-    chat_question = st.session_state.get(chat_input_key, "")
+    chat_question = st.session_state.get(chat_input_key, st.session_state['question_input'])
     analysis_mode = st.session_state.get('analysis_mode', 'General')
     
     # Check if this question has already been processed
@@ -773,13 +775,17 @@ with st.sidebar:
     
     # Add Analysis Perspective selector
     st.subheader("Analysis Perspective")
-    analysis_mode = st.selectbox(
+    new_analysis_mode = st.selectbox(
         "Choose analysis perspective:",
         ["General", "Financial Document", "Company Evaluation", "Legal Document", "Financial Excel Document"],
-        index=0,
+        index=0 if 'analysis_mode' not in st.session_state else ["General", "Financial Document", "Company Evaluation", "Legal Document", "Financial Excel Document"].index(st.session_state["analysis_mode"]),
         help="Choose the lens through which the document will be analyzed."
     )
-    st.session_state["analysis_mode"] = analysis_mode
+    if st.button("Save Analysis Mode", key="save_analysis_mode"):
+        st.session_state["analysis_mode"] = new_analysis_mode
+        st.success(f"Analysis mode set to: {new_analysis_mode}")
+    elif "analysis_mode" not in st.session_state:
+        st.session_state["analysis_mode"] = new_analysis_mode
 
     search_mode = st.selectbox(
         "Choose search mode:",
