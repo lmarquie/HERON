@@ -550,6 +550,160 @@ def is_chart_request(question: str) -> bool:
     ]
     return any(keyword in question_lower for keyword in chart_keywords)
 
+def is_translation_request(question: str) -> bool:
+    """Detect if the question is asking to translate the previous answer."""
+    question_lower = question.lower()
+    translation_keywords = [
+        'translate', 'translation', 'traduire', 'traduction',
+        'translate this', 'translate that', 'translate the answer',
+        'traduire ceci', 'traduire cela', 'traduire la réponse',
+        'in english', 'en anglais', 'to english', 'vers l\'anglais',
+        'in french', 'en français', 'to french', 'vers le français'
+    ]
+    return any(keyword in question_lower for keyword in translation_keywords)
+
+def is_audio_question(question: str) -> bool:
+    """Detect if the question is about audio content."""
+    question_lower = question.lower()
+    audio_keywords = [
+        'audio', 'recording', 'transcript', 'transcription', 'voice', 'speech',
+        'said', 'mentioned', 'talked about', 'discussed', 'conversation',
+        'interview', 'podcast', 'meeting', 'call', 'recording'
+    ]
+    return any(keyword in question_lower for keyword in audio_keywords)
+
+def _is_french_question(text: str) -> bool:
+    """Detect if the question is in French."""
+    text_lower = text.lower()
+    
+    # More specific French words and phrases
+    french_words = [
+        'comment', 'pourquoi', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles',
+        'comment', 'pourquoi', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles',
+        'est-ce', 'sont-ce', 'avez-vous', 'avez-vous', 'pouvez-vous', 'voulez-vous', 'allez-vous',
+        'comment allez-vous', 'comment ça va', 'ça va', 'bonjour', 'salut', 'au revoir', 'merci',
+        's\'il vous plaît', 's\'il te plaît', 'excusez-moi', 'désolé', 'pardon'
+    ]
+    
+    # French characters
+    french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
+    
+    # Check for French words (exact matches to avoid false positives)
+    french_word_count = sum(1 for word in french_words if f' {word} ' in f' {text_lower} ' or text_lower.startswith(word) or text_lower.endswith(word))
+    
+    # Check for French characters
+    french_char_count = sum(1 for char in french_chars if char in text)
+    
+    # Check for common French question patterns
+    french_patterns = ['est-ce que', 'qu\'est-ce que', 'comment', 'pourquoi', 'quand', 'où']
+    french_pattern_count = sum(1 for pattern in french_patterns if pattern in text_lower)
+    
+    total_score = french_word_count + french_char_count + french_pattern_count
+    
+    # Require at least 2 indicators to be more confident
+    return total_score >= 2
+
+def _translate_text(text: str, source_lang: str, target_lang: str) -> str:
+    """Translate text between languages using Deep Translator."""
+    try:
+        from deep_translator import GoogleTranslator
+        
+        # Check if text is too long (deep-translator has a 5000 character limit)
+        if len(text) > 4500:  # Leave some buffer
+            # Split into chunks and translate each chunk
+            chunks = []
+            
+            # More aggressive chunking - split by words if needed
+            words = text.split()
+            current_chunk = ""
+            max_chunk_size = 3000  # Smaller chunks for safety
+            
+            for word in words:
+                if len(current_chunk + " " + word) < max_chunk_size:
+                    current_chunk += " " + word if current_chunk else word
+                else:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    current_chunk = word
+            
+            # Add the last chunk
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            
+            # Translate each chunk
+            translator = GoogleTranslator(source=source_lang, target=target_lang)
+            translated_chunks = []
+            
+            for i, chunk in enumerate(chunks):
+                try:
+                    # Add a small delay between chunks to avoid rate limiting
+                    if i > 0:
+                        import time
+                        time.sleep(0.1)
+                    
+                    translated_chunk = translator.translate(chunk)
+                    translated_chunks.append(translated_chunk)
+                except Exception as chunk_error:
+                    logger.error(f"Error translating chunk {i}: {str(chunk_error)}")
+                    translated_chunks.append(chunk)  # Keep original if translation fails
+            
+            return ' '.join(translated_chunks)
+        else:
+            # Text is short enough, translate normally
+            translator = GoogleTranslator(source=source_lang, target=target_lang)
+            result = translator.translate(text)
+            return result
+
+    except Exception as e:
+        logger.error(f"Error translating from {source_lang} to {target_lang}: {str(e)}")
+        return text  # Return original text if translation fails
+
+def _translate_to_french(text: str) -> str:
+    """Translate English text to French (for backward compatibility)."""
+    return _translate_text(text, 'en', 'fr')
+
+def _translate_to_english(text: str) -> str:
+    """Translate French text to English."""
+    return _translate_text(text, 'fr', 'en')
+
+def handle_translation_request(question: str) -> str:
+    """Handle translation requests by translating the previous answer."""
+    try:
+        # Get conversation history
+        conversation_history = st.session_state.rag_system.get_conversation_history()
+        
+        if not conversation_history:
+            return "No previous answer to translate."
+        
+        # Get the last answer
+        last_answer = conversation_history[-1]['answer']
+        
+        # Determine target language from the question
+        question_lower = question.lower()
+        
+        if any(word in question_lower for word in ['english', 'anglais', 'to english', 'vers l\'anglais']):
+            # Translate to English
+            translated = _translate_to_english(last_answer)
+            return f"**Translation to English:**\n\n{translated}"
+        
+        elif any(word in question_lower for word in ['french', 'français', 'to french', 'vers le français']):
+            # Translate to French
+            translated = _translate_to_french(last_answer)
+            return f"**Translation to French:**\n\n{translated}"
+        
+        else:
+            # Default: translate to English if asking in French, to French if asking in English
+            if _is_french_question(question):
+                translated = _translate_to_english(last_answer)
+                return f"**Translation to English:**\n\n{translated}"
+            else:
+                translated = _translate_to_french(last_answer)
+                return f"**Translation to French:**\n\n{translated}"
+                
+    except Exception as e:
+        logger.error(f"Error handling translation request: {str(e)}")
+        return f"Error translating previous answer: {str(e)}"
+
 # Update the submit_chat_message function
 def submit_chat_message():
     chat_input_key = f"chat_input_{st.session_state.chat_input_key}"
@@ -1117,160 +1271,7 @@ chat_question = st.chat_input(
 if chat_question:
     submit_chat_message()
 
-# Add this function to handle audio-specific questions
-def is_translation_request(question: str) -> bool:
-    """Detect if the question is asking to translate the previous answer."""
-    question_lower = question.lower()
-    translation_keywords = [
-        'translate', 'translation', 'traduire', 'traduction',
-        'translate this', 'translate that', 'translate the answer',
-        'traduire ceci', 'traduire cela', 'traduire la réponse',
-        'in english', 'en anglais', 'to english', 'vers l\'anglais',
-        'in french', 'en français', 'to french', 'vers le français'
-    ]
-    return any(keyword in question_lower for keyword in translation_keywords)
 
-def is_audio_question(question: str) -> bool:
-    """Detect if the question is about audio content."""
-    question_lower = question.lower()
-    audio_keywords = [
-        'audio', 'recording', 'transcript', 'transcription', 'voice', 'speech',
-        'said', 'mentioned', 'talked about', 'discussed', 'conversation',
-        'interview', 'podcast', 'meeting', 'call', 'recording'
-    ]
-    return any(keyword in question_lower for keyword in audio_keywords)
-
-def _is_french_question(text: str) -> bool:
-    """Detect if the question is in French."""
-    text_lower = text.lower()
-    
-    # More specific French words and phrases
-    french_words = [
-        'comment', 'pourquoi', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles',
-        'comment', 'pourquoi', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles',
-        'est-ce', 'sont-ce', 'avez-vous', 'avez-vous', 'pouvez-vous', 'voulez-vous', 'allez-vous',
-        'comment allez-vous', 'comment ça va', 'ça va', 'bonjour', 'salut', 'au revoir', 'merci',
-        's\'il vous plaît', 's\'il te plaît', 'excusez-moi', 'désolé', 'pardon'
-    ]
-    
-    # French characters
-    french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
-    
-    # Check for French words (exact matches to avoid false positives)
-    french_word_count = sum(1 for word in french_words if f' {word} ' in f' {text_lower} ' or text_lower.startswith(word) or text_lower.endswith(word))
-    
-    # Check for French characters
-    french_char_count = sum(1 for char in french_chars if char in text)
-    
-    # Check for common French question patterns
-    french_patterns = ['est-ce que', 'qu\'est-ce que', 'comment', 'pourquoi', 'quand', 'où']
-    french_pattern_count = sum(1 for pattern in french_patterns if pattern in text_lower)
-    
-    total_score = french_word_count + french_char_count + french_pattern_count
-    
-    # Require at least 2 indicators to be more confident
-    return total_score >= 2
-
-def _translate_text(text: str, source_lang: str, target_lang: str) -> str:
-    """Translate text between languages using Deep Translator."""
-    try:
-        from deep_translator import GoogleTranslator
-        
-        # Check if text is too long (deep-translator has a 5000 character limit)
-        if len(text) > 4500:  # Leave some buffer
-            # Split into chunks and translate each chunk
-            chunks = []
-            
-            # More aggressive chunking - split by words if needed
-            words = text.split()
-            current_chunk = ""
-            max_chunk_size = 3000  # Smaller chunks for safety
-            
-            for word in words:
-                if len(current_chunk + " " + word) < max_chunk_size:
-                    current_chunk += " " + word if current_chunk else word
-                else:
-                    if current_chunk:
-                        chunks.append(current_chunk.strip())
-                    current_chunk = word
-            
-            # Add the last chunk
-            if current_chunk:
-                chunks.append(current_chunk.strip())
-            
-            # Translate each chunk
-            translator = GoogleTranslator(source=source_lang, target=target_lang)
-            translated_chunks = []
-            
-            for i, chunk in enumerate(chunks):
-                try:
-                    # Add a small delay between chunks to avoid rate limiting
-                    if i > 0:
-                        import time
-                        time.sleep(0.1)
-                    
-                    translated_chunk = translator.translate(chunk)
-                    translated_chunks.append(translated_chunk)
-                except Exception as chunk_error:
-                    logger.error(f"Error translating chunk {i}: {str(chunk_error)}")
-                    translated_chunks.append(chunk)  # Keep original if translation fails
-            
-            return ' '.join(translated_chunks)
-        else:
-            # Text is short enough, translate normally
-            translator = GoogleTranslator(source=source_lang, target=target_lang)
-            result = translator.translate(text)
-            return result
-
-    except Exception as e:
-        logger.error(f"Error translating from {source_lang} to {target_lang}: {str(e)}")
-        return text  # Return original text if translation fails
-
-def _translate_to_french(text: str) -> str:
-    """Translate English text to French (for backward compatibility)."""
-    return _translate_text(text, 'en', 'fr')
-
-def _translate_to_english(text: str) -> str:
-    """Translate French text to English."""
-    return _translate_text(text, 'fr', 'en')
-
-def handle_translation_request(question: str) -> str:
-    """Handle translation requests by translating the previous answer."""
-    try:
-        # Get conversation history
-        conversation_history = st.session_state.rag_system.get_conversation_history()
-        
-        if not conversation_history:
-            return "No previous answer to translate."
-        
-        # Get the last answer
-        last_answer = conversation_history[-1]['answer']
-        
-        # Determine target language from the question
-        question_lower = question.lower()
-        
-        if any(word in question_lower for word in ['english', 'anglais', 'to english', 'vers l\'anglais']):
-            # Translate to English
-            translated = _translate_to_english(last_answer)
-            return f"**Translation to English:**\n\n{translated}"
-        
-        elif any(word in question_lower for word in ['french', 'français', 'to french', 'vers le français']):
-            # Translate to French
-            translated = _translate_to_french(last_answer)
-            return f"**Translation to French:**\n\n{translated}"
-        
-        else:
-            # Default: translate to English if asking in French, to French if asking in English
-            if _is_french_question(question):
-                translated = _translate_to_english(last_answer)
-                return f"**Translation to English:**\n\n{translated}"
-            else:
-                translated = _translate_to_french(last_answer)
-                return f"**Translation to French:**\n\n{translated}"
-                
-    except Exception as e:
-        logger.error(f"Error handling translation request: {str(e)}")
-        return f"Error translating previous answer: {str(e)}"
 
 def install_system_dependencies():
     """Install system dependencies if needed."""
