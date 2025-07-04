@@ -787,10 +787,6 @@ def submit_chat_message():
                 # Translate to French if question was in French
                 if is_french:
                     answer = _translate_to_french(answer)
-                    # Update the conversation history with the translated answer
-                    conversation_history = st.session_state.rag_system.get_conversation_history()
-                    if conversation_history:
-                        conversation_history[-1]['answer'] = answer
             
             # Don't add to conversation history here since the RAG methods already do it
             st.rerun()
