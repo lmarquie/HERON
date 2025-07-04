@@ -583,8 +583,18 @@ def submit_chat_message():
             st.rerun()
             return
         
+        # Check if this is a translation request
+        if is_translation_request(chat_question):
+            # Handle translation request
+            with st.spinner("Translating..."):
+                answer = handle_translation_request(chat_question)
+            
+            # Add to conversation history
+            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "translation_request", "document")
+            st.rerun()
+        
         # Check if this is a chart request
-        if is_chart_request(chat_question):
+        elif is_chart_request(chat_question):
             # Process chart request with progress indicator
             with st.spinner("Converting PDF pages to images..."):
                 chart_results = st.session_state.rag_system.process_chart_request(chat_question, analysis_mode=analysis_mode)
@@ -1108,6 +1118,18 @@ if chat_question:
     submit_chat_message()
 
 # Add this function to handle audio-specific questions
+def is_translation_request(question: str) -> bool:
+    """Detect if the question is asking to translate the previous answer."""
+    question_lower = question.lower()
+    translation_keywords = [
+        'translate', 'translation', 'traduire', 'traduction',
+        'translate this', 'translate that', 'translate the answer',
+        'traduire ceci', 'traduire cela', 'traduire la réponse',
+        'in english', 'en anglais', 'to english', 'vers l\'anglais',
+        'in french', 'en français', 'to french', 'vers le français'
+    ]
+    return any(keyword in question_lower for keyword in translation_keywords)
+
 def is_audio_question(question: str) -> bool:
     """Detect if the question is about audio content."""
     question_lower = question.lower()
@@ -1149,8 +1171,8 @@ def _is_french_question(text: str) -> bool:
     # Require at least 2 indicators to be more confident
     return total_score >= 2
 
-def _translate_to_french(text: str) -> str:
-    """Translate English text to French using Deep Translator."""
+def _translate_text(text: str, source_lang: str, target_lang: str) -> str:
+    """Translate text between languages using Deep Translator."""
     try:
         from deep_translator import GoogleTranslator
         
@@ -1176,7 +1198,7 @@ def _translate_to_french(text: str) -> str:
                 chunks.append(current_chunk.strip())
             
             # Translate each chunk
-            translator = GoogleTranslator(source='en', target='fr')
+            translator = GoogleTranslator(source=source_lang, target=target_lang)
             translated_chunks = []
             
             for chunk in chunks:
@@ -1190,13 +1212,59 @@ def _translate_to_french(text: str) -> str:
             return ' '.join(translated_chunks)
         else:
             # Text is short enough, translate normally
-            translator = GoogleTranslator(source='en', target='fr')
+            translator = GoogleTranslator(source=source_lang, target=target_lang)
             result = translator.translate(text)
             return result
 
     except Exception as e:
-        logger.error(f"Error translating to French: {str(e)}")
+        logger.error(f"Error translating from {source_lang} to {target_lang}: {str(e)}")
         return text  # Return original text if translation fails
+
+def _translate_to_french(text: str) -> str:
+    """Translate English text to French (for backward compatibility)."""
+    return _translate_text(text, 'en', 'fr')
+
+def _translate_to_english(text: str) -> str:
+    """Translate French text to English."""
+    return _translate_text(text, 'fr', 'en')
+
+def handle_translation_request(question: str) -> str:
+    """Handle translation requests by translating the previous answer."""
+    try:
+        # Get conversation history
+        conversation_history = st.session_state.rag_system.get_conversation_history()
+        
+        if not conversation_history:
+            return "No previous answer to translate."
+        
+        # Get the last answer
+        last_answer = conversation_history[-1]['answer']
+        
+        # Determine target language from the question
+        question_lower = question.lower()
+        
+        if any(word in question_lower for word in ['english', 'anglais', 'to english', 'vers l\'anglais']):
+            # Translate to English
+            translated = _translate_to_english(last_answer)
+            return f"**Translation to English:**\n\n{translated}"
+        
+        elif any(word in question_lower for word in ['french', 'français', 'to french', 'vers le français']):
+            # Translate to French
+            translated = _translate_to_french(last_answer)
+            return f"**Translation to French:**\n\n{translated}"
+        
+        else:
+            # Default: translate to English if asking in French, to French if asking in English
+            if _is_french_question(question):
+                translated = _translate_to_english(last_answer)
+                return f"**Translation to English:**\n\n{translated}"
+            else:
+                translated = _translate_to_french(last_answer)
+                return f"**Translation to French:**\n\n{translated}"
+                
+    except Exception as e:
+        logger.error(f"Error handling translation request: {str(e)}")
+        return f"Error translating previous answer: {str(e)}"
 
 def install_system_dependencies():
     """Install system dependencies if needed."""
