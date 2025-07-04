@@ -1810,13 +1810,65 @@ class QuestionHandler:
         return french_score > 0
 
     def _translate_to_french(self, text: str) -> str:
-        """Translate English text to French using Deep Translator."""
+        """Translate English text to French using Deep Translator with chunking for long texts."""
         try:
             from deep_translator import GoogleTranslator
             
-            translator = GoogleTranslator(source='en', target='fr')
-            result = translator.translate(text)
-            return result
+            # Check if text is too long for single translation
+            MAX_CHARS_PER_CHUNK = 4000  # Safe limit below 5000
+            
+            if len(text) <= MAX_CHARS_PER_CHUNK:
+                # Short text - translate directly
+                translator = GoogleTranslator(source='en', target='fr')
+                result = translator.translate(text)
+                return result
+            else:
+                # Long text - split into chunks and translate separately
+                logger.info(f"Text too long ({len(text)} chars), translating in chunks...")
+                
+                # Split text into sentences to avoid breaking mid-sentence
+                sentences = text.split('. ')
+                chunks = []
+                current_chunk = ""
+                
+                for sentence in sentences:
+                    # Add period back if it's not the last sentence
+                    if sentence != sentences[-1]:
+                        sentence += '. '
+                    
+                    # Check if adding this sentence would exceed the limit
+                    if len(current_chunk) + len(sentence) <= MAX_CHARS_PER_CHUNK:
+                        current_chunk += sentence
+                    else:
+                        # Current chunk is full, save it and start a new one
+                        if current_chunk:
+                            chunks.append(current_chunk.strip())
+                        current_chunk = sentence
+                
+                # Add the last chunk if it has content
+                if current_chunk.strip():
+                    chunks.append(current_chunk.strip())
+                
+                logger.info(f"Split text into {len(chunks)} chunks for translation")
+                
+                # Translate each chunk
+                translator = GoogleTranslator(source='en', target='fr')
+                translated_chunks = []
+                
+                for i, chunk in enumerate(chunks):
+                    try:
+                        logger.info(f"Translating chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
+                        translated_chunk = translator.translate(chunk)
+                        translated_chunks.append(translated_chunk)
+                    except Exception as e:
+                        logger.error(f"Error translating chunk {i+1}: {str(e)}")
+                        # If translation fails for a chunk, keep the original
+                        translated_chunks.append(chunk)
+                
+                # Combine translated chunks
+                final_translation = ' '.join(translated_chunks)
+                logger.info(f"Translation completed: {len(final_translation)} characters")
+                return final_translation
 
         except Exception as e:
             logger.error(f"Error translating to French: {str(e)}")
