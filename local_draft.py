@@ -1802,7 +1802,6 @@ class QuestionHandler:
         }
 
     def _is_french_question(self, text: str) -> bool:
-        """Simple French detection based on common French words and characters."""
         text_lower = text.lower()
         french_words = ['le', 'la', 'les', 'un', 'une', 'des', 'et', 'ou', 'pour', 'avec', 'sur', 'dans', 'par', 'de', 'du', 'que', 'qui', 'quoi', 'comment', 'pourquoi', 'quand', 'où']
         french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
@@ -1811,13 +1810,13 @@ class QuestionHandler:
         return french_score > 0
 
     def _translate_to_french(self, text: str) -> str:
-        """Translate English text to French using Google Translate."""
+        """Translate English text to French using Deep Translator."""
         try:
-            from googletrans import Translator
+            from deep_translator import GoogleTranslator
             
-            translator = Translator()
-            result = translator.translate(text, src='en', dest='fr')
-            return result.text
+            translator = GoogleTranslator(source='en', target='fr')
+            result = translator.translate(text)
+            return result
 
         except Exception as e:
             logger.error(f"Error translating to French: {str(e)}")
