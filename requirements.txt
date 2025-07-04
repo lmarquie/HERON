@@ -35,4 +35,4 @@ torch>=2.0.0
 transformers>=4.30.0
 
 # Translation support
-googletrans==4.0.0rc1
+deep-translator>=1.11.0
