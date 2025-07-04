@@ -160,10 +160,6 @@ def generate_answer(question):
         response_time = time.time() - start_time
         st.session_state.performance_metrics['last_response_time'] = response_time
         
-        # Translate to French if question was in French
-        if is_french:
-            answer = self._translate_to_french(answer)
-        
         return answer
         
     except Exception as e:
