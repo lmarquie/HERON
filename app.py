@@ -1110,20 +1110,42 @@ def is_audio_question(question: str) -> bool:
 def _is_french_question(text: str) -> bool:
     """Detect if the question is in French."""
     text_lower = text.lower()
-    french_words = ['le', 'la', 'les', 'un', 'une', 'des', 'et', 'ou', 'pour', 'avec', 'sur', 'dans', 'par', 'de', 'du', 'que', 'qui', 'quoi', 'comment', 'pourquoi', 'quand', 'où']
+    
+    # More specific French words and phrases
+    french_words = [
+        'comment', 'pourquoi', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles',
+        'comment', 'pourquoi', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles',
+        'est-ce', 'sont-ce', 'avez-vous', 'avez-vous', 'pouvez-vous', 'voulez-vous', 'allez-vous',
+        'comment allez-vous', 'comment ça va', 'ça va', 'bonjour', 'salut', 'au revoir', 'merci',
+        's\'il vous plaît', 's\'il te plaît', 'excusez-moi', 'désolé', 'pardon'
+    ]
+    
+    # French characters
     french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
     
-    french_score = sum(1 for word in french_words if word in text_lower) + sum(1 for char in french_chars if char in text)
-    return french_score > 0
+    # Check for French words (exact matches to avoid false positives)
+    french_word_count = sum(1 for word in french_words if f' {word} ' in f' {text_lower} ' or text_lower.startswith(word) or text_lower.endswith(word))
+    
+    # Check for French characters
+    french_char_count = sum(1 for char in french_chars if char in text)
+    
+    # Check for common French question patterns
+    french_patterns = ['est-ce que', 'qu\'est-ce que', 'comment', 'pourquoi', 'quand', 'où']
+    french_pattern_count = sum(1 for pattern in french_patterns if pattern in text_lower)
+    
+    total_score = french_word_count + french_char_count + french_pattern_count
+    
+    # Require at least 2 indicators to be more confident
+    return total_score >= 2
 
 def _translate_to_french(text: str) -> str:
-    """Translate English text to French using Google Translate."""
+    """Translate English text to French using Deep Translator."""
     try:
-        from googletrans import Translator
+        from deep_translator import GoogleTranslator
         
-        translator = Translator()
-        result = translator.translate(text, src='en', dest='fr')
-        return result.text
+        translator = GoogleTranslator(source='en', target='fr')
+        result = translator.translate(text)
+        return result
 
     except Exception as e:
         logger.error(f"Error translating to French: {str(e)}")
