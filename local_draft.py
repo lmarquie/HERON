@@ -2139,10 +2139,22 @@ class RAGSystem:
             logging.getLogger(__name__).error(f"Error generating follow-up: {str(e)}")
             return f"Error: {str(e)}"
 
-    def process_live_web_question(self, question: str) -> str:
+    def process_live_web_question(self, question: str, analysis_mode: str = "General") -> str:
         """Process question using live web search."""
         try:
-            answer = generate_live_web_answer(question)
+            # Use the analysis_mode to customize the web search prompt
+            if analysis_mode == "Financial Document":
+                enhanced_question = f"Financial analysis: {question}"
+            elif analysis_mode == "Company Evaluation":
+                enhanced_question = f"Company evaluation: {question}"
+            elif analysis_mode == "Legal Document":
+                enhanced_question = f"Legal analysis: {question}"
+            elif analysis_mode == "Financial Excel Document":
+                enhanced_question = f"Financial data analysis: {question}"
+            else:
+                enhanced_question = question
+            
+            answer = generate_live_web_answer(enhanced_question)
             self.add_to_conversation_history(question, answer, "live_web_search", "internet")
             return answer
         except Exception as e:
