@@ -873,7 +873,7 @@ def submit_chat_message():
                 # Process based on mode - simplified logic
                 if st.session_state.get('internet_mode', False):
                     # Use live web search - this method already adds to conversation history
-                    answer = st.session_state.rag_system.process_live_web_question(chat_question, analysis_mode=analysis_mode)
+                    answer = st.session_state.rag_system.process_live_web_question(chat_question)
                 else:
                     # Use document search - this method already adds to conversation history
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True, analysis_mode=analysis_mode)
