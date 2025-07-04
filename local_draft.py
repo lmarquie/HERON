@@ -144,43 +144,144 @@ class TextProcessor:
             return f"Error extracting text from PowerPoint: {str(e)}"
 
     def extract_text_from_xlsx(self, path):
+        """Extract comprehensive, queryable content from Excel files with proper headers and row tracking."""
         try:
             wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
             output = []
+            
             for ws in wb.worksheets:
                 output.append(f"\n=== Sheet: {ws.title} ===\n")
+                
                 # Get all rows as lists
                 rows = list(ws.iter_rows(values_only=True))
                 if not rows:
                     output.append("(Sheet is empty)\n")
                     continue
-                # Use first row as header if possible
-                headers = [str(cell) if cell is not None else "" for cell in rows[0]]
+                
+                # Use first row as header
+                headers = [str(cell) if cell is not None else f"Column_{i+1}" for i, cell in enumerate(rows[0])]
                 output.append(f"Columns: {', '.join(headers)}\n")
-                output.append(f"Rows: {len(rows)-1}\n")
-                # Show data types for each column (from first non-header row)
+                output.append(f"Total Rows: {len(rows)-1}\n")
+                
+                # Show data types from first few rows
                 if len(rows) > 1:
-                    types = [type(cell).__name__ if cell is not None else "None" for cell in rows[1]]
-                    output.append(f"Types: {', '.join(types)}\n")
-                # Output as markdown table (limit to first 20 rows)
-                output.append("| " + " | ".join(headers) + " |\n")
-                output.append("|" + "---|" * len(headers) + "\n")
-                for row in rows[1:21]:
-                    row_str = [str(cell) if cell is not None else "" for cell in row]
-                    output.append("| " + " | ".join(row_str) + " |\n")
-                if len(rows) > 21:
-                    output.append(f"... ({len(rows)-1-20} more rows not shown)\n")
+                    sample_types = []
+                    for col_idx in range(len(headers)):
+                        col_values = [rows[i][col_idx] for i in range(1, min(6, len(rows))) if rows[i][col_idx] is not None]
+                        if col_values:
+                            sample_types.append(type(col_values[0]).__name__)
+                        else:
+                            sample_types.append("None")
+                    output.append(f"Data Types: {', '.join(sample_types)}\n")
+                
+                # Process data rows with SAFE LIMITS
+                data_rows = rows[1:]
+                MAX_ROWS = 1000  # Safe limit to prevent crashes
+                
+                if len(data_rows) > MAX_ROWS:
+                    output.append(f"\nWARNING: Processing first {MAX_ROWS} rows out of {len(data_rows)} to prevent memory issues.\n")
+                    data_rows = data_rows[:MAX_ROWS]
+                
+                # Process in smaller chunks for better LLM analysis
+                chunk_size = 25  # Smaller chunks for better context
+                
+                for chunk_start in range(0, len(data_rows), chunk_size):
+                    chunk_end = min(chunk_start + chunk_size, len(data_rows))
+                    chunk_rows = data_rows[chunk_start:chunk_end]
+                    
+                    # ALWAYS include headers with each chunk
+                    output.append(f"\n--- Rows {chunk_start+1}-{chunk_end} ---\n")
+                    output.append(f"Headers: {', '.join(headers)}\n")
+                    
+                    # Format each row with clear row numbers and column names
+                    for row_idx, row in enumerate(chunk_rows, chunk_start + 1):
+                        row_data = []
+                        for col_idx, cell in enumerate(row):
+                            if cell is not None:
+                                # Format numbers nicely
+                                if isinstance(cell, (int, float)):
+                                    if isinstance(cell, int):
+                                        formatted_cell = f"{cell:,}"
+                                    else:
+                                        formatted_cell = f"{cell:.2f}" if cell != int(cell) else f"{cell:.0f}"
+                                else:
+                                    formatted_cell = str(cell)
+                                row_data.append(f"{headers[col_idx]}: {formatted_cell}")
+                            else:
+                                row_data.append(f"{headers[col_idx]}: (empty)")
+                        
+                        output.append(f"Row {row_idx}: {' | '.join(row_data)}\n")
+                
+                # Add statistical summary for numeric columns (limited to prevent crashes)
+                output.append("\n=== STATISTICAL SUMMARY ===\n")
+                for col_idx, header in enumerate(headers):
+                    numeric_values = []
+                    for row in data_rows:
+                        if row[col_idx] is not None and isinstance(row[col_idx], (int, float)):
+                            numeric_values.append(row[col_idx])
+                    
+                    if numeric_values:
+                        output.append(f"{header}: Count={len(numeric_values)}, Min={min(numeric_values):.2f}, Max={max(numeric_values):.2f}, Avg={sum(numeric_values)/len(numeric_values):.2f}\n")
+                
+                # Add data relationships
+                output.append("\n=== DATA RELATIONSHIPS ===\n")
+                if len(data_rows) > 1:
+                    # Look for date columns
+                    date_columns = []
+                    for col_idx, header in enumerate(headers):
+                        if any('date' in header.lower() or 'time' in header.lower() for word in header.split()):
+                            date_columns.append((col_idx, header))
+                    
+                    if date_columns:
+                        output.append(f"Date columns found: {[col[1] for col in date_columns]}\n")
+                    
+                    # Look for numeric columns
+                    numeric_columns = []
+                    for col_idx, header in enumerate(headers):
+                        if any(isinstance(row[col_idx], (int, float)) for row in data_rows if row[col_idx] is not None):
+                            numeric_columns.append((col_idx, header))
+                    
+                    if len(numeric_columns) >= 2:
+                        output.append(f"Numeric columns for analysis: {[col[1] for col in numeric_columns]}\n")
+            
             return "\n".join(output)
+            
         except Exception as e:
-            # Fallback to pandas for .xls or if openpyxl fails
+            # Fallback to pandas with same safety limits
             try:
                 df = pd.read_excel(path, engine='openpyxl')
-                # Show first 20 rows as markdown
                 output = [f"Sheet: {getattr(df, 'sheet_name', 'N/A')} (via pandas)\n"]
-                output.append(df.head(20).to_markdown(index=False))
-                if len(df) > 20:
-                    output.append(f"... ({len(df)-20} more rows not shown)\n")
+                output.append(f"Shape: {df.shape}\n")
+                output.append(f"Columns: {list(df.columns)}\n")
+                output.append(f"Data Types: {df.dtypes.to_dict()}\n")
+                
+                # Limit rows for safety
+                MAX_ROWS = 1000
+                if len(df) > MAX_ROWS:
+                    output.append(f"\nWARNING: Processing first {MAX_ROWS} rows out of {len(df)} to prevent memory issues.\n")
+                    df = df.head(MAX_ROWS)
+                
+                output.append("=== COMPLETE DATA ===\n")
+                
+                # Process in chunks with headers
+                chunk_size = 25
+                for chunk_start in range(0, len(df), chunk_size):
+                    chunk_end = min(chunk_start + chunk_size, len(df))
+                    chunk_df = df.iloc[chunk_start:chunk_end]
+                    
+                    output.append(f"\n--- Rows {chunk_start+1}-{chunk_end} ---\n")
+                    output.append(f"Headers: {', '.join(df.columns)}\n")
+                    
+                    for idx, row in chunk_df.iterrows():
+                        row_data = [f"{col}: {val}" for col, val in row.items()]
+                        output.append(f"Row {idx+1}: {' | '.join(row_data)}\n")
+                
+                # Add statistical summary
+                output.append("\n=== STATISTICAL SUMMARY ===\n")
+                output.append(df.describe().to_string())
+                
                 return "\n".join(output)
+                
             except Exception as e2:
                 return f"Error extracting text from Excel: {str(e)}; {str(e2)}"
 
@@ -2835,4 +2936,4 @@ def handle_uploaded_audio(uploaded_file):
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
-    rag_system.run() 
+    rag_system.run()
