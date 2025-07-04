@@ -773,6 +773,9 @@ def submit_chat_message():
         else:
             # Add loading indicator for all question processing
             with st.spinner("Thinking..."):
+                # Check if question is in French
+                is_french = _is_french_question(chat_question)
+                
                 # Process based on mode - simplified logic
                 if st.session_state.get('internet_mode', False):
                     # Use live web search - this method already adds to conversation history
@@ -780,6 +783,14 @@ def submit_chat_message():
                 else:
                     # Use document search - this method already adds to conversation history
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True, analysis_mode=analysis_mode)
+                
+                # Translate to French if question was in French
+                if is_french:
+                    answer = _translate_to_french(answer)
+                    # Update the conversation history with the translated answer
+                    conversation_history = st.session_state.rag_system.get_conversation_history()
+                    if conversation_history:
+                        conversation_history[-1]['answer'] = answer
             
             # Don't add to conversation history here since the RAG methods already do it
             st.rerun()
