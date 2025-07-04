@@ -1180,18 +1180,19 @@ def _translate_text(text: str, source_lang: str, target_lang: str) -> str:
         if len(text) > 4500:  # Leave some buffer
             # Split into chunks and translate each chunk
             chunks = []
+            
+            # More aggressive chunking - split by words if needed
+            words = text.split()
             current_chunk = ""
+            max_chunk_size = 3000  # Smaller chunks for safety
             
-            # Split by sentences to avoid breaking mid-sentence
-            sentences = text.split('. ')
-            
-            for sentence in sentences:
-                if len(current_chunk + sentence) < 4000:
-                    current_chunk += sentence + '. '
+            for word in words:
+                if len(current_chunk + " " + word) < max_chunk_size:
+                    current_chunk += " " + word if current_chunk else word
                 else:
                     if current_chunk:
                         chunks.append(current_chunk.strip())
-                    current_chunk = sentence + '. '
+                    current_chunk = word
             
             # Add the last chunk
             if current_chunk:
@@ -1201,12 +1202,17 @@ def _translate_text(text: str, source_lang: str, target_lang: str) -> str:
             translator = GoogleTranslator(source=source_lang, target=target_lang)
             translated_chunks = []
             
-            for chunk in chunks:
+            for i, chunk in enumerate(chunks):
                 try:
+                    # Add a small delay between chunks to avoid rate limiting
+                    if i > 0:
+                        import time
+                        time.sleep(0.1)
+                    
                     translated_chunk = translator.translate(chunk)
                     translated_chunks.append(translated_chunk)
                 except Exception as chunk_error:
-                    logger.error(f"Error translating chunk: {str(chunk_error)}")
+                    logger.error(f"Error translating chunk {i}: {str(chunk_error)}")
                     translated_chunks.append(chunk)  # Keep original if translation fails
             
             return ' '.join(translated_chunks)
