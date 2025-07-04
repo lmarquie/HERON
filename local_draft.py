@@ -1608,6 +1608,9 @@ class QuestionHandler:
                     for chunk in results
                 ])
                 
+                # Check if question is in French
+                is_french = self._is_french_question(question)
+                
                 # Choose system prompt based on analysis_mode
                 if analysis_mode == "Financial Document":
                     system_prompt = (
@@ -1726,6 +1729,11 @@ class QuestionHandler:
                     )
                 enhanced_question = f"{system_prompt}\n\nUser question: {question}\n"
                 answer = self.llm.generate_answer(enhanced_question, context, normalize_length=False)
+                
+                # Translate to French if question was in French
+                if is_french:
+                    answer = self._translate_to_french(answer)
+                
                 top_chunk = results[0] if results else None
                 self.conversation_history.append({
                     'question': question,
@@ -1792,6 +1800,40 @@ class QuestionHandler:
             'error_count': self.error_count,
             'last_question_time': self.conversation_history[-1]['timestamp'] if self.conversation_history else None
         }
+
+    def _is_french_question(self, text: str) -> bool:
+        """Simple French detection based on common French words and characters."""
+        text_lower = text.lower()
+        french_words = ['le', 'la', 'les', 'un', 'une', 'des', 'et', 'ou', 'pour', 'avec', 'sur', 'dans', 'par', 'de', 'du', 'que', 'qui', 'quoi', 'comment', 'pourquoi', 'quand', 'où']
+        french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
+        
+        french_score = sum(1 for word in french_words if word in text_lower) + sum(1 for char in french_chars if char in text)
+        return french_score > 0
+
+    def _translate_to_french(self, text: str) -> str:
+        """Translate English text to French using OpenAI."""
+        try:
+            import openai
+            
+            client = openai.OpenAI(api_key=openai.api_key)
+            
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"Translate to French: {text}"
+                    }
+                ],
+                temperature=0.1,
+                max_tokens=16384
+            )
+            
+            return response.choices[0].message.content
+
+        except Exception as e:
+            logger.error(f"Error translating to French: {str(e)}")
+            return text  # Return original text if translation fails
 
 ### =================== Session Manager =================== ###
 class SessionManager:
