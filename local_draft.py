@@ -1501,6 +1501,9 @@ class ClaudeHandler:
             if cache_key in self.response_cache:
                 return self.response_cache[cache_key]
             
+            # Detect language of the question
+            detected_language = self._detect_language(question)
+            
             # Set maximum tokens for both input and output
             max_input_tokens = 128000  # Maximum context window for GPT-4o
             max_output_tokens = 16384   # Maximum response tokens
@@ -1526,10 +1529,14 @@ class ClaudeHandler:
                 else:
                     return "Error: Question too long for processing."
             
+            # Add language instruction to system prompt
+            language_instruction = self._get_language_instruction(detected_language)
+            enhanced_system_prompt = f"{self.system_prompt}\n\n{language_instruction}"
+            
             messages = [
                 {
                     "role": "system",
-                    "content": self.system_prompt
+                    "content": enhanced_system_prompt
                 },
                 {
                     "role": "user",
@@ -1563,6 +1570,66 @@ class ClaudeHandler:
         except Exception as e:
             logger.error(f"Error generating answer: {str(e)}")
             return f"Error generating answer: {str(e)}"
+
+    def _detect_language(self, text: str) -> str:
+        """Detect the language of the input text."""
+        # Simple language detection based on common words and characters
+        text_lower = text.lower()
+        
+        # French detection
+        french_words = ['le', 'la', 'les', 'un', 'une', 'des', 'et', 'ou', 'pour', 'avec', 'sur', 'dans', 'par', 'de', 'du', 'que', 'qui', 'quoi', 'comment', 'pourquoi', 'quand', 'où']
+        french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
+        
+        # Spanish detection
+        spanish_words = ['el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'y', 'o', 'para', 'con', 'sobre', 'en', 'por', 'de', 'del', 'que', 'quien', 'que', 'como', 'porque', 'cuando', 'donde']
+        spanish_chars = ['á', 'é', 'í', 'ó', 'ú', 'ñ', 'ü']
+        
+        # German detection
+        german_words = ['der', 'die', 'das', 'ein', 'eine', 'und', 'oder', 'für', 'mit', 'auf', 'in', 'von', 'zu', 'was', 'wer', 'wie', 'warum', 'wann', 'wo']
+        german_chars = ['ä', 'ö', 'ü', 'ß']
+        
+        # Italian detection
+        italian_words = ['il', 'la', 'lo', 'gli', 'le', 'un', 'una', 'e', 'o', 'per', 'con', 'su', 'in', 'da', 'di', 'che', 'chi', 'cosa', 'come', 'perché', 'quando', 'dove']
+        italian_chars = ['à', 'è', 'é', 'ì', 'ò', 'ù']
+        
+        # Portuguese detection
+        portuguese_words = ['o', 'a', 'os', 'as', 'um', 'uma', 'e', 'ou', 'para', 'com', 'sobre', 'em', 'por', 'de', 'do', 'que', 'quem', 'o que', 'como', 'porque', 'quando', 'onde']
+        portuguese_chars = ['á', 'à', 'â', 'ã', 'é', 'ê', 'í', 'ó', 'ô', 'õ', 'ú', 'ç']
+        
+        # Count matches for each language
+        french_score = sum(1 for word in french_words if word in text_lower) + sum(1 for char in french_chars if char in text)
+        spanish_score = sum(1 for word in spanish_words if word in text_lower) + sum(1 for char in spanish_chars if char in text)
+        german_score = sum(1 for word in german_words if word in text_lower) + sum(1 for char in german_chars if char in text)
+        italian_score = sum(1 for word in italian_words if word in text_lower) + sum(1 for char in italian_chars if char in text)
+        portuguese_score = sum(1 for word in portuguese_words if word in text_lower) + sum(1 for char in portuguese_chars if char in text)
+        
+        # Return the language with the highest score
+        scores = {
+            'french': french_score,
+            'spanish': spanish_score,
+            'german': german_score,
+            'italian': italian_score,
+            'portuguese': portuguese_score
+        }
+        
+        max_score = max(scores.values())
+        if max_score > 0:
+            return max(scores, key=scores.get)
+        else:
+            return 'english'  # Default to English
+    
+    def _get_language_instruction(self, language: str) -> str:
+        """Get language-specific instruction for the LLM."""
+        language_instructions = {
+            'french': "IMPORTANT: The user's question is in French. Please respond in French. Provide your analysis in fluent, natural French that matches the user's language level.",
+            'spanish': "IMPORTANT: The user's question is in Spanish. Please respond in Spanish. Provide your analysis in fluent, natural Spanish that matches the user's language level.",
+            'german': "IMPORTANT: The user's question is in German. Please respond in German. Provide your analysis in fluent, natural German that matches the user's language level.",
+            'italian': "IMPORTANT: The user's question is in Italian. Please respond in Italian. Provide your analysis in fluent, natural Italian that matches the user's language level.",
+            'portuguese': "IMPORTANT: The user's question is in Portuguese. Please respond in Portuguese. Provide your analysis in fluent, natural Portuguese that matches the user's language level.",
+            'english': "IMPORTANT: The user's question is in English. Please respond in English. Provide your analysis in fluent, natural English."
+        }
+        
+        return language_instructions.get(language, language_instructions['english'])
 
     def _get_response_length(self, question: str, normalize_length: bool) -> int:
         """Determine appropriate response length based on question type."""
