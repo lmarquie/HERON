@@ -1499,70 +1499,119 @@ class ClaudeHandler:
             # Check cache first
             cache_key = f"{question[:100]}_{hash(context[:500])}"
             if cache_key in self.response_cache:
-                return self.response_cache[cache_key]
-            
-            # Set maximum tokens for both input and output
-            max_input_tokens = 128000  # Maximum context window for GPT-4o
-            max_output_tokens = 16384   # Maximum response tokens
-            
-            # Count and limit input tokens
-            import tiktoken
-            enc = tiktoken.get_encoding("cl100k_base")
-            
-            # Count input tokens
-            input_text = f"Context: {context}\n\nQuestion: {question}"
-            input_tokens = len(enc.encode(input_text))
-            
-            # Truncate context if too long
-            if input_tokens > max_input_tokens:
-                # Calculate how much context we can keep
-                question_tokens = len(enc.encode(question))
-                system_tokens = len(enc.encode(self.system_prompt))
-                available_tokens = max_input_tokens - question_tokens - system_tokens - 100  # Buffer
+                answer = self.response_cache[cache_key]
+            else:
+                # Set maximum tokens for both input and output
+                max_input_tokens = 128000  # Maximum context window for GPT-4o
+                max_output_tokens = 16384   # Maximum response tokens
                 
-                if available_tokens > 0:
-                    # Truncate context to fit
-                    context = enc.decode(enc.encode(context)[:available_tokens])
-                else:
-                    return "Error: Question too long for processing."
-            
-            messages = [
-                {
-                    "role": "system",
-                    "content": self.system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": f"Context: {context}\n\nQuestion: {question}"
+                # Count and limit input tokens
+                import tiktoken
+                enc = tiktoken.get_encoding("cl100k_base")
+                
+                # Count input tokens
+                input_text = f"Context: {context}\n\nQuestion: {question}"
+                input_tokens = len(enc.encode(input_text))
+                
+                # Truncate context if too long
+                if input_tokens > max_input_tokens:
+                    # Calculate how much context we can keep
+                    question_tokens = len(enc.encode(question))
+                    system_tokens = len(enc.encode(self.system_prompt))
+                    available_tokens = max_input_tokens - question_tokens - system_tokens - 100  # Buffer
+                    
+                    if available_tokens > 0:
+                        # Truncate context to fit
+                        context = enc.decode(enc.encode(context)[:available_tokens])
+                    else:
+                        return "Error: Question too long for processing."
+                
+                messages = [
+                    {
+                        "role": "system",
+                        "content": self.system_prompt
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Context: {context}\n\nQuestion: {question}"
+                    }
+                ]
+
+                payload = {
+                    "model": "gpt-4o",
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_tokens": max_output_tokens  # Maximum response tokens
                 }
-            ]
 
-            payload = {
-                "model": "gpt-4o",
-                "messages": messages,
-                "temperature": 0.3,
-                "max_tokens": max_output_tokens  # Maximum output tokens
-            }
+                response = requests.post(
+                    self.api_url,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=100
+                )
 
-            response = requests.post(
-                self.api_url,
-                headers=self.headers,
-                json=payload,
-                timeout=100
-            )
-
-            response.raise_for_status()
-            response_data = response.json()
-            answer = response_data["choices"][0]["message"]["content"]
+                response.raise_for_status()
+                response_data = response.json()
+                answer = response_data["choices"][0]["message"]["content"]
+                
+                # Cache the response
+                self.response_cache[cache_key] = answer
             
-            # Cache the response
-            self.response_cache[cache_key] = answer
+            # Check if question is in French and translate answer if needed
+            if self._is_french_question(question):
+                answer = self._translate_to_french(answer)
             
             return answer
 
         except Exception as e:
             logger.error(f"Error generating answer: {str(e)}")
             return f"Error generating answer: {str(e)}"
+
+    def _is_french_question(self, text: str) -> bool:
+        """Simple French detection based on common French words and characters."""
+        text_lower = text.lower()
+        french_words = ['le', 'la', 'les', 'un', 'une', 'des', 'et', 'ou', 'pour', 'avec', 'sur', 'dans', 'par', 'de', 'du', 'que', 'qui', 'quoi', 'comment', 'pourquoi', 'quand', 'où']
+        french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
+        
+        french_score = sum(1 for word in french_words if word in text_lower) + sum(1 for char in french_chars if char in text)
+        return french_score > 0
+
+    def _translate_to_french(self, text: str) -> str:
+        """Translate English text to French using OpenAI."""
+        try:
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are a professional translator. Translate the following English text to French. Maintain the same tone, style, and formatting. Keep all technical terms, numbers, and proper nouns as they are. Only translate the language, not the content structure."
+                },
+                {
+                    "role": "user",
+                    "content": f"Translate this English text to French:\n\n{text}"
+                }
+            ]
+
+            payload = {
+                "model": "gpt-4o",
+                "messages": messages,
+                "temperature": 0.1,
+                "max_tokens": 16384
+            }
+
+            response = requests.post(
+                self.api_url,
+                headers=self.headers,
+                json=payload,
+                timeout=60
+            )
+
+            response.raise_for_status()
+            response_data = response.json()
+            return response_data["choices"][0]["message"]["content"]
+
+        except Exception as e:
+            logger.error(f"Error translating to French: {str(e)}")
+            return text  # Return original text if translation fails
 
     def _get_response_length(self, question: str, normalize_length: bool) -> int:
         """Determine appropriate response length based on question type."""
