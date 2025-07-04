@@ -153,12 +153,19 @@ def generate_answer(question):
     try:
         start_time = time.time()
         
+        # Check if question is in French
+        is_french = _is_french_question(question)
+        
         # Use the new mode-aware question processing
         answer = st.session_state.rag_system.process_question_with_mode(question, normalize_length=True)
         
         # Update performance metrics
         response_time = time.time() - start_time
         st.session_state.performance_metrics['last_response_time'] = response_time
+        
+        # Translate to French if question was in French
+        if is_french:
+            answer = _translate_to_french(answer)
         
         return answer
         
@@ -1099,6 +1106,28 @@ def is_audio_question(question: str) -> bool:
         'interview', 'podcast', 'meeting', 'call', 'recording'
     ]
     return any(keyword in question_lower for keyword in audio_keywords)
+
+def _is_french_question(text: str) -> bool:
+    """Detect if the question is in French."""
+    text_lower = text.lower()
+    french_words = ['le', 'la', 'les', 'un', 'une', 'des', 'et', 'ou', 'pour', 'avec', 'sur', 'dans', 'par', 'de', 'du', 'que', 'qui', 'quoi', 'comment', 'pourquoi', 'quand', 'où']
+    french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
+    
+    french_score = sum(1 for word in french_words if word in text_lower) + sum(1 for char in french_chars if char in text)
+    return french_score > 0
+
+def _translate_to_french(text: str) -> str:
+    """Translate English text to French using Google Translate."""
+    try:
+        from googletrans import Translator
+        
+        translator = Translator()
+        result = translator.translate(text, src='en', dest='fr')
+        return result.text
+
+    except Exception as e:
+        logger.error(f"Error translating to French: {str(e)}")
+        return text  # Return original text if translation fails
 
 def install_system_dependencies():
     """Install system dependencies if needed."""
