@@ -1580,41 +1580,12 @@ class ClaudeHandler:
         french_words = ['le', 'la', 'les', 'un', 'une', 'des', 'et', 'ou', 'pour', 'avec', 'sur', 'dans', 'par', 'de', 'du', 'que', 'qui', 'quoi', 'comment', 'pourquoi', 'quand', 'où']
         french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
         
-        # Spanish detection
-        spanish_words = ['el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'y', 'o', 'para', 'con', 'sobre', 'en', 'por', 'de', 'del', 'que', 'quien', 'que', 'como', 'porque', 'cuando', 'donde']
-        spanish_chars = ['á', 'é', 'í', 'ó', 'ú', 'ñ', 'ü']
-        
-        # German detection
-        german_words = ['der', 'die', 'das', 'ein', 'eine', 'und', 'oder', 'für', 'mit', 'auf', 'in', 'von', 'zu', 'was', 'wer', 'wie', 'warum', 'wann', 'wo']
-        german_chars = ['ä', 'ö', 'ü', 'ß']
-        
-        # Italian detection
-        italian_words = ['il', 'la', 'lo', 'gli', 'le', 'un', 'una', 'e', 'o', 'per', 'con', 'su', 'in', 'da', 'di', 'che', 'chi', 'cosa', 'come', 'perché', 'quando', 'dove']
-        italian_chars = ['à', 'è', 'é', 'ì', 'ò', 'ù']
-        
-        # Portuguese detection
-        portuguese_words = ['o', 'a', 'os', 'as', 'um', 'uma', 'e', 'ou', 'para', 'com', 'sobre', 'em', 'por', 'de', 'do', 'que', 'quem', 'o que', 'como', 'porque', 'quando', 'onde']
-        portuguese_chars = ['á', 'à', 'â', 'ã', 'é', 'ê', 'í', 'ó', 'ô', 'õ', 'ú', 'ç']
-        
-        # Count matches for each language
+        # Count matches for French
         french_score = sum(1 for word in french_words if word in text_lower) + sum(1 for char in french_chars if char in text)
-        spanish_score = sum(1 for word in spanish_words if word in text_lower) + sum(1 for char in spanish_chars if char in text)
-        german_score = sum(1 for word in german_words if word in text_lower) + sum(1 for char in german_chars if char in text)
-        italian_score = sum(1 for word in italian_words if word in text_lower) + sum(1 for char in italian_chars if char in text)
-        portuguese_score = sum(1 for word in portuguese_words if word in text_lower) + sum(1 for char in portuguese_chars if char in text)
         
-        # Return the language with the highest score
-        scores = {
-            'french': french_score,
-            'spanish': spanish_score,
-            'german': german_score,
-            'italian': italian_score,
-            'portuguese': portuguese_score
-        }
-        
-        max_score = max(scores.values())
-        if max_score > 0:
-            return max(scores, key=scores.get)
+        # Return French if detected, otherwise English
+        if french_score > 0:
+            return 'french'
         else:
             return 'english'  # Default to English
     
@@ -1622,10 +1593,6 @@ class ClaudeHandler:
         """Get language-specific instruction for the LLM."""
         language_instructions = {
             'french': "IMPORTANT: The user's question is in French. Please respond in French. Provide your analysis in fluent, natural French that matches the user's language level.",
-            'spanish': "IMPORTANT: The user's question is in Spanish. Please respond in Spanish. Provide your analysis in fluent, natural Spanish that matches the user's language level.",
-            'german': "IMPORTANT: The user's question is in German. Please respond in German. Provide your analysis in fluent, natural German that matches the user's language level.",
-            'italian': "IMPORTANT: The user's question is in Italian. Please respond in Italian. Provide your analysis in fluent, natural Italian that matches the user's language level.",
-            'portuguese': "IMPORTANT: The user's question is in Portuguese. Please respond in Portuguese. Provide your analysis in fluent, natural Portuguese that matches the user's language level.",
             'english': "IMPORTANT: The user's question is in English. Please respond in English. Provide your analysis in fluent, natural English."
         }
         
@@ -2559,7 +2526,7 @@ def search_web_live(query: str, num_results: int = 5) -> list:
         return []
 
 def generate_live_web_answer(question: str) -> str:
-    """Generate answer using live web search results."""
+    """Generate answer using live web search results with proper citations."""
     try:
         # Search the web live
         web_results = search_web_live(question, num_results=5)
@@ -2567,10 +2534,31 @@ def generate_live_web_answer(question: str) -> str:
         if not web_results:
             return "No live web results found for your question."
         
-        # Format web results for context
-        web_context = "\n\n".join([
-            f"Source: {result['title']}\n{result['snippet']}\nURL: {result['link']}"
-            for result in web_results
+        # Create numbered sources for better citation
+        sources = []
+        web_context_parts = []
+        
+        for i, result in enumerate(web_results, 1):
+            source_info = {
+                'number': i,
+                'title': result.get('title', 'Unknown Title'),
+                'url': result.get('link', ''),
+                'snippet': result.get('snippet', '')
+            }
+            sources.append(source_info)
+            
+            web_context_parts.append(
+                f"[Source {i}] {result.get('title', 'Unknown Title')}\n"
+                f"URL: {result.get('link', '')}\n"
+                f"Content: {result.get('snippet', '')}"
+            )
+        
+        web_context = "\n\n".join(web_context_parts)
+        
+        # Create sources list for citation
+        sources_list = "\n".join([
+            f"[{s['number']}] {s['title']} - {s['url']}"
+            for s in sources
         ])
         
         # Use OpenAI to generate answer from live web results
@@ -2581,11 +2569,32 @@ def generate_live_web_answer(question: str) -> str:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a financial consultant with access to live web information. Answer questions based on the provided web search results. CRITICAL: When asked about financial data, revenue, projections, or specific figures, ALWAYS lead with the most specific and detailed numerical information available. Do NOT start with vague summaries or general statements. If the context contains specific numbers, dates, or financial figures, present those FIRST. Only provide general commentary AFTER presenting the specific data. Always cite your sources and provide accurate, up-to-date information from the web. No one sentence answers. Always provide a detailed answer."
+                    "content": """You are a financial consultant with access to live web information. Answer questions based on the provided web search results.
+
+CRITICAL CITATION REQUIREMENTS:
+1. ALWAYS cite sources using [Source X] format when referencing information
+2. Include specific quotes or data points with their source numbers
+3. When presenting financial data, revenue, projections, or specific figures, lead with the most detailed numerical information available
+4. Do NOT start with vague summaries - present specific data FIRST
+5. Provide detailed, comprehensive answers (no one-sentence responses)
+6. Always end your response with a "Sources:" section listing all referenced sources
+
+Example citation format: "According to [Source 1], the company reported revenue of $2.5 billion in Q3 2024."
+
+IMPORTANT: Every factual claim, statistic, or quote must be attributed to a specific source number."""
                 },
                 {
                     "role": "user",
-                    "content": f"Live Web Search Results:\n{web_context}\n\nQuestion: {question}\n\nPlease answer based on the live web results above. Include source citations."
+                    "content": f"""Live Web Search Results:
+
+{web_context}
+
+Question: {question}
+
+Please answer based on the live web results above. Use [Source X] citations for all information and end with a "Sources:" section.
+
+Available Sources:
+{sources_list}"""
                 }
             ],
             max_tokens=16384,
