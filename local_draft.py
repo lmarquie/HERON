@@ -1,4 +1,3 @@
-# Import necessary libraries
 import os
 import faiss
 import fitz  # PyMuPDF
@@ -144,43 +143,122 @@ class TextProcessor:
             return f"Error extracting text from PowerPoint: {str(e)}"
 
     def extract_text_from_xlsx(self, path):
+        """Extract comprehensive, queryable content from Excel files, always including headers and row numbers in every chunk."""
         try:
             wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
             output = []
+            
             for ws in wb.worksheets:
                 output.append(f"\n=== Sheet: {ws.title} ===\n")
+                
                 # Get all rows as lists
                 rows = list(ws.iter_rows(values_only=True))
                 if not rows:
                     output.append("(Sheet is empty)\n")
                     continue
-                # Use first row as header if possible
-                headers = [str(cell) if cell is not None else "" for cell in rows[0]]
+                
+                # Use first row as header
+                headers = [str(cell) if cell is not None else f"Column_{i+1}" for i, cell in enumerate(rows[0])]
                 output.append(f"Columns: {', '.join(headers)}\n")
-                output.append(f"Rows: {len(rows)-1}\n")
-                # Show data types for each column (from first non-header row)
+                output.append(f"Total Rows: {len(rows)-1}\n")
+                
+                # Show data types from first few rows
                 if len(rows) > 1:
-                    types = [type(cell).__name__ if cell is not None else "None" for cell in rows[1]]
-                    output.append(f"Types: {', '.join(types)}\n")
-                # Output as markdown table (limit to first 20 rows)
-                output.append("| " + " | ".join(headers) + " |\n")
-                output.append("|" + "---|" * len(headers) + "\n")
-                for row in rows[1:21]:
-                    row_str = [str(cell) if cell is not None else "" for cell in row]
-                    output.append("| " + " | ".join(row_str) + " |\n")
-                if len(rows) > 21:
-                    output.append(f"... ({len(rows)-1-20} more rows not shown)\n")
+                    sample_types = []
+                    for col_idx in range(len(headers)):
+                        col_values = [rows[i][col_idx] for i in range(1, min(6, len(rows))) if rows[i][col_idx] is not None]
+                        if col_values:
+                            sample_types.append(type(col_values[0]).__name__)
+                        else:
+                            sample_types.append("None")
+                    output.append(f"Data Types: {', '.join(sample_types)}\n")
+                
+                # Process ALL data rows (not just first 20)
+                data_rows = rows[1:]
+                
+                # --- CHUNKING WITH HEADERS ---
+                chunk_size = 50
+                for chunk_start in range(0, len(data_rows), chunk_size):
+                    chunk_end = min(chunk_start + chunk_size, len(data_rows))
+                    chunk_rows = data_rows[chunk_start:chunk_end]
+                    
+                    # Always include headers at the start of each chunk
+                    output.append(f"\n--- Rows {chunk_start+1}-{chunk_end} ---\n")
+                    output.append(f"Columns: {', '.join(headers)}\n")  # <--- Always include headers
+
+                    # Add each row with row numbers and detailed formatting
+                    for row_idx, row in enumerate(chunk_rows, chunk_start + 1):
+                        row_data = []
+                        for col_idx, cell in enumerate(row):
+                            if cell is not None:
+                                # Format numbers nicely
+                                if isinstance(cell, (int, float)):
+                                    if isinstance(cell, int):
+                                        formatted_cell = f"{cell:,}"
+                                    else:
+                                        formatted_cell = f"{cell:.2f}" if cell != int(cell) else f"{cell:.0f}"
+                                else:
+                                    formatted_cell = str(cell)
+                                row_data.append(f"{headers[col_idx]}: {formatted_cell}")
+                            else:
+                                row_data.append(f"{headers[col_idx]}: (empty)")
+                        output.append(f"Row {row_idx}: {' | '.join(row_data)}\n")
+                
+                # Add statistical summary for numeric columns
+                output.append("\n=== STATISTICAL SUMMARY ===\n")
+                for col_idx, header in enumerate(headers):
+                    numeric_values = []
+                    for row in data_rows:
+                        if row[col_idx] is not None and isinstance(row[col_idx], (int, float)):
+                            numeric_values.append(row[col_idx])
+                    
+                    if numeric_values:
+                        output.append(f"{header}: Count={len(numeric_values)}, Min={min(numeric_values):.2f}, Max={max(numeric_values):.2f}, Avg={sum(numeric_values)/len(numeric_values):.2f}\n")
+                
+                # Add data relationships and patterns
+                output.append("\n=== DATA RELATIONSHIPS ===\n")
+                if len(data_rows) > 1:
+                    # Look for date columns
+                    date_columns = []
+                    for col_idx, header in enumerate(headers):
+                        if any('date' in header.lower() or 'time' in header.lower() for word in header.split()):
+                            date_columns.append((col_idx, header))
+                    
+                    if date_columns:
+                        output.append(f"Date columns found: {[col[1] for col in date_columns]}\n")
+                    
+                    # Look for numeric columns that might be related
+                    numeric_columns = []
+                    for col_idx, header in enumerate(headers):
+                        if any(isinstance(row[col_idx], (int, float)) for row in data_rows if row[col_idx] is not None):
+                            numeric_columns.append((col_idx, header))
+                    
+                    if len(numeric_columns) >= 2:
+                        output.append(f"Numeric columns for analysis: {[col[1] for col in numeric_columns]}\n")
+            
             return "\n".join(output)
+            
         except Exception as e:
-            # Fallback to pandas for .xls or if openpyxl fails
+            # Fallback to pandas
             try:
                 df = pd.read_excel(path, engine='openpyxl')
-                # Show first 20 rows as markdown
                 output = [f"Sheet: {getattr(df, 'sheet_name', 'N/A')} (via pandas)\n"]
-                output.append(df.head(20).to_markdown(index=False))
-                if len(df) > 20:
-                    output.append(f"... ({len(df)-20} more rows not shown)\n")
+                output.append(f"Shape: {df.shape}\n")
+                output.append(f"Columns: {list(df.columns)}\n")
+                output.append(f"Data Types: {df.dtypes.to_dict()}\n")
+                output.append("=== COMPLETE DATA ===\n")
+                
+                # Convert all data to string format for searchability
+                for idx, row in df.iterrows():
+                    row_data = [f"{col}: {val}" for col, val in row.items()]
+                    output.append(f"Row {idx+1}: {' | '.join(row_data)}\n")
+                
+                # Add statistical summary
+                output.append("\n=== STATISTICAL SUMMARY ===\n")
+                output.append(df.describe().to_string())
+                
                 return "\n".join(output)
+                
             except Exception as e2:
                 return f"Error extracting text from Excel: {str(e)}; {str(e2)}"
 
@@ -1581,31 +1659,20 @@ class QuestionHandler:
                     )
                 elif analysis_mode == "Financial Excel Document":
                     system_prompt = (
-                        "You are a senior financial data analyst and Excel expert with deep expertise in financial modeling, data analysis, and spreadsheet interpretation. "
-                        "Your Excel analysis must be EXTREMELY thorough and comprehensive - provide ChatGPT-quality detailed responses. "
-                        "Write in-depth paragraph reports, NOT bullet points or brief summaries. Use flowing, detailed paragraphs that provide comprehensive analysis.\n\n"
-                        "For every Excel document you analyze:\n\n"
-                        "1. **Document Structure**: Write comprehensive paragraphs covering overview of worksheets, data organization, and key tables with full structural analysis\n"
-                        "2. **Data Summary**: Write detailed paragraphs providing comprehensive summary of all financial data and key metrics with full data interpretation\n"
-                        "3. **Financial Performance Analysis**: Write comprehensive paragraphs covering:\n"
-                        "   Revenue analysis by period, segment, or product with detailed performance drivers and trends\n"
-                        "   Cost structure and profitability breakdown with comprehensive cost analysis and margin drivers\n"
-                        "   Cash flow analysis and working capital trends with detailed cash flow interpretation\n"
-                        "   Balance sheet analysis and financial position with comprehensive balance sheet assessment\n"
-                        "4. **Trend Analysis**: Write detailed paragraphs identifying patterns, growth rates, and anomalies in the data with comprehensive trend interpretation\n"
-                        "5. **Key Metrics Calculation**: Write comprehensive paragraphs covering important ratios, KPIs, and performance indicators with detailed metric analysis\n"
-                        "6. **Data Quality Assessment**: Write detailed paragraphs covering accuracy, completeness, and reliability of the data with comprehensive quality analysis\n"
-                        "7. **Variance Analysis**: Write comprehensive paragraphs comparing actual vs. budget, period-over-period changes with detailed variance interpretation\n"
-                        "8. **Forecasting Insights**: Write detailed paragraphs covering projections, assumptions, and future outlook with comprehensive forecasting analysis\n"
-                        "9. **Risk Indicators**: Write comprehensive paragraphs covering financial stress points, concerning trends, red flags with detailed risk analysis\n"
-                        "10. **Actionable Insights**: Write detailed paragraphs with specific recommendations based on the data with comprehensive implementation guidance\n"
-                        "11. **Data Visualization Suggestions**: Write comprehensive paragraphs covering charts and graphs that would enhance understanding with detailed visualization analysis\n"
-                        "12. **Model Validation**: Write detailed paragraphs covering assessment of formulas, calculations, and model integrity with comprehensive validation analysis\n\n"
-                        "Always cite the document source (filename and page/chunk) for every data point or calculation. "
-                        "Use specific numbers, percentages, and formulas. Explain the meaning behind the data in detailed paragraphs. "
-                        "Highlight important trends and provide context for all metrics in comprehensive paragraph format. "
-                        "Write in flowing, detailed paragraphs that read like a professional financial data analysis report. "
-                        "Aim for responses that are 1000-1800 words minimum, with comprehensive data analysis in paragraph format."
+                        "You are a senior financial data analyst and Excel expert. Analyze the COMPLETE data content provided, not just summaries.\n\n"
+                        "For detailed questions about specific data points:\n"
+                        "- Reference exact row numbers and column names\n"
+                        "- Provide specific values, not ranges\n"
+                        "- Calculate exact percentages, ratios, and trends\n"
+                        "- Identify specific patterns in the data\n"
+                        "- Answer questions about individual cells, rows, or columns\n\n"
+                        "When analyzing:\n"
+                        "1. **Data Point Analysis**: Answer questions about specific values, cells, or rows\n"
+                        "2. **Calculations**: Perform exact calculations on the data\n"
+                        "3. **Trends**: Identify specific trends with exact numbers\n"
+                        "4. **Comparisons**: Compare specific data points or periods\n"
+                        "5. **Patterns**: Find specific patterns in the data\n\n"
+                        "Always provide specific, actionable insights based on the actual data content."
                     )
                 else:
                     system_prompt = (
