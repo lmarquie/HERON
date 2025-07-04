@@ -1608,8 +1608,8 @@ class QuestionHandler:
                     for chunk in results
                 ])
                 
-                # Detect the language of the question
-                detected_lang = self._detect_language(question)
+                # Check if question is in French
+                is_french = self._is_french_question(question)
                 
                 # Choose system prompt based on analysis_mode
                 if analysis_mode == "Financial Document":
@@ -1730,12 +1730,9 @@ class QuestionHandler:
                 enhanced_question = f"{system_prompt}\n\nUser question: {question}\n"
                 answer = self.llm.generate_answer(enhanced_question, context, normalize_length=False)
                 
-                # Translate answer to match the question language
-                if detected_lang == 'french':
+                # Translate to French if question was in French
+                if is_french:
                     answer = self._translate_to_french(answer)
-                elif detected_lang == 'english':
-                    # Answer is already in English, no translation needed
-                    pass
                 
                 top_chunk = results[0] if results else None
                 self.conversation_history.append({
@@ -1804,70 +1801,26 @@ class QuestionHandler:
             'last_question_time': self.conversation_history[-1]['timestamp'] if self.conversation_history else None
         }
 
-    def _detect_language(self, text: str) -> str:
-        """Detect if the text is in French or English."""
-        text_lower = text.lower()
-        
-        # French indicators
-        french_words = [
-            'comment', 'pourquoi', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles',
-            'est-ce', 'sont-ce', 'avez-vous', 'pouvez-vous', 'voulez-vous', 'allez-vous',
-            'comment allez-vous', 'comment ça va', 'ça va', 'bonjour', 'salut', 'au revoir', 'merci',
-            's\'il vous plaît', 's\'il te plaît', 'excusez-moi', 'désolé', 'pardon'
-        ]
-        
-        french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
-        french_patterns = ['est-ce que', 'qu\'est-ce que', 'comment', 'pourquoi', 'quand', 'où']
-        
-        # English indicators
-        english_words = [
-            'what', 'when', 'where', 'who', 'why', 'how', 'which', 'whose', 'whom',
-            'can you', 'could you', 'would you', 'will you', 'do you', 'are you',
-            'please', 'thank you', 'thanks', 'hello', 'hi', 'goodbye', 'bye'
-        ]
-        
-        # Calculate scores
-        french_word_count = sum(1 for word in french_words if f' {word} ' in f' {text_lower} ' or text_lower.startswith(word) or text_lower.endswith(word))
-        french_char_count = sum(1 for char in french_chars if char in text)
-        french_pattern_count = sum(1 for pattern in french_patterns if pattern in text_lower)
-        french_score = french_word_count + french_char_count + french_pattern_count
-        
-        english_word_count = sum(1 for word in english_words if f' {word} ' in f' {text_lower} ' or text_lower.startswith(word) or text_lower.endswith(word))
-        english_score = english_word_count
-        
-        # Determine language (require at least 2 indicators for confidence)
-        if french_score >= 2:
-            return 'french'
-        elif english_score >= 2:
-            return 'english'
-        else:
-            # Default to English if unclear
-            return 'english'
-
     def _is_french_question(self, text: str) -> bool:
-        """Detect if the question is in French (for backward compatibility)."""
-        return self._detect_language(text) == 'french'
+        text_lower = text.lower()
+        french_words = ['le', 'la', 'les', 'un', 'une', 'des', 'et', 'ou', 'pour', 'avec', 'sur', 'dans', 'par', 'de', 'du', 'que', 'qui', 'quoi', 'comment', 'pourquoi', 'quand', 'où']
+        french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
+        
+        french_score = sum(1 for word in french_words if word in text_lower) + sum(1 for char in french_chars if char in text)
+        return french_score > 0
 
-    def _translate_text(self, text: str, source_lang: str, target_lang: str) -> str:
-        """Translate text between languages using Deep Translator."""
+    def _translate_to_french(self, text: str) -> str:
+        """Translate English text to French using Deep Translator."""
         try:
             from deep_translator import GoogleTranslator
             
-            translator = GoogleTranslator(source=source_lang, target=target_lang)
+            translator = GoogleTranslator(source='en', target='fr')
             result = translator.translate(text)
             return result
 
         except Exception as e:
-            logger.error(f"Error translating from {source_lang} to {target_lang}: {str(e)}")
+            logger.error(f"Error translating to French: {str(e)}")
             return text  # Return original text if translation fails
-
-    def _translate_to_french(self, text: str) -> str:
-        """Translate English text to French (for backward compatibility)."""
-        return self._translate_text(text, 'en', 'fr')
-
-    def _translate_to_english(self, text: str) -> str:
-        """Translate French text to English."""
-        return self._translate_text(text, 'fr', 'en')
 
 ### =================== Session Manager =================== ###
 class SessionManager:
