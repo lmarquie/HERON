@@ -1501,9 +1501,6 @@ class ClaudeHandler:
             if cache_key in self.response_cache:
                 return self.response_cache[cache_key]
             
-            # Detect language of the question
-            detected_language = self._detect_language(question)
-            
             # Set maximum tokens for both input and output
             max_input_tokens = 128000  # Maximum context window for GPT-4o
             max_output_tokens = 16384   # Maximum response tokens
@@ -1529,14 +1526,10 @@ class ClaudeHandler:
                 else:
                     return "Error: Question too long for processing."
             
-            # Add language instruction to system prompt
-            language_instruction = self._get_language_instruction(detected_language)
-            enhanced_system_prompt = f"{self.system_prompt}\n\n{language_instruction}"
-            
             messages = [
                 {
                     "role": "system",
-                    "content": enhanced_system_prompt
+                    "content": self.system_prompt
                 },
                 {
                     "role": "user",
@@ -1570,33 +1563,6 @@ class ClaudeHandler:
         except Exception as e:
             logger.error(f"Error generating answer: {str(e)}")
             return f"Error generating answer: {str(e)}"
-
-    def _detect_language(self, text: str) -> str:
-        """Detect the language of the input text."""
-        # Simple language detection based on common words and characters
-        text_lower = text.lower()
-        
-        # French detection
-        french_words = ['le', 'la', 'les', 'un', 'une', 'des', 'et', 'ou', 'pour', 'avec', 'sur', 'dans', 'par', 'de', 'du', 'que', 'qui', 'quoi', 'comment', 'pourquoi', 'quand', 'où']
-        french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
-        
-        # Count matches for French
-        french_score = sum(1 for word in french_words if word in text_lower) + sum(1 for char in french_chars if char in text)
-        
-        # Return French if detected, otherwise English
-        if french_score > 0:
-            return 'french'
-        else:
-            return 'english'  # Default to English
-    
-    def _get_language_instruction(self, language: str) -> str:
-        """Get language-specific instruction for the LLM."""
-        language_instructions = {
-            'french': "IMPORTANT: The user's question is in French. Please respond in French. Provide your analysis in fluent, natural French that matches the user's language level.",
-            'english': "IMPORTANT: The user's question is in English. Please respond in English. Provide your analysis in fluent, natural English."
-        }
-        
-        return language_instructions.get(language, language_instructions['english'])
 
     def _get_response_length(self, question: str, normalize_length: bool) -> int:
         """Determine appropriate response length based on question type."""
@@ -2526,7 +2492,7 @@ def search_web_live(query: str, num_results: int = 5) -> list:
         return []
 
 def generate_live_web_answer(question: str) -> str:
-    """Generate answer using live web search results with proper citations."""
+    """Generate answer using live web search results."""
     try:
         # Search the web live
         web_results = search_web_live(question, num_results=5)
@@ -2534,31 +2500,10 @@ def generate_live_web_answer(question: str) -> str:
         if not web_results:
             return "No live web results found for your question."
         
-        # Create numbered sources for better citation
-        sources = []
-        web_context_parts = []
-        
-        for i, result in enumerate(web_results, 1):
-            source_info = {
-                'number': i,
-                'title': result.get('title', 'Unknown Title'),
-                'url': result.get('link', ''),
-                'snippet': result.get('snippet', '')
-            }
-            sources.append(source_info)
-            
-            web_context_parts.append(
-                f"[Source {i}] {result.get('title', 'Unknown Title')}\n"
-                f"URL: {result.get('link', '')}\n"
-                f"Content: {result.get('snippet', '')}"
-            )
-        
-        web_context = "\n\n".join(web_context_parts)
-        
-        # Create sources list for citation
-        sources_list = "\n".join([
-            f"[{s['number']}] {s['title']} - {s['url']}"
-            for s in sources
+        # Format web results for context
+        web_context = "\n\n".join([
+            f"Source: {result['title']}\n{result['snippet']}\nURL: {result['link']}"
+            for result in web_results
         ])
         
         # Use OpenAI to generate answer from live web results
@@ -2569,32 +2514,11 @@ def generate_live_web_answer(question: str) -> str:
             messages=[
                 {
                     "role": "system",
-                    "content": """You are a financial consultant with access to live web information. Answer questions based on the provided web search results.
-
-CRITICAL CITATION REQUIREMENTS:
-1. ALWAYS cite sources using [Source X] format when referencing information
-2. Include specific quotes or data points with their source numbers
-3. When presenting financial data, revenue, projections, or specific figures, lead with the most detailed numerical information available
-4. Do NOT start with vague summaries - present specific data FIRST
-5. Provide detailed, comprehensive answers (no one-sentence responses)
-6. Always end your response with a "Sources:" section listing all referenced sources
-
-Example citation format: "According to [Source 1], the company reported revenue of $2.5 billion in Q3 2024."
-
-IMPORTANT: Every factual claim, statistic, or quote must be attributed to a specific source number."""
+                    "content": "You are a financial consultant with access to live web information. Answer questions based on the provided web search results. CRITICAL: When asked about financial data, revenue, projections, or specific figures, ALWAYS lead with the most specific and detailed numerical information available. Do NOT start with vague summaries or general statements. If the context contains specific numbers, dates, or financial figures, present those FIRST. Only provide general commentary AFTER presenting the specific data. Always cite your sources and provide accurate, up-to-date information from the web. No one sentence answers. Always provide a detailed answer."
                 },
                 {
                     "role": "user",
-                    "content": f"""Live Web Search Results:
-
-{web_context}
-
-Question: {question}
-
-Please answer based on the live web results above. Use [Source X] citations for all information and end with a "Sources:" section.
-
-Available Sources:
-{sources_list}"""
+                    "content": f"Live Web Search Results:\n{web_context}\n\nQuestion: {question}\n\nPlease answer based on the live web results above. Include source citations."
                 }
             ],
             max_tokens=16384,
