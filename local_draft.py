@@ -1814,93 +1814,9 @@ class QuestionHandler:
         try:
             from deep_translator import GoogleTranslator
             
-            # For very long texts, use much smaller chunks
-            if len(text) > 4000:  # More conservative limit
-                # Split into much smaller chunks by sentences first, then words
-                import re
-                
-                # Split by sentences first
-                sentences = re.split(r'[.!?]+', text)
-                chunks = []
-                current_chunk = ""
-                max_chunk_size = 2000  # Much smaller chunks for safety
-                
-                for sentence in sentences:
-                    sentence = sentence.strip()
-                    if not sentence:
-                        continue
-                        
-                    # If adding this sentence would exceed the limit, save current chunk and start new one
-                    if len(current_chunk + " " + sentence) > max_chunk_size:
-                        if current_chunk:
-                            chunks.append(current_chunk.strip())
-                        current_chunk = sentence
-                    else:
-                        current_chunk += " " + sentence if current_chunk else sentence
-                
-                # Add the last chunk
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                
-                # If any chunk is still too long, split it further by words
-                final_chunks = []
-                for chunk in chunks:
-                    if len(chunk) > max_chunk_size:
-                        # Split by words
-                        words = chunk.split()
-                        word_chunk = ""
-                        for word in words:
-                            if len(word_chunk + " " + word) > max_chunk_size:
-                                if word_chunk:
-                                    final_chunks.append(word_chunk.strip())
-                                word_chunk = word
-                            else:
-                                word_chunk += " " + word if word_chunk else word
-                        if word_chunk:
-                            final_chunks.append(word_chunk.strip())
-                    else:
-                        final_chunks.append(chunk)
-                
-                # Translate each chunk
-                translator = GoogleTranslator(source='en', target='fr')
-                translated_chunks = []
-                
-                for i, chunk in enumerate(final_chunks):
-                    try:
-                        # Add a delay between chunks to avoid rate limiting
-                        if i > 0:
-                            import time
-                            time.sleep(0.2)  # Longer delay for safety
-                        
-                        # Skip empty chunks
-                        if not chunk.strip():
-                            continue
-                            
-                        translated_chunk = translator.translate(chunk)
-                        translated_chunks.append(translated_chunk)
-                    except Exception as chunk_error:
-                        logger.error(f"Error translating chunk {i} (length: {len(chunk)}): {str(chunk_error)}")
-                        # If chunk is still too long, try to split it even further
-                        if "Text length need to be between 0 and 5000 characters" in str(chunk_error):
-                            # Split into even smaller pieces
-                            sub_chunks = [chunk[j:j+1500] for j in range(0, len(chunk), 1500)]
-                            for sub_chunk in sub_chunks:
-                                try:
-                                    translated_sub_chunk = translator.translate(sub_chunk)
-                                    translated_chunks.append(translated_sub_chunk)
-                                    time.sleep(0.2)
-                                except Exception as sub_error:
-                                    logger.error(f"Error translating sub-chunk: {str(sub_error)}")
-                                    translated_chunks.append(sub_chunk)  # Keep original
-                        else:
-                            translated_chunks.append(chunk)  # Keep original if translation fails
-                
-                return ' '.join(translated_chunks)
-            else:
-                # Text is short enough, translate normally
-                translator = GoogleTranslator(source='en', target='fr')
-                result = translator.translate(text)
-                return result
+            translator = GoogleTranslator(source='en', target='fr')
+            result = translator.translate(text)
+            return result
 
         except Exception as e:
             logger.error(f"Error translating to French: {str(e)}")
