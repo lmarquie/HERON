@@ -661,6 +661,9 @@ def submit_chat_message():
         else:
             # Add loading indicator for all question processing
             with st.spinner("Thinking..."):
+                # Check if question is in French
+                is_french = _is_french_question(chat_question)
+                
                 # Process based on mode - simplified logic
                 if st.session_state.get('internet_mode', False):
                     # Use live web search - this method already adds to conversation history
@@ -668,6 +671,14 @@ def submit_chat_message():
                 else:
                     # Use document search - this method already adds to conversation history
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True, analysis_mode=analysis_mode)
+                
+                # Translate to French if question was in French
+                if is_french:
+                    answer = _translate_to_french(answer)
+                    # Update the conversation history with the translated answer
+                    conversation_history = st.session_state.rag_system.get_conversation_history()
+                    if conversation_history:
+                        conversation_history[-1]['answer'] = answer
             
             # Don't add to conversation history here since the RAG methods already do it
             st.rerun()
@@ -1143,9 +1154,45 @@ def _translate_to_french(text: str) -> str:
     try:
         from deep_translator import GoogleTranslator
         
-        translator = GoogleTranslator(source='en', target='fr')
-        result = translator.translate(text)
-        return result
+        # Check if text is too long (deep-translator has a 5000 character limit)
+        if len(text) > 4500:  # Leave some buffer
+            # Split into chunks and translate each chunk
+            chunks = []
+            current_chunk = ""
+            
+            # Split by sentences to avoid breaking mid-sentence
+            sentences = text.split('. ')
+            
+            for sentence in sentences:
+                if len(current_chunk + sentence) < 4000:
+                    current_chunk += sentence + '. '
+                else:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    current_chunk = sentence + '. '
+            
+            # Add the last chunk
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            
+            # Translate each chunk
+            translator = GoogleTranslator(source='en', target='fr')
+            translated_chunks = []
+            
+            for chunk in chunks:
+                try:
+                    translated_chunk = translator.translate(chunk)
+                    translated_chunks.append(translated_chunk)
+                except Exception as chunk_error:
+                    logger.error(f"Error translating chunk: {str(chunk_error)}")
+                    translated_chunks.append(chunk)  # Keep original if translation fails
+            
+            return ' '.join(translated_chunks)
+        else:
+            # Text is short enough, translate normally
+            translator = GoogleTranslator(source='en', target='fr')
+            result = translator.translate(text)
+            return result
 
     except Exception as e:
         logger.error(f"Error translating to French: {str(e)}")
