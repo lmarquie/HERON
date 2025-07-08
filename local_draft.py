@@ -1310,7 +1310,65 @@ class VectorStore:
                 else:
                     logger.warning("No Hugging Face token found in Streamlit secrets - using free tier")
                 
-                # ... rest of your existing initialization code ...
+                # Force CPU usage and handle meta tensor issue
+                logger.info("Loading sentence transformers model...")
+                
+                # Set environment variables to force CPU usage
+                os.environ['CUDA_VISIBLE_DEVICES'] = ''
+                
+                # Try different approaches to handle the device issue
+                try:
+                    # Method 1: Load with explicit CPU device and trust_remote_code
+                    VectorStore._model = SentenceTransformer(
+                        'all-MiniLM-L6-v2', 
+                        device='cpu',
+                        trust_remote_code=True
+                    )
+                    logger.info("Method 1 successful: Loaded with CPU device")
+                    
+                except Exception as e1:
+                    logger.warning(f"Method 1 failed: {e1}")
+                    try:
+                        # Method 2: Load normally then move to CPU with to_empty
+                        VectorStore._model = SentenceTransformer('all-MiniLM-L6-v2')
+                        if hasattr(VectorStore._model, 'to_empty'):
+                            VectorStore._model.to_empty(device='cpu')
+                        else:
+                            VectorStore._model.to('cpu')
+                        logger.info("Method 2 successful: Used to_empty")
+                        
+                    except Exception as e2:
+                        logger.warning(f"Method 2 failed: {e2}")
+                        try:
+                            # Method 3: Load with specific torch settings
+                            torch.set_default_device('cpu')
+                            VectorStore._model = SentenceTransformer('all-MiniLM-L6-v2')
+                            VectorStore._model.to('cpu')
+                            logger.info("Method 3 successful: Used torch default device")
+                            
+                        except Exception as e3:
+                            logger.warning(f"Method 3 failed: {e3}")
+                            # Method 4: Last resort - try with different model
+                            try:
+                                VectorStore._model = SentenceTransformer('paraphrase-MiniLM-L3-v2')
+                                VectorStore._model.to('cpu')
+                                logger.info("Method 4 successful: Used alternative model")
+                            except Exception as e4:
+                                logger.error(f"All methods failed. Last error: {e4}")
+                                self.initialized = False
+                                return
+                
+                # Verify the model is working
+                try:
+                    test_embedding = VectorStore._model.encode(['test'], convert_to_tensor=False)
+                    logger.info(f"Model test successful. Embedding shape: {test_embedding.shape}")
+                except Exception as e:
+                    logger.error(f"Model test failed: {e}")
+                    self.initialized = False
+                    return
+                
+                logger.info("Hugging Face embedding model initialized successfully")
+                
             except Exception as e:
                 logger.error(f"Failed to initialize Hugging Face model: {str(e)}")
                 self.initialized = False
