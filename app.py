@@ -699,9 +699,24 @@ def _translate_text(text: str, source_lang: str, target_lang: str) -> str:
                                 time.sleep(0.2)
                             except Exception as sub_error:
                                 logger.error(f"Error translating sub-chunk: {str(sub_error)}")
-                                translated_chunks.append(sub_chunk)  # Keep original
+                                # If translation fails for sub-chunk, try one more time with smaller size
+                                try:
+                                    smaller_chunks = [sub_chunk[j:j+800] for j in range(0, len(sub_chunk), 800)]
+                                    for small_chunk in smaller_chunks:
+                                        try:
+                                            translated_small_chunk = translator.translate(small_chunk)
+                                            translated_chunks.append(translated_small_chunk)
+                                            time.sleep(0.2)
+                                        except Exception as small_error:
+                                            logger.error(f"Error translating small chunk: {str(small_error)}")
+                                            # If all translation attempts fail, return original text to avoid mixed language
+                                            return text
+                                except Exception as final_error:
+                                    logger.error(f"Final translation attempt failed: {str(final_error)}")
+                                    return text
                     else:
-                        translated_chunks.append(chunk)  # Keep original if translation fails
+                        # If translation fails completely, return original text to avoid mixed language
+                        return text
             
             return ' '.join(translated_chunks)
         else:
@@ -1179,7 +1194,12 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("PDF Translation")
     
-
+    # Add formatting options
+    col1, col2 = st.columns(2)
+    with col1:
+        preserve_formatting = st.checkbox("Preserve Formatting", value=True, help="Keep bold, italic, headings, and layout structure")
+    with col2:
+        show_original = st.checkbox("Include Original Text", value=True, help="Include original text in the translated PDF")
     
     # Always show the button, but check for PDF files when clicked
     translate_button = st.button("Translate PDF to French", use_container_width=True, type="primary")
