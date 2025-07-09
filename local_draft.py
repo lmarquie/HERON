@@ -1949,7 +1949,7 @@ class PDFTranslationProcessor:
         os.makedirs(self.temp_dir, exist_ok=True)
         
     def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract all text from a PDF file."""
+        """Extract all text from a PDF file with formatting information."""
         try:
             import fitz  # PyMuPDF
             
@@ -1962,9 +1962,48 @@ class PDFTranslationProcessor:
             for page_num in range(len(doc)):
                 try:
                     page = doc.load_page(page_num)
-                    text = page.get_text()
-                    if text.strip():
-                        text_content.append(f"Page {page_num + 1}:\n{text}")
+                    
+                    # Get text with formatting information
+                    text_dict = page.get_text("dict")
+                    page_text = []
+                    
+                    # Process text blocks to preserve formatting
+                    for block in text_dict.get("blocks", []):
+                        if "lines" in block:
+                            for line in block["lines"]:
+                                line_text = []
+                                for span in line.get("spans", []):
+                                    text = span.get("text", "").strip()
+                                    if text:
+                                        # Preserve font information
+                                        font = span.get("font", "unknown")
+                                        size = span.get("size", 12)
+                                        flags = span.get("flags", 0)
+                                        
+                                        # Add formatting markers
+                                        if flags & 2**4:  # Bold
+                                            text = f"**{text}**"
+                                        if flags & 2**1:  # Italic
+                                            text = f"*{text}*"
+                                        if size > 14:  # Large text (likely headings)
+                                            text = f"# {text}"
+                                        elif size > 12:  # Medium text (likely subheadings)
+                                            text = f"## {text}"
+                                        
+                                        line_text.append(text)
+                                
+                                if line_text:
+                                    page_text.append(" ".join(line_text))
+                    
+                    # Fallback to simple text extraction if formatting extraction fails
+                    if not page_text:
+                        text = page.get_text()
+                        if text.strip():
+                            page_text = [text]
+                    
+                    if page_text:
+                        text_content.append(f"Page {page_num + 1}:\n" + "\n".join(page_text))
+                        
                 except Exception as e:
                     logger.warning(f"Error extracting text from page {page_num + 1}: {str(e)}")
                     continue
@@ -1972,7 +2011,7 @@ class PDFTranslationProcessor:
             doc.close()
             
             full_text = "\n\n".join(text_content)
-            logger.info(f"Extracted {len(full_text)} characters from PDF")
+            logger.info(f"Extracted {len(full_text)} characters from PDF with formatting")
             return full_text
             
         except Exception as e:
@@ -2146,15 +2185,42 @@ class PDFTranslationProcessor:
             story.append(subtitle)
             story.append(Spacer(1, 15))
             
-            # Split translated text into paragraphs for better formatting
+            # Split translated text into paragraphs and preserve formatting
             paragraphs = translated_text.split('\n\n')
             
             for para in paragraphs:
                 if para.strip():
-                    # Clean up the paragraph
-                    clean_para = para.strip().replace('\n', ' ')
-                    if clean_para:
-                        p = Paragraph(clean_para, body_style)
+                    # Process formatting markers
+                    clean_para = para.strip()
+                    
+                    # Handle markdown-style formatting
+                    if clean_para.startswith('# '):
+                        # Main heading
+                        heading_text = clean_para[2:].replace('\n', ' ')
+                        p = Paragraph(heading_text, title_style)
+                        story.append(p)
+                        story.append(Spacer(1, 20))
+                    elif clean_para.startswith('## '):
+                        # Subheading
+                        heading_text = clean_para[3:].replace('\n', ' ')
+                        p = Paragraph(heading_text, subtitle_style)
+                        story.append(p)
+                        story.append(Spacer(1, 15))
+                    else:
+                        # Regular paragraph with potential bold/italic formatting
+                        # Replace markdown formatting with HTML tags for reportlab
+                        formatted_para = clean_para
+                        formatted_para = formatted_para.replace('**', '<b>').replace('**', '</b>')
+                        formatted_para = formatted_para.replace('*', '<i>').replace('*', '</i>')
+                        formatted_para = formatted_para.replace('\n', ' ')
+                        
+                        if '<b>' in formatted_para or '<i>' in formatted_para:
+                            # Use HTML-style paragraph for formatting
+                            p = Paragraph(formatted_para, body_style)
+                        else:
+                            # Regular paragraph
+                            p = Paragraph(formatted_para, body_style)
+                        
                         story.append(p)
                         story.append(Spacer(1, 12))
             
@@ -2204,10 +2270,16 @@ class PDFTranslationProcessor:
             logger.info("Step 2: Translating text to French...")
             translated_text = self.translate_text_to_french(original_text)
             
-            # Step 3: Create translated PDF
-            logger.info("Step 3: Creating translated PDF...")
+            # Step 3: Create translated PDF with enhanced formatting
+            logger.info("Step 3: Creating translated PDF with enhanced formatting...")
             original_filename = os.path.basename(pdf_path)
-            translated_pdf_path = self.create_translated_pdf(original_text, translated_text, original_filename)
+            
+            # Try to create formatted PDF first, fallback to simple if it fails
+            try:
+                translated_pdf_path = self.create_formatted_translated_pdf(pdf_path, translated_text, original_filename)
+            except Exception as e:
+                logger.warning(f"Formatted PDF creation failed, using simple version: {str(e)}")
+                translated_pdf_path = self.create_translated_pdf(original_text, translated_text, original_filename)
             
             # Return results
             result = {
@@ -2238,6 +2310,187 @@ class PDFTranslationProcessor:
         if total_chunks == 0:
             return 0.0
         return (current_chunk / total_chunks) * 100
+    
+    def create_formatted_translated_pdf(self, original_pdf_path: str, translated_text: str, original_filename: str) -> str:
+        """Create a translated PDF that better preserves the original layout and formatting."""
+        try:
+            import fitz  # PyMuPDF
+            from reportlab.lib.pagesizes import letter, A4
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            from reportlab.lib.colors import black, blue, red, gray, white
+            from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
+            
+            # Create PDF filename
+            base_name = os.path.splitext(original_filename)[0]
+            pdf_filename = f"{base_name}_traduit_formatté.pdf"
+            pdf_path = os.path.join(self.output_dir, pdf_filename)
+            
+            # Create the PDF document
+            doc = SimpleDocTemplate(pdf_path, pagesize=A4)
+            story = []
+            
+            # Get styles
+            styles = getSampleStyleSheet()
+            
+            # Create enhanced styles
+            title_style = ParagraphStyle(
+                'EnhancedTitle',
+                parent=styles['Heading1'],
+                fontSize=20,
+                spaceAfter=30,
+                alignment=TA_CENTER,
+                textColor=blue,
+                fontName='Helvetica-Bold'
+            )
+            
+            subtitle_style = ParagraphStyle(
+                'EnhancedSubtitle',
+                parent=styles['Heading2'],
+                fontSize=16,
+                spaceAfter=20,
+                textColor=red,
+                fontName='Helvetica-Bold'
+            )
+            
+            header_style = ParagraphStyle(
+                'EnhancedHeader',
+                parent=styles['Heading3'],
+                fontSize=14,
+                spaceAfter=15,
+                textColor=black,
+                fontName='Helvetica-Bold'
+            )
+            
+            body_style = ParagraphStyle(
+                'EnhancedBody',
+                parent=styles['Normal'],
+                fontSize=12,
+                spaceAfter=12,
+                alignment=TA_JUSTIFY,
+                textColor=black,
+                fontName='Helvetica'
+            )
+            
+            # Add title
+            title = Paragraph(f"Document Traduit avec Formatage: {original_filename}", title_style)
+            story.append(title)
+            story.append(Spacer(1, 20))
+            
+            # Add metadata table
+            metadata_data = [
+                ['Fichier Original', original_filename],
+                ['Date de Traduction', datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
+                ['Langue Source', 'Détectée automatiquement'],
+                ['Langue Cible', 'Français'],
+                ['Préservation du Formatage', 'Oui']
+            ]
+            
+            metadata_table = Table(metadata_data, colWidths=[2*inch, 4*inch])
+            metadata_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (0, -1), gray),
+                ('TEXTCOLOR', (0, 0), (0, -1), black),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                ('BACKGROUND', (1, 0), (1, -1), white),
+                ('GRID', (0, 0), (-1, -1), 1, black)
+            ]))
+            story.append(metadata_table)
+            story.append(Spacer(1, 30))
+            
+            # Add translated text section with enhanced formatting
+            subtitle = Paragraph("Texte Traduit en Français (avec Formatage Préservé)", subtitle_style)
+            story.append(subtitle)
+            story.append(Spacer(1, 15))
+            
+            # Process translated text with formatting
+            paragraphs = translated_text.split('\n\n')
+            
+            for para in paragraphs:
+                if para.strip():
+                    clean_para = para.strip()
+                    
+                    # Enhanced formatting detection
+                    if clean_para.startswith('# '):
+                        # Main heading
+                        heading_text = clean_para[2:].replace('\n', ' ')
+                        p = Paragraph(heading_text, title_style)
+                        story.append(p)
+                        story.append(Spacer(1, 20))
+                    elif clean_para.startswith('## '):
+                        # Subheading
+                        heading_text = clean_para[3:].replace('\n', ' ')
+                        p = Paragraph(heading_text, subtitle_style)
+                        story.append(p)
+                        story.append(Spacer(1, 15))
+                    elif clean_para.startswith('### '):
+                        # Section header
+                        header_text = clean_para[4:].replace('\n', ' ')
+                        p = Paragraph(header_text, header_style)
+                        story.append(p)
+                        story.append(Spacer(1, 12))
+                    else:
+                        # Regular paragraph with formatting
+                        formatted_para = clean_para
+                        
+                        # Handle bold text
+                        formatted_para = formatted_para.replace('**', '<b>').replace('**', '</b>')
+                        
+                        # Handle italic text
+                        formatted_para = formatted_para.replace('*', '<i>').replace('*', '</i>')
+                        
+                        # Handle line breaks
+                        formatted_para = formatted_para.replace('\n', '<br/>')
+                        
+                        if '<b>' in formatted_para or '<i>' in formatted_para or '<br/>' in formatted_para:
+                            # Use HTML-style paragraph for rich formatting
+                            p = Paragraph(formatted_para, body_style)
+                        else:
+                            # Regular paragraph
+                            p = Paragraph(formatted_para, body_style)
+                        
+                        story.append(p)
+                        story.append(Spacer(1, 12))
+            
+            # Add page break
+            story.append(PageBreak())
+            
+            # Add original text section (simplified)
+            subtitle2 = Paragraph("Texte Original (Extrait)", subtitle_style)
+            story.append(subtitle2)
+            story.append(Spacer(1, 15))
+            
+            # Extract and show first few paragraphs of original text
+            try:
+                doc_original = fitz.open(original_pdf_path)
+                original_text = ""
+                for page_num in range(min(3, len(doc_original))):  # First 3 pages
+                    page = doc_original.load_page(page_num)
+                    text = page.get_text()
+                    if text.strip():
+                        original_text += f"Page {page_num + 1}:\n{text[:500]}...\n\n"
+                doc_original.close()
+                
+                # Show original text preview
+                p = Paragraph(original_text[:1000] + "...", body_style)
+                story.append(p)
+                
+            except Exception as e:
+                p = Paragraph(f"Impossible d'extraire le texte original: {str(e)}", body_style)
+                story.append(p)
+            
+            # Build the PDF
+            doc.build(story)
+            
+            logger.info(f"Formatted translated PDF created: {pdf_path}")
+            return pdf_path
+            
+        except Exception as e:
+            logger.error(f"Error creating formatted translated PDF: {str(e)}")
+            raise
 
 ### =================== Main RAG System =================== ###
 class RAGSystem:
