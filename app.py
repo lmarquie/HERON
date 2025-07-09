@@ -1179,7 +1179,12 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("PDF Translation")
     
-
+    # Add formatting options
+    col1, col2 = st.columns(2)
+    with col1:
+        preserve_formatting = st.checkbox("Preserve Formatting", value=True, help="Keep bold, italic, headings, and layout structure")
+    with col2:
+        show_original = st.checkbox("Include Original Text", value=True, help="Include original text in the translated PDF")
     
     # Always show the button, but check for PDF files when clicked
     translate_button = st.button("Translate PDF to French", use_container_width=True, type="primary")
