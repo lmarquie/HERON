@@ -1940,6 +1940,305 @@ class SessionManager:
             
             self.last_cleanup = current_time
 
+### =================== PDF Translation Processor =================== ###
+class PDFTranslationProcessor:
+    def __init__(self):
+        self.output_dir = "translated_pdfs"
+        os.makedirs(self.output_dir, exist_ok=True)
+        self.temp_dir = "temp"
+        os.makedirs(self.temp_dir, exist_ok=True)
+        
+    def extract_text_from_pdf(self, pdf_path: str) -> str:
+        """Extract all text from a PDF file."""
+        try:
+            import fitz  # PyMuPDF
+            
+            if not os.path.exists(pdf_path):
+                raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+            
+            doc = fitz.open(pdf_path)
+            text_content = []
+            
+            for page_num in range(len(doc)):
+                try:
+                    page = doc.load_page(page_num)
+                    text = page.get_text()
+                    if text.strip():
+                        text_content.append(f"Page {page_num + 1}:\n{text}")
+                except Exception as e:
+                    logger.warning(f"Error extracting text from page {page_num + 1}: {str(e)}")
+                    continue
+            
+            doc.close()
+            
+            full_text = "\n\n".join(text_content)
+            logger.info(f"Extracted {len(full_text)} characters from PDF")
+            return full_text
+            
+        except Exception as e:
+            logger.error(f"Error extracting text from PDF: {str(e)}")
+            raise
+    
+    def translate_text_to_french(self, text: str) -> str:
+        """Translate text to French using Deep Translator with chunking."""
+        try:
+            from deep_translator import GoogleTranslator
+            
+            # Check if text is too long for single translation
+            MAX_CHARS_PER_CHUNK = 4000  # Safe limit below 5000
+            
+            if len(text) <= MAX_CHARS_PER_CHUNK:
+                # Short text - translate directly
+                translator = GoogleTranslator(source='auto', target='fr')
+                result = translator.translate(text)
+                return result
+            else:
+                # Long text - split into chunks and translate separately
+                logger.info(f"Text too long ({len(text)} chars), translating in chunks...")
+                
+                # Split text into paragraphs first, then sentences
+                paragraphs = text.split('\n\n')
+                chunks = []
+                current_chunk = ""
+                
+                for paragraph in paragraphs:
+                    # If paragraph is still too long, split by sentences
+                    if len(paragraph) > MAX_CHARS_PER_CHUNK:
+                        sentences = paragraph.split('. ')
+                        for sentence in sentences:
+                            sentence = sentence.strip()
+                            if not sentence:
+                                continue
+                            
+                            # Add period back if it's not the last sentence
+                            if sentence != sentences[-1]:
+                                sentence += '. '
+                            
+                            # Check if adding this sentence would exceed the limit
+                            if len(current_chunk) + len(sentence) <= MAX_CHARS_PER_CHUNK:
+                                current_chunk += sentence
+                            else:
+                                # Current chunk is full, save it and start a new one
+                                if current_chunk:
+                                    chunks.append(current_chunk.strip())
+                                current_chunk = sentence
+                    else:
+                        # Check if adding this paragraph would exceed the limit
+                        if len(current_chunk) + len(paragraph) + 2 <= MAX_CHARS_PER_CHUNK:
+                            current_chunk += "\n\n" + paragraph if current_chunk else paragraph
+                        else:
+                            # Current chunk is full, save it and start a new one
+                            if current_chunk:
+                                chunks.append(current_chunk.strip())
+                            current_chunk = paragraph
+                
+                # Add the last chunk if it has content
+                if current_chunk.strip():
+                    chunks.append(current_chunk.strip())
+                
+                logger.info(f"Split text into {len(chunks)} chunks for translation")
+                
+                # Translate each chunk
+                translator = GoogleTranslator(source='auto', target='fr')
+                translated_chunks = []
+                
+                for i, chunk in enumerate(chunks):
+                    try:
+                        logger.info(f"Translating chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
+                        translated_chunk = translator.translate(chunk)
+                        translated_chunks.append(translated_chunk)
+                        
+                        # Add delay between chunks to avoid rate limiting
+                        if i < len(chunks) - 1:
+                            time.sleep(0.5)
+                            
+                    except Exception as e:
+                        logger.error(f"Error translating chunk {i+1}: {str(e)}")
+                        # If translation fails for a chunk, keep the original
+                        translated_chunks.append(chunk)
+                
+                # Combine translated chunks
+                final_translation = '\n\n'.join(translated_chunks)
+                logger.info(f"Translation completed: {len(final_translation)} characters")
+                return final_translation
+
+        except Exception as e:
+            logger.error(f"Error translating to French: {str(e)}")
+            raise
+    
+    def create_translated_pdf(self, original_text: str, translated_text: str, original_filename: str) -> str:
+        """Create a PDF with both original and translated text."""
+        try:
+            from reportlab.lib.pagesizes import letter, A4
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            from reportlab.lib.colors import black, blue, red
+            from reportlab.lib.enums import TA_LEFT, TA_CENTER
+            
+            # Create PDF filename
+            base_name = os.path.splitext(original_filename)[0]
+            pdf_filename = f"{base_name}_traduit_français.pdf"
+            pdf_path = os.path.join(self.output_dir, pdf_filename)
+            
+            # Create the PDF document
+            doc = SimpleDocTemplate(pdf_path, pagesize=A4)
+            story = []
+            
+            # Get styles
+            styles = getSampleStyleSheet()
+            
+            # Create custom styles
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=18,
+                spaceAfter=30,
+                alignment=TA_CENTER,
+                textColor=blue
+            )
+            
+            subtitle_style = ParagraphStyle(
+                'CustomSubtitle',
+                parent=styles['Heading2'],
+                fontSize=14,
+                spaceAfter=20,
+                textColor=red
+            )
+            
+            header_style = ParagraphStyle(
+                'CustomHeader',
+                parent=styles['Heading3'],
+                fontSize=12,
+                spaceAfter=15,
+                textColor=black
+            )
+            
+            body_style = ParagraphStyle(
+                'CustomBody',
+                parent=styles['Normal'],
+                fontSize=11,
+                spaceAfter=12,
+                alignment=TA_LEFT,
+                textColor=black
+            )
+            
+            # Add title
+            title = Paragraph(f"Document Traduit: {original_filename}", title_style)
+            story.append(title)
+            story.append(Spacer(1, 20))
+            
+            # Add metadata
+            metadata = f"""
+            <b>Fichier Original:</b> {original_filename}<br/>
+            <b>Date de Traduction:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br/>
+            <b>Caractères Originaux:</b> {len(original_text):,}<br/>
+            <b>Caractères Traduits:</b> {len(translated_text):,}<br/>
+            <b>Langue Source:</b> Détectée automatiquement<br/>
+            <b>Langue Cible:</b> Français
+            """
+            meta_para = Paragraph(metadata, header_style)
+            story.append(meta_para)
+            story.append(Spacer(1, 30))
+            
+            # Add translated text section
+            subtitle = Paragraph("Texte Traduit en Français", subtitle_style)
+            story.append(subtitle)
+            story.append(Spacer(1, 15))
+            
+            # Split translated text into paragraphs for better formatting
+            paragraphs = translated_text.split('\n\n')
+            
+            for para in paragraphs:
+                if para.strip():
+                    # Clean up the paragraph
+                    clean_para = para.strip().replace('\n', ' ')
+                    if clean_para:
+                        p = Paragraph(clean_para, body_style)
+                        story.append(p)
+                        story.append(Spacer(1, 12))
+            
+            # Add page break
+            story.append(PageBreak())
+            
+            # Add original text section
+            subtitle2 = Paragraph("Texte Original", subtitle_style)
+            story.append(subtitle2)
+            story.append(Spacer(1, 15))
+            
+            # Split original text into paragraphs
+            orig_paragraphs = original_text.split('\n\n')
+            
+            for para in orig_paragraphs:
+                if para.strip():
+                    # Clean up the paragraph
+                    clean_para = para.strip().replace('\n', ' ')
+                    if clean_para:
+                        p = Paragraph(clean_para, body_style)
+                        story.append(p)
+                        story.append(Spacer(1, 12))
+            
+            # Build the PDF
+            doc.build(story)
+            
+            logger.info(f"Translated PDF created: {pdf_path}")
+            return pdf_path
+            
+        except Exception as e:
+            logger.error(f"Error creating translated PDF: {str(e)}")
+            raise
+    
+    def translate_pdf_to_french(self, pdf_path: str) -> dict:
+        """Complete process: extract text, translate, and create translated PDF."""
+        try:
+            logger.info(f"Starting PDF translation process for: {pdf_path}")
+            
+            # Step 1: Extract text from PDF
+            logger.info("Step 1: Extracting text from PDF...")
+            original_text = self.extract_text_from_pdf(pdf_path)
+            
+            if not original_text.strip():
+                raise ValueError("No text extracted from PDF")
+            
+            # Step 2: Translate text to French
+            logger.info("Step 2: Translating text to French...")
+            translated_text = self.translate_text_to_french(original_text)
+            
+            # Step 3: Create translated PDF
+            logger.info("Step 3: Creating translated PDF...")
+            original_filename = os.path.basename(pdf_path)
+            translated_pdf_path = self.create_translated_pdf(original_text, translated_text, original_filename)
+            
+            # Return results
+            result = {
+                'success': True,
+                'original_text': original_text,
+                'translated_text': translated_text,
+                'translated_pdf_path': translated_pdf_path,
+                'original_filename': original_filename,
+                'translated_filename': os.path.basename(translated_pdf_path),
+                'characters_original': len(original_text),
+                'characters_translated': len(translated_text),
+                'translation_date': datetime.now().isoformat()
+            }
+            
+            logger.info(f"PDF translation completed successfully: {translated_pdf_path}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in PDF translation process: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'original_filename': os.path.basename(pdf_path) if pdf_path else 'unknown'
+            }
+    
+    def get_translation_progress(self, total_chunks: int, current_chunk: int) -> float:
+        """Calculate translation progress percentage."""
+        if total_chunks == 0:
+            return 0.0
+        return (current_chunk / total_chunks) * 100
+
 ### =================== Main RAG System =================== ###
 class RAGSystem:
     def __init__(self, settings=None, is_web=False, use_vision_api=True, session_id: str = None, internet_mode=False):
@@ -2441,6 +2740,29 @@ class RAGSystem:
         except Exception as e:
             logger.error(f"Debug error: {str(e)}")
             return f"Debug error: {str(e)}"
+
+    def translate_uploaded_pdf_to_french(self, pdf_path: str) -> dict:
+        """Translate an uploaded PDF to French and return the translated PDF path."""
+        try:
+            logger.info(f"Starting PDF translation for: {pdf_path}")
+            
+            # Use the PDF translation processor
+            result = self.pdf_translator.translate_pdf_to_french(pdf_path)
+            
+            if result['success']:
+                logger.info(f"PDF translation successful: {result['translated_pdf_path']}")
+                return result
+            else:
+                logger.error(f"PDF translation failed: {result['error']}")
+                return result
+                
+        except Exception as e:
+            logger.error(f"Error in PDF translation: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'original_filename': os.path.basename(pdf_path) if pdf_path else 'unknown'
+            }
 
     # Add this method to your RAGSystem class
     def analyze_image_with_gpt4(self, image_path: str, question: str = None) -> str:
@@ -3044,328 +3366,9 @@ def handle_uploaded_audio(uploaded_file):
     convert_to_wav(input_path, output_path)
     return output_path
 
-# Add this new class for PDF translation functionality
-class PDFTranslationProcessor:
-    def __init__(self):
-        self.output_dir = "translated_pdfs"
-        os.makedirs(self.output_dir, exist_ok=True)
-        self.temp_dir = "temp"
-        os.makedirs(self.temp_dir, exist_ok=True)
-        
-    def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract all text from a PDF file."""
-        try:
-            import fitz  # PyMuPDF
-            
-            if not os.path.exists(pdf_path):
-                raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-            
-            doc = fitz.open(pdf_path)
-            text_content = []
-            
-            for page_num in range(len(doc)):
-                try:
-                    page = doc.load_page(page_num)
-                    text = page.get_text()
-                    if text.strip():
-                        text_content.append(f"Page {page_num + 1}:\n{text}")
-                except Exception as e:
-                    logger.warning(f"Error extracting text from page {page_num + 1}: {str(e)}")
-                    continue
-            
-            doc.close()
-            
-            full_text = "\n\n".join(text_content)
-            logger.info(f"Extracted {len(full_text)} characters from PDF")
-            return full_text
-            
-        except Exception as e:
-            logger.error(f"Error extracting text from PDF: {str(e)}")
-            raise
-    
-    def translate_text_to_french(self, text: str) -> str:
-        """Translate text to French using Deep Translator with chunking."""
-        try:
-            from deep_translator import GoogleTranslator
-            
-            # Check if text is too long for single translation
-            MAX_CHARS_PER_CHUNK = 4000  # Safe limit below 5000
-            
-            if len(text) <= MAX_CHARS_PER_CHUNK:
-                # Short text - translate directly
-                translator = GoogleTranslator(source='auto', target='fr')
-                result = translator.translate(text)
-                return result
-            else:
-                # Long text - split into chunks and translate separately
-                logger.info(f"Text too long ({len(text)} chars), translating in chunks...")
-                
-                # Split text into paragraphs first, then sentences
-                paragraphs = text.split('\n\n')
-                chunks = []
-                current_chunk = ""
-                
-                for paragraph in paragraphs:
-                    # If paragraph is still too long, split by sentences
-                    if len(paragraph) > MAX_CHARS_PER_CHUNK:
-                        sentences = paragraph.split('. ')
-                        for sentence in sentences:
-                            sentence = sentence.strip()
-                            if not sentence:
-                                continue
-                            
-                            # Add period back if it's not the last sentence
-                            if sentence != sentences[-1]:
-                                sentence += '. '
-                            
-                            # Check if adding this sentence would exceed the limit
-                            if len(current_chunk) + len(sentence) <= MAX_CHARS_PER_CHUNK:
-                                current_chunk += sentence
-                            else:
-                                # Current chunk is full, save it and start a new one
-                                if current_chunk:
-                                    chunks.append(current_chunk.strip())
-                                current_chunk = sentence
-                    else:
-                        # Check if adding this paragraph would exceed the limit
-                        if len(current_chunk) + len(paragraph) + 2 <= MAX_CHARS_PER_CHUNK:
-                            current_chunk += "\n\n" + paragraph if current_chunk else paragraph
-                        else:
-                            # Current chunk is full, save it and start a new one
-                            if current_chunk:
-                                chunks.append(current_chunk.strip())
-                            current_chunk = paragraph
-                
-                # Add the last chunk if it has content
-                if current_chunk.strip():
-                    chunks.append(current_chunk.strip())
-                
-                logger.info(f"Split text into {len(chunks)} chunks for translation")
-                
-                # Translate each chunk
-                translator = GoogleTranslator(source='auto', target='fr')
-                translated_chunks = []
-                
-                for i, chunk in enumerate(chunks):
-                    try:
-                        logger.info(f"Translating chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
-                        translated_chunk = translator.translate(chunk)
-                        translated_chunks.append(translated_chunk)
-                        
-                        # Add delay between chunks to avoid rate limiting
-                        if i < len(chunks) - 1:
-                            time.sleep(0.5)
-                            
-                    except Exception as e:
-                        logger.error(f"Error translating chunk {i+1}: {str(e)}")
-                        # If translation fails for a chunk, keep the original
-                        translated_chunks.append(chunk)
-                
-                # Combine translated chunks
-                final_translation = '\n\n'.join(translated_chunks)
-                logger.info(f"Translation completed: {len(final_translation)} characters")
-                return final_translation
 
-        except Exception as e:
-            logger.error(f"Error translating to French: {str(e)}")
-            raise
-    
-    def create_translated_pdf(self, original_text: str, translated_text: str, original_filename: str) -> str:
-        """Create a PDF with both original and translated text."""
-        try:
-            from reportlab.lib.pagesizes import letter, A4
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.units import inch
-            from reportlab.lib.colors import black, blue, red
-            from reportlab.lib.enums import TA_LEFT, TA_CENTER
-            
-            # Create PDF filename
-            base_name = os.path.splitext(original_filename)[0]
-            pdf_filename = f"{base_name}_traduit_français.pdf"
-            pdf_path = os.path.join(self.output_dir, pdf_filename)
-            
-            # Create the PDF document
-            doc = SimpleDocTemplate(pdf_path, pagesize=A4)
-            story = []
-            
-            # Get styles
-            styles = getSampleStyleSheet()
-            
-            # Create custom styles
-            title_style = ParagraphStyle(
-                'CustomTitle',
-                parent=styles['Heading1'],
-                fontSize=18,
-                spaceAfter=30,
-                alignment=TA_CENTER,
-                textColor=blue
-            )
-            
-            subtitle_style = ParagraphStyle(
-                'CustomSubtitle',
-                parent=styles['Heading2'],
-                fontSize=14,
-                spaceAfter=20,
-                textColor=red
-            )
-            
-            header_style = ParagraphStyle(
-                'CustomHeader',
-                parent=styles['Heading3'],
-                fontSize=12,
-                spaceAfter=15,
-                textColor=black
-            )
-            
-            body_style = ParagraphStyle(
-                'CustomBody',
-                parent=styles['Normal'],
-                fontSize=11,
-                spaceAfter=12,
-                alignment=TA_LEFT,
-                textColor=black
-            )
-            
-            # Add title
-            title = Paragraph(f"Document Traduit: {original_filename}", title_style)
-            story.append(title)
-            story.append(Spacer(1, 20))
-            
-            # Add metadata
-            metadata = f"""
-            <b>Fichier Original:</b> {original_filename}<br/>
-            <b>Date de Traduction:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br/>
-            <b>Caractères Originaux:</b> {len(original_text):,}<br/>
-            <b>Caractères Traduits:</b> {len(translated_text):,}<br/>
-            <b>Langue Source:</b> Détectée automatiquement<br/>
-            <b>Langue Cible:</b> Français
-            """
-            meta_para = Paragraph(metadata, header_style)
-            story.append(meta_para)
-            story.append(Spacer(1, 30))
-            
-            # Add translated text section
-            subtitle = Paragraph("Texte Traduit en Français", subtitle_style)
-            story.append(subtitle)
-            story.append(Spacer(1, 15))
-            
-            # Split translated text into paragraphs for better formatting
-            paragraphs = translated_text.split('\n\n')
-            
-            for para in paragraphs:
-                if para.strip():
-                    # Clean up the paragraph
-                    clean_para = para.strip().replace('\n', ' ')
-                    if clean_para:
-                        p = Paragraph(clean_para, body_style)
-                        story.append(p)
-                        story.append(Spacer(1, 12))
-            
-            # Add page break
-            story.append(PageBreak())
-            
-            # Add original text section
-            subtitle2 = Paragraph("Texte Original", subtitle_style)
-            story.append(subtitle2)
-            story.append(Spacer(1, 15))
-            
-            # Split original text into paragraphs
-            orig_paragraphs = original_text.split('\n\n')
-            
-            for para in orig_paragraphs:
-                if para.strip():
-                    # Clean up the paragraph
-                    clean_para = para.strip().replace('\n', ' ')
-                    if clean_para:
-                        p = Paragraph(clean_para, body_style)
-                        story.append(p)
-                        story.append(Spacer(1, 12))
-            
-            # Build the PDF
-            doc.build(story)
-            
-            logger.info(f"Translated PDF created: {pdf_path}")
-            return pdf_path
-            
-        except Exception as e:
-            logger.error(f"Error creating translated PDF: {str(e)}")
-            raise
-    
-    def translate_pdf_to_french(self, pdf_path: str) -> dict:
-        """Complete process: extract text, translate, and create translated PDF."""
-        try:
-            logger.info(f"Starting PDF translation process for: {pdf_path}")
-            
-            # Step 1: Extract text from PDF
-            logger.info("Step 1: Extracting text from PDF...")
-            original_text = self.extract_text_from_pdf(pdf_path)
-            
-            if not original_text.strip():
-                raise ValueError("No text extracted from PDF")
-            
-            # Step 2: Translate text to French
-            logger.info("Step 2: Translating text to French...")
-            translated_text = self.translate_text_to_french(original_text)
-            
-            # Step 3: Create translated PDF
-            logger.info("Step 3: Creating translated PDF...")
-            original_filename = os.path.basename(pdf_path)
-            translated_pdf_path = self.create_translated_pdf(original_text, translated_text, original_filename)
-            
-            # Return results
-            result = {
-                'success': True,
-                'original_text': original_text,
-                'translated_text': translated_text,
-                'translated_pdf_path': translated_pdf_path,
-                'original_filename': original_filename,
-                'translated_filename': os.path.basename(translated_pdf_path),
-                'characters_original': len(original_text),
-                'characters_translated': len(translated_text),
-                'translation_date': datetime.now().isoformat()
-            }
-            
-            logger.info(f"PDF translation completed successfully: {translated_pdf_path}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error in PDF translation process: {str(e)}")
-            return {
-                'success': False,
-                'error': str(e),
-                'original_filename': os.path.basename(pdf_path) if pdf_path else 'unknown'
-            }
-    
-    def get_translation_progress(self, total_chunks: int, current_chunk: int) -> float:
-        """Calculate translation progress percentage."""
-        if total_chunks == 0:
-            return 0.0
-        return (current_chunk / total_chunks) * 100
 
-# Add PDF translation method to RAGSystem
-def translate_uploaded_pdf_to_french(self, pdf_path: str) -> dict:
-    """Translate an uploaded PDF to French and return the translated PDF path."""
-    try:
-        logger.info(f"Starting PDF translation for: {pdf_path}")
-        
-        # Use the PDF translation processor
-        result = self.pdf_translator.translate_pdf_to_french(pdf_path)
-        
-        if result['success']:
-            logger.info(f"PDF translation successful: {result['translated_pdf_path']}")
-            return result
-        else:
-            logger.error(f"PDF translation failed: {result['error']}")
-            return result
-            
-    except Exception as e:
-        logger.error(f"Error in PDF translation: {str(e)}")
-        return {
-            'success': False,
-            'error': str(e),
-            'original_filename': os.path.basename(pdf_path) if pdf_path else 'unknown'
-        }
+
 
 if __name__ == "__main__": 
     rag_system = RAGSystem()
