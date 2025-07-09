@@ -1211,8 +1211,19 @@ with st.sidebar:
                 filename = os.path.basename(pdf_path)
                 
                 with st.spinner(f"Translating {filename} to French..."):
-                    # Use the RAG system's PDF translation method
-                    result = st.session_state.rag_system.translate_uploaded_pdf_to_french(pdf_path)
+                    # Check if method exists, if not use standalone approach
+                    if hasattr(st.session_state.rag_system, 'translate_uploaded_pdf_to_french'):
+                        # Use the RAG system's PDF translation method
+                        result = st.session_state.rag_system.translate_uploaded_pdf_to_french(pdf_path)
+                    else:
+                        # Fallback to standalone translation
+                        try:
+                            from local_draft import PDFTranslationProcessor
+                            translator = PDFTranslationProcessor()
+                            result = translator.translate_pdf_to_french(pdf_path)
+                        except Exception as e:
+                            st.error(f"Translation error: {str(e)}")
+                            result = {'success': False, 'error': str(e)}
                     
                     if result['success']:
                         st.success(f"Translation completed! {result['characters_original']:,} → {result['characters_translated']:,} characters")
