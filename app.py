@@ -32,6 +32,12 @@ st.set_page_config(
 if 'local_draft' in sys.modules:
     importlib.reload(sys.modules['local_draft'])
 
+# Clear Streamlit cache
+if hasattr(st, 'cache_data'):
+    st.cache_data.clear()
+if hasattr(st, 'cache_resource'):
+    st.cache_resource.clear()
+
 # Add this right after your imports at the very top of app.py
 def export_transcription_to_pdf(transcription_text: str, filename: str = "transcription"):
     """Export transcription to PDF for download."""
@@ -138,6 +144,12 @@ def export_transcription_to_pdf(transcription_text: str, filename: str = "transc
 
 # Initialize RAG system with improved session management
 def initialize_rag_system():
+    # Force reload the local_draft module to ensure we have the latest version
+    if 'local_draft' in sys.modules:
+        importlib.reload(sys.modules['local_draft'])
+        # Re-import RAGSystem to get the updated version
+        from local_draft import RAGSystem
+    
     if 'rag_system' not in st.session_state:
         st.session_state.rag_system = RAGSystem(is_web=True, use_vision_api=False)
         st.session_state.documents_loaded = False
@@ -1167,8 +1179,38 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("PDF Translation")
     
-    # Simple PDF translation button
-    if st.button("Translate PDF to French", use_container_width=True, type="primary"):
+    # Debug: Check if method exists
+    if hasattr(st.session_state.rag_system, 'translate_uploaded_pdf_to_french'):
+        st.success("✅ Translation method found")
+    else:
+        st.error("❌ Translation method NOT found")
+        # Try to add the method manually
+        if st.button("Fix Translation Method", key="fix_translation"):
+            # Re-import and recreate RAG system
+            importlib.reload(sys.modules['local_draft'])
+            from local_draft import RAGSystem
+            st.session_state.rag_system = RAGSystem(is_web=True, use_vision_api=False)
+            st.rerun()
+    
+    # Always show the button, but check for PDF files when clicked
+    translate_button = st.button("Translate PDF to French", use_container_width=True, type="primary")
+    
+    # Show status of available PDF files
+    if hasattr(st.session_state.rag_system, 'file_handler') and st.session_state.rag_system.file_handler:
+        saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
+        pdf_files = [path for path in saved_paths if path.lower().endswith('.pdf') and '_transcript.txt' not in path]
+        
+        if pdf_files:
+            st.success(f"✅ {len(pdf_files)} PDF file(s) available for translation")
+            for pdf_file in pdf_files:
+                st.caption(f"📄 {os.path.basename(pdf_file)}")
+        else:
+            st.warning("⚠️ No PDF files found. Upload a PDF file first.")
+    else:
+        st.warning("⚠️ No file handler available. Upload a PDF file first.")
+    
+    # Handle button click
+    if translate_button:
         # Check if there are any PDF files available for translation
         if hasattr(st.session_state.rag_system, 'file_handler') and st.session_state.rag_system.file_handler:
             saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
@@ -1211,9 +1253,9 @@ with st.sidebar:
                     else:
                         st.error(f"Translation failed: {result.get('error', 'Unknown error')}")
             else:
-                st.warning("No PDF files found. Please upload a PDF file first.")
+                st.error("No PDF files found. Please upload a PDF file first.")
         else:
-            st.warning("No file handler available. Please upload a PDF file first.")
+            st.error("No file handler available. Please upload a PDF file first.")
     
     # Show info about the feature
     st.caption("Upload a PDF file, then click this button to translate it to French and download the translated version.")
