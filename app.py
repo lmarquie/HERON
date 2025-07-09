@@ -1179,18 +1179,7 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("PDF Translation")
     
-    # Debug: Check if method exists
-    if hasattr(st.session_state.rag_system, 'translate_uploaded_pdf_to_french'):
-        st.success("✅ Translation method found")
-    else:
-        st.error("❌ Translation method NOT found")
-        # Try to add the method manually
-        if st.button("Fix Translation Method", key="fix_translation"):
-            # Re-import and recreate RAG system
-            importlib.reload(sys.modules['local_draft'])
-            from local_draft import RAGSystem
-            st.session_state.rag_system = RAGSystem(is_web=True, use_vision_api=False)
-            st.rerun()
+
     
     # Always show the button, but check for PDF files when clicked
     translate_button = st.button("Translate PDF to French", use_container_width=True, type="primary")
