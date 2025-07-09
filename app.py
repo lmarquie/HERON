@@ -1,6 +1,6 @@
 import streamlit as st
 import os
-from local_draft import RAGSystem, WebFileHandler, render_chunk_source_image
+from local_draft import RAGSystem, WebFileHandler, render_chunk_source_image, OnDemandImageProcessor
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -571,6 +571,8 @@ def is_audio_question(question: str) -> bool:
         'interview', 'podcast', 'meeting', 'call', 'recording'
     ]
     return any(keyword in question_lower for keyword in audio_keywords)
+
+
 
 def _is_french_question(text: str) -> bool:
     """Detect if the question is in French."""
@@ -1160,6 +1162,61 @@ with st.sidebar:
             st.info("No audio transcriptions found. Upload an audio file to create transcriptions.")
     else:
         st.info("No file handler available. Upload an audio file first.")
+
+    # Add PDF Translation section
+    st.markdown("---")
+    st.subheader("PDF Translation")
+    
+    # Simple PDF translation button
+    if st.button("Translate PDF to French", use_container_width=True, type="primary"):
+        # Check if there are any PDF files available for translation
+        if hasattr(st.session_state.rag_system, 'file_handler') and st.session_state.rag_system.file_handler:
+            saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
+            pdf_files = [path for path in saved_paths if path.lower().endswith('.pdf') and '_transcript.txt' not in path]
+            
+            if pdf_files:
+                # Use the first PDF file found
+                pdf_path = pdf_files[0]
+                filename = os.path.basename(pdf_path)
+                
+                with st.spinner(f"Translating {filename} to French..."):
+                    # Use the RAG system's PDF translation method
+                    result = st.session_state.rag_system.translate_uploaded_pdf_to_french(pdf_path)
+                    
+                    if result['success']:
+                        st.success(f"Translation completed! {result['characters_original']:,} → {result['characters_translated']:,} characters")
+                        
+                        # Create download button for translated PDF
+                        if os.path.exists(result['translated_pdf_path']):
+                            with open(result['translated_pdf_path'], "rb") as pdf_file:
+                                pdf_bytes = pdf_file.read()
+                            st.download_button(
+                                label=f"Download {result['translated_filename']}",
+                                data=pdf_bytes,
+                                file_name=result['translated_filename'],
+                                mime="application/pdf",
+                                use_container_width=True,
+                                key="download_translated_pdf"
+                            )
+                            
+                            # Show translation stats
+                            st.info(f"""
+                            **Translation Statistics:**
+                            - Original: {result['characters_original']:,} characters
+                            - Translated: {result['characters_translated']:,} characters
+                            - Date: {result['translation_date'][:19]}
+                            """)
+                        else:
+                            st.error("Translated PDF file not found")
+                    else:
+                        st.error(f"Translation failed: {result.get('error', 'Unknown error')}")
+            else:
+                st.warning("No PDF files found. Please upload a PDF file first.")
+        else:
+            st.warning("No file handler available. Please upload a PDF file first.")
+    
+    # Show info about the feature
+    st.caption("Upload a PDF file, then click this button to translate it to French and download the translated version.")
 
     # Session Management Section
     st.markdown("---")
