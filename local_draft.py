@@ -2210,16 +2210,63 @@ class PDFTranslationProcessor:
                         # Regular paragraph with potential bold/italic formatting
                         # Replace markdown formatting with HTML tags for reportlab
                         formatted_para = clean_para
-                        formatted_para = formatted_para.replace('**', '<b>').replace('**', '</b>')
-                        formatted_para = formatted_para.replace('*', '<i>').replace('*', '</i>')
+                        
+                        # Import re for regex operations
+                        import re
+                        
+                        # Clean up any existing malformed HTML tags first
+                        formatted_para = re.sub(r'<b>\s*<b>', '<b>', formatted_para)
+                        formatted_para = re.sub(r'</b>\s*</b>', '</b>', formatted_para)
+                        formatted_para = re.sub(r'<i>\s*<i>', '<i>', formatted_para)
+                        formatted_para = re.sub(r'</i>\s*</i>', '</i>', formatted_para)
+                        
+                        # Handle bold text with proper tag counting
+                        bold_parts = formatted_para.split('**')
+                        if len(bold_parts) > 1:
+                            formatted_para = ''
+                            for i, part in enumerate(bold_parts):
+                                if i % 2 == 1:  # Odd indices are bold
+                                    formatted_para += f'<b>{part}</b>'
+                                else:
+                                    formatted_para += part
+                        
+                        # Handle italic text with proper tag counting
+                        italic_parts = formatted_para.split('*')
+                        if len(italic_parts) > 1:
+                            temp_para = ''
+                            for i, part in enumerate(italic_parts):
+                                if i % 2 == 1:  # Odd indices are italic
+                                    temp_para += f'<i>{part}</i>'
+                                else:
+                                    temp_para += part
+                            formatted_para = temp_para
+                        
                         formatted_para = formatted_para.replace('\n', ' ')
                         
-                        if '<b>' in formatted_para or '<i>' in formatted_para:
-                            # Use HTML-style paragraph for formatting
-                            p = Paragraph(formatted_para, body_style)
-                        else:
-                            # Regular paragraph
-                            p = Paragraph(formatted_para, body_style)
+                        # Validate HTML tags before creating paragraph
+                        try:
+                            # Simple validation - count opening and closing tags
+                            open_b = formatted_para.count('<b>')
+                            close_b = formatted_para.count('</b>')
+                            open_i = formatted_para.count('<i>')
+                            close_i = formatted_para.count('</i>')
+                            
+                            # If tags are unbalanced, remove them
+                            if open_b != close_b:
+                                formatted_para = formatted_para.replace('<b>', '').replace('</b>', '')
+                            if open_i != close_i:
+                                formatted_para = formatted_para.replace('<i>', '').replace('</i>', '')
+                            
+                            # Create paragraph
+                            if '<b>' in formatted_para or '<i>' in formatted_para:
+                                p = Paragraph(formatted_para, body_style)
+                            else:
+                                p = Paragraph(formatted_para, body_style)
+                                
+                        except Exception as e:
+                            # If HTML parsing fails, use plain text
+                            logger.warning(f"HTML parsing failed, using plain text: {str(e)}")
+                            p = Paragraph(clean_para.replace('**', '').replace('*', ''), body_style)
                         
                         story.append(p)
                         story.append(Spacer(1, 12))
@@ -2436,21 +2483,63 @@ class PDFTranslationProcessor:
                         # Regular paragraph with formatting
                         formatted_para = clean_para
                         
-                        # Handle bold text
-                        formatted_para = formatted_para.replace('**', '<b>').replace('**', '</b>')
+                        # Import re for regex operations
+                        import re
                         
-                        # Handle italic text
-                        formatted_para = formatted_para.replace('*', '<i>').replace('*', '</i>')
+                        # Clean up any existing malformed HTML tags first
+                        formatted_para = re.sub(r'<b>\s*<b>', '<b>', formatted_para)
+                        formatted_para = re.sub(r'</b>\s*</b>', '</b>', formatted_para)
+                        formatted_para = re.sub(r'<i>\s*<i>', '<i>', formatted_para)
+                        formatted_para = re.sub(r'</i>\s*</i>', '</i>', formatted_para)
+                        
+                        # Handle bold text with proper tag counting
+                        bold_parts = formatted_para.split('**')
+                        if len(bold_parts) > 1:
+                            formatted_para = ''
+                            for i, part in enumerate(bold_parts):
+                                if i % 2 == 1:  # Odd indices are bold
+                                    formatted_para += f'<b>{part}</b>'
+                                else:
+                                    formatted_para += part
+                        
+                        # Handle italic text with proper tag counting
+                        italic_parts = formatted_para.split('*')
+                        if len(italic_parts) > 1:
+                            temp_para = ''
+                            for i, part in enumerate(italic_parts):
+                                if i % 2 == 1:  # Odd indices are italic
+                                    temp_para += f'<i>{part}</i>'
+                                else:
+                                    temp_para += part
+                            formatted_para = temp_para
                         
                         # Handle line breaks
                         formatted_para = formatted_para.replace('\n', '<br/>')
                         
-                        if '<b>' in formatted_para or '<i>' in formatted_para or '<br/>' in formatted_para:
-                            # Use HTML-style paragraph for rich formatting
-                            p = Paragraph(formatted_para, body_style)
-                        else:
-                            # Regular paragraph
-                            p = Paragraph(formatted_para, body_style)
+                        # Validate HTML tags before creating paragraph
+                        try:
+                            # Simple validation - count opening and closing tags
+                            open_b = formatted_para.count('<b>')
+                            close_b = formatted_para.count('</b>')
+                            open_i = formatted_para.count('<i>')
+                            close_i = formatted_para.count('</i>')
+                            
+                            # If tags are unbalanced, remove them
+                            if open_b != close_b:
+                                formatted_para = formatted_para.replace('<b>', '').replace('</b>', '')
+                            if open_i != close_i:
+                                formatted_para = formatted_para.replace('<i>', '').replace('</i>', '')
+                            
+                            # Create paragraph
+                            if '<b>' in formatted_para or '<i>' in formatted_para or '<br/>' in formatted_para:
+                                p = Paragraph(formatted_para, body_style)
+                            else:
+                                p = Paragraph(formatted_para, body_style)
+                                
+                        except Exception as e:
+                            # If HTML parsing fails, use plain text
+                            logger.warning(f"HTML parsing failed, using plain text: {str(e)}")
+                            p = Paragraph(clean_para.replace('**', '').replace('*', ''), body_style)
                         
                         story.append(p)
                         story.append(Spacer(1, 12))
