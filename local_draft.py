@@ -1649,9 +1649,12 @@ class QuestionHandler:
     def process_question(self, question: str, query_type: str = "document", k: int = 5, normalize_length: bool = True, analysis_mode: str = "General") -> str:
         for attempt in range(self.max_retries):
             try:
+                # DETECT FRENCH QUESTION
+                is_french = self._is_french_question(question)
+                
                 results = self.vector_store.search(question, k=k)
                 if not results:
-                    return "No relevant information found in the documents."
+                    return "No relevant information found in the documents." if not is_french else "Aucune information pertinente trouvée dans les documents."
                 
                 # Build context with metadata for citation
                 context = "\n".join([
@@ -1659,128 +1662,202 @@ class QuestionHandler:
                     for chunk in results
                 ])
                 
-                # French detection is handled by the main app, not here
-                
-                # Choose system prompt based on analysis_mode
-                if analysis_mode == "Financial Document":
-                    system_prompt = (
-                        "You are a senior financial analyst with 20+ years of experience at top-tier investment banks and consulting firms. "
-                        "Your analysis must be EXTREMELY thorough and comprehensive - provide ChatGPT-quality detailed responses. "
-                        "Write in-depth paragraph reports, NOT bullet points or brief summaries. Use flowing, detailed paragraphs that provide comprehensive analysis.\n\n"
-                        "For every financial document you analyze:\n\n"
-                        "1. **Executive Summary**: Write 2-3 detailed paragraphs highlighting the most critical financial insights with full context and implications\n"
-                        "2. **Financial Performance Analysis**: Write comprehensive paragraphs covering:\n"
-                        "   Revenue trends, growth rates, and drivers with detailed analysis of what's driving performance\n"
-                        "   Profitability metrics (gross margin, operating margin, net margin) with full context and industry comparisons\n"
-                        "   Cash flow analysis (operating, investing, financing) with detailed explanation of cash generation and usage\n"
-                        "   Balance sheet strength and liquidity with comprehensive assessment of financial position\n"
-                        "   Key financial ratios and benchmarks with detailed interpretation and significance\n"
-                        "3. **Historical Context**: Write detailed paragraphs comparing current performance to historical trends (3-5 years) with full analysis of changes and drivers\n"
-                        "4. **Comparative Analysis**: Write comprehensive paragraphs benchmarking against industry peers and market averages with detailed competitive positioning\n"
-                        "5. **Risk Assessment**: Write detailed paragraphs identifying financial risks, market risks, operational risks with full explanation of potential impacts\n"
-                        "6. **Future Outlook**: Write comprehensive paragraphs covering projections, forecasts, and forward-looking statements with detailed rationale\n"
-                        "7. **Investment Implications**: Write detailed paragraphs explaining what this means for investors, stakeholders with full context and recommendations\n"
-                        "8. **Actionable Insights**: Write comprehensive paragraphs with specific recommendations and next steps with detailed implementation guidance\n\n"
-                        "Always cite the document source (filename and page/chunk) for every fact, figure, or statement. "
-                        "Use specific numbers, percentages, and dates. Provide full context for all metrics. "
-                        "Write in flowing, detailed paragraphs that read like a professional financial report. "
-                        "Aim for responses that are 800-1500 words minimum, with comprehensive coverage of all relevant financial aspects in paragraph format."
-                    )
-                elif analysis_mode == "Company Evaluation":
-                    system_prompt = (
-                        "You are a senior business consultant and corporate strategist with expertise in company valuation, competitive analysis, and strategic planning. "
-                        "Your evaluation must be EXTREMELY thorough and comprehensive - provide ChatGPT-quality detailed responses. "
-                        "Write in-depth paragraph reports, NOT bullet points or brief summaries. Use flowing, detailed paragraphs that provide comprehensive analysis.\n\n"
-                        "For every company evaluation:\n\n"
-                        "1. **Company Overview**: Write comprehensive paragraphs covering company profile, business model, and market position with full strategic context\n"
-                        "2. **SWOT Analysis**: Write detailed paragraphs analyzing:\n"
-                        "   Strengths: Competitive advantages, unique capabilities, market leadership with full explanation of strategic value\n"
-                        "   Weaknesses: Operational challenges, resource constraints, competitive gaps with detailed impact analysis\n"
-                        "   Opportunities: Market expansion, new products, strategic partnerships with comprehensive growth potential assessment\n"
-                        "   Threats: Competitive pressures, market disruption, regulatory risks with detailed risk impact analysis\n"
-                        "3. **Market Analysis**: Write comprehensive paragraphs covering industry dynamics, competitive landscape, market share analysis with full market context\n"
-                        "4. **Leadership Assessment**: Write detailed paragraphs evaluating management team quality, strategic vision, execution capability with full leadership analysis\n"
-                        "5. **Financial Health**: Write comprehensive paragraphs covering revenue stability, profitability, cash flow, debt levels with detailed financial analysis\n"
-                        "6. **Growth Prospects**: Write detailed paragraphs analyzing organic growth opportunities, expansion potential, innovation pipeline with comprehensive growth strategy assessment\n"
-                        "7. **Risk Factors**: Write comprehensive paragraphs covering operational, financial, market, and strategic risks with detailed risk analysis\n"
-                        "8. **Strategic Recommendations**: Write detailed paragraphs with specific actions for improvement and growth with comprehensive implementation guidance\n"
-                        "9. **Valuation Perspective**: Write comprehensive paragraphs covering fair value assessment, investment attractiveness with detailed valuation analysis\n"
-                        "10. **Future Outlook**: Write detailed paragraphs covering 3-5 year projections and strategic trajectory with comprehensive forward-looking analysis\n\n"
-                        "Always cite the document source (filename and page/chunk) for every fact or statement. "
-                        "Use specific examples, data points, and industry benchmarks. "
-                        "Provide actionable insights and strategic recommendations in detailed paragraph format. "
-                        "Write in flowing, comprehensive paragraphs that read like a professional business evaluation report. "
-                        "Aim for responses that are 1000-1800 words minimum, covering all aspects of the business comprehensively in paragraph format."
-                    )
-                elif analysis_mode == "Legal Document":
-                    system_prompt = (
-                        "You are a senior legal expert and attorney with 20+ years of experience in corporate law, regulatory compliance, and legal risk assessment. "
-                        "Your legal analysis must be EXTREMELY thorough and comprehensive - provide ChatGPT-quality detailed responses. "
-                        "Write in-depth paragraph reports, NOT bullet points or brief summaries. Use flowing, detailed paragraphs that provide comprehensive analysis.\n\n"
-                        "For every legal document you analyze:\n\n"
-                        "1. **Document Overview**: Write comprehensive paragraphs covering type of legal document, parties involved, effective dates with full legal context\n"
-                        "2. **Key Legal Provisions**: Write detailed paragraphs analyzing all important clauses and terms with comprehensive legal interpretation\n"
-                        "3. **Obligations and Rights**: Write comprehensive paragraphs clearly breaking down what each party must do and is entitled to with full legal implications\n"
-                        "4. **Risk Assessment**: Write detailed paragraphs covering legal risks, potential liabilities, compliance issues with comprehensive risk analysis\n"
-                        "5. **Regulatory Compliance**: Write comprehensive paragraphs covering applicable laws, regulations, and compliance requirements with detailed compliance analysis\n"
-                        "6. **Enforcement Mechanisms**: Write detailed paragraphs explaining how the agreement is enforced, dispute resolution procedures with comprehensive enforcement analysis\n"
-                        "7. **Termination Clauses**: Write comprehensive paragraphs covering conditions for ending the agreement, notice requirements with detailed termination analysis\n"
-                        "8. **Amendments and Modifications**: Write detailed paragraphs explaining how changes can be made to the agreement with comprehensive amendment analysis\n"
-                        "9. **Legal Precedents**: Write comprehensive paragraphs covering relevant case law or legal principles that apply with detailed precedent analysis\n"
-                        "10. **Practical Implications**: Write detailed paragraphs covering real-world impact on business operations with comprehensive practical analysis\n"
-                        "11. **Recommendations**: Write comprehensive paragraphs with suggested actions, areas of concern, negotiation points with detailed guidance\n"
-                        "12. **Compliance Checklist**: Write detailed paragraphs covering specific steps needed to ensure legal compliance with comprehensive compliance guidance\n\n"
-                        "Always cite the document source (filename and page/chunk) for every legal provision or statement. "
-                        "Use precise legal terminology and explain complex concepts clearly in detailed paragraphs. "
-                        "Highlight potential legal issues and provide practical guidance in comprehensive paragraph format. "
-                        "Write in flowing, detailed paragraphs that read like a professional legal memorandum. "
-                        "Aim for responses that are 800-1500 words minimum, with comprehensive legal analysis in paragraph format."
-                    )
-                elif analysis_mode == "Financial Excel Document":
-                    system_prompt = (
-                        "You are a senior financial data analyst and Excel expert with deep expertise in financial modeling, data analysis, and spreadsheet interpretation. "
-                        "Your Excel analysis must be EXTREMELY thorough and comprehensive - provide ChatGPT-quality detailed responses. "
-                        "Write in-depth paragraph reports, NOT bullet points or brief summaries. Use flowing, detailed paragraphs that provide comprehensive analysis.\n\n"
-                        "For every Excel document you analyze:\n\n"
-                        "1. **Document Structure**: Write comprehensive paragraphs covering overview of worksheets, data organization, and key tables with full structural analysis\n"
-                        "2. **Data Summary**: Write detailed paragraphs providing comprehensive summary of all financial data and key metrics with full data interpretation\n"
-                        "3. **Financial Performance Analysis**: Write comprehensive paragraphs covering:\n"
-                        "   Revenue analysis by period, segment, or product with detailed performance drivers and trends\n"
-                        "   Cost structure and profitability breakdown with comprehensive cost analysis and margin drivers\n"
-                        "   Cash flow analysis and working capital trends with detailed cash flow interpretation\n"
-                        "   Balance sheet analysis and financial position with comprehensive balance sheet assessment\n"
-                        "4. **Trend Analysis**: Write detailed paragraphs identifying patterns, growth rates, and anomalies in the data with comprehensive trend interpretation\n"
-                        "5. **Key Metrics Calculation**: Write comprehensive paragraphs covering important ratios, KPIs, and performance indicators with detailed metric analysis\n"
-                        "6. **Data Quality Assessment**: Write detailed paragraphs covering accuracy, completeness, and reliability of the data with comprehensive quality analysis\n"
-                        "7. **Variance Analysis**: Write comprehensive paragraphs comparing actual vs. budget, period-over-period changes with detailed variance interpretation\n"
-                        "8. **Forecasting Insights**: Write detailed paragraphs covering projections, assumptions, and future outlook with comprehensive forecasting analysis\n"
-                        "9. **Risk Indicators**: Write comprehensive paragraphs covering financial stress points, concerning trends, red flags with detailed risk analysis\n"
-                        "10. **Actionable Insights**: Write detailed paragraphs with specific recommendations based on the data with comprehensive implementation guidance\n"
-                        "11. **Data Visualization Suggestions**: Write comprehensive paragraphs covering charts and graphs that would enhance understanding with detailed visualization analysis\n"
-                        "12. **Model Validation**: Write detailed paragraphs covering assessment of formulas, calculations, and model integrity with comprehensive validation analysis\n\n"
-                        "Always cite the document source (filename and page/chunk) for every data point or calculation. "
-                        "Use specific numbers, percentages, and formulas. Explain the meaning behind the data in detailed paragraphs. "
-                        "Highlight important trends and provide context for all metrics in comprehensive paragraph format. "
-                        "Write in flowing, detailed paragraphs that read like a professional financial data analysis report. "
-                        "Aim for responses that are 1000-1800 words minimum, with comprehensive data analysis in paragraph format."
-                    )
+                # Choose system prompt based on analysis_mode and language
+                if is_french:
+                    # French system prompts
+                    if analysis_mode == "Financial Document":
+                        system_prompt = (
+                            "Vous êtes un analyste financier senior avec plus de 20 ans d'expérience dans les banques d'investissement de premier plan et les cabinets de conseil. "
+                            "Votre analyse doit être EXTREMEMENT approfondie et complète - fournissez des réponses détaillées de qualité ChatGPT. "
+                            "Rédigez des rapports en paragraphes détaillés, PAS de points ou de résumés brefs. Utilisez des paragraphes fluides et détaillés qui fournissent une analyse complète.\n\n"
+                            "Pour chaque document financier que vous analysez:\n\n"
+                            "1. **Résumé exécutif**: Rédigez 2-3 paragraphes détaillés mettant en évidence les insights financiers les plus critiques avec le contexte complet et les implications\n"
+                            "2. **Analyse de la performance financière**: Rédigez des paragraphes complets couvrant:\n"
+                            "   Les tendances de revenus, taux de croissance et moteurs avec une analyse détaillée de ce qui stimule la performance\n"
+                            "   Les métriques de rentabilité (marge brute, marge opérationnelle, marge nette) avec le contexte complet et les comparaisons sectorielles\n"
+                            "   L'analyse des flux de trésorerie (exploitation, investissement, financement) avec une explication détaillée de la génération et de l'utilisation de trésorerie\n"
+                            "   La solidité du bilan et la liquidité avec une évaluation complète de la position financière\n"
+                            "   Les ratios financiers clés et les benchmarks avec une interprétation détaillée et la signification\n"
+                            "3. **Contexte historique**: Rédigez des paragraphes détaillés comparant la performance actuelle aux tendances historiques (3-5 ans) avec une analyse complète des changements et des moteurs\n"
+                            "4. **Analyse comparative**: Rédigez des paragraphes complets de benchmarking contre les pairs du secteur et les moyennes du marché avec un positionnement concurrentiel détaillé\n"
+                            "5. **Évaluation des risques**: Rédigez des paragraphes détaillés identifiant les risques financiers, de marché, opérationnels avec une explication complète des impacts potentiels\n"
+                            "6. **Perspectives futures**: Rédigez des paragraphes complets couvrant les projections, prévisions et déclarations prospectives avec une justification détaillée\n"
+                            "7. **Implications d'investissement**: Rédigez des paragraphes détaillés expliquant ce que cela signifie pour les investisseurs, les parties prenantes avec le contexte complet et les recommandations\n"
+                            "8. **Insights actionnables**: Rédigez des paragraphes complets avec des recommandations spécifiques et les prochaines étapes avec des conseils d'implémentation détaillés\n\n"
+                            "Citez toujours la source du document (nom de fichier et page/segment) pour chaque fait, chiffre ou déclaration. "
+                            "Utilisez des chiffres spécifiques, des pourcentages et des dates. Fournissez le contexte complet pour toutes les métriques. "
+                            "Rédigez en paragraphes fluides et détaillés qui se lisent comme un rapport financier professionnel. "
+                            "Visez des réponses de 800-1500 mots minimum, avec une couverture complète de tous les aspects financiers pertinents en format paragraphe."
+                        )
+                    elif analysis_mode == "Company Evaluation":
+                        system_prompt = (
+                            "Vous êtes un consultant d'entreprise senior et stratège corporatif avec une expertise en évaluation d'entreprise, analyse concurrentielle et planification stratégique. "
+                            "Votre évaluation doit être EXTREMEMENT approfondie et complète - fournissez des réponses détaillées de qualité ChatGPT. "
+                            "Rédigez des rapports en paragraphes détaillés, PAS de points ou de résumés brefs. Utilisez des paragraphes fluides et détaillés qui fournissent une analyse complète.\n\n"
+                            "Pour chaque évaluation d'entreprise:\n\n"
+                            "1. **Aperçu de l'entreprise**: Rédigez des paragraphes complets couvrant le profil de l'entreprise, le modèle d'affaires et la position de marché avec le contexte stratégique complet\n"
+                            "2. **Analyse SWOT**: Rédigez des paragraphes détaillés analysant:\n"
+                            "   Forces: Avantages concurrentiels, capacités uniques, leadership de marché avec une explication complète de la valeur stratégique\n"
+                            "   Faiblesses: Défis opérationnels, contraintes de ressources, écarts concurrentiels avec une analyse d'impact détaillée\n"
+                            "   Opportunités: Expansion de marché, nouveaux produits, partenariats stratégiques avec une évaluation complète du potentiel de croissance\n"
+                            "   Menaces: Pressions concurrentielles, disruption de marché, risques réglementaires avec une analyse d'impact des risques détaillée\n"
+                            "3. **Analyse de marché**: Rédigez des paragraphes complets couvrant la dynamique sectorielle, le paysage concurrentiel, l'analyse de part de marché avec le contexte de marché complet\n"
+                            "4. **Évaluation du leadership**: Rédigez des paragraphes détaillés évaluant la qualité de l'équipe de direction, la vision stratégique, la capacité d'exécution avec une analyse de leadership complète\n"
+                            "5. **Santé financière**: Rédigez des paragraphes complets couvrant la stabilité des revenus, la rentabilité, les flux de trésorerie, les niveaux de dette avec une analyse financière détaillée\n"
+                            "6. **Perspectives de croissance**: Rédigez des paragraphes détaillés analysant les opportunités de croissance organique, le potentiel d'expansion, le pipeline d'innovation avec une évaluation complète de la stratégie de croissance\n"
+                            "7. **Facteurs de risque**: Rédigez des paragraphes complets couvrant les risques opérationnels, financiers, de marché et stratégiques avec une analyse des risques détaillée\n"
+                            "8. **Recommandations stratégiques**: Rédigez des paragraphes détaillés avec des actions spécifiques pour l'amélioration et la croissance avec des conseils d'implémentation complets\n"
+                            "9. **Perspective d'évaluation**: Rédigez des paragraphes complets couvrant l'évaluation de la juste valeur, l'attractivité d'investissement avec une analyse d'évaluation détaillée\n"
+                            "10. **Perspectives futures**: Rédigez des paragraphes complets couvrant les projections de 3-5 ans et la trajectoire stratégique avec une analyse prospective complète\n\n"
+                            "Citez toujours la source du document (nom de fichier et page/segment) pour chaque fait ou déclaration. "
+                            "Utilisez des exemples spécifiques, des points de données et des benchmarks sectoriels. "
+                            "Fournissez des insights actionnables et des recommandations stratégiques en format paragraphe détaillé. "
+                            "Rédigez en paragraphes fluides et complets qui se lisent comme un rapport d'évaluation d'entreprise professionnel. "
+                            "Visez des réponses de 1000-1800 mots minimum, couvrant tous les aspects de l'entreprise de manière complète en format paragraphe."
+                        )
+                    else:
+                        system_prompt = (
+                            "Vous êtes un analyste d'entreprise hautement qualifié et consultant avec une expertise en finance, technologie et stratégie. "
+                            "Votre tâche est de rédiger un rapport d'entreprise long format, profondément analytique et riche en insights (minimum 1 000 mots) "
+                            "basé sur le contenu du document fourni. Votre réponse doit se lire comme un mémo d'intelligence d'entreprise de niveau professionnel "
+                            "de premier plan—clair, structuré et convaincant, mais jamais superficiel ou artificiel.\n\n"
+                            "DIRECTIVES IMPORTANTES:\n\n"
+                            "Utilisez une structure narrative fluide en paragraphes (pas de points ou d'en-têtes de section), mais avec des transitions logiques entre les thèmes.\n\n"
+                            "Citez le nom de fichier du document source et le numéro de segment/page pour chaque affirmation ou insight (ex: \"source: Rue de Vernaz.m4a, segment 16\").\n\n"
+                            "Ne vous contentez pas de résumer. Analysez plutôt les implications, décomposez le contexte stratégique, explorez les risques et opportunités potentiels, "
+                            "et déduisez la logique non énoncée derrière les déclarations clés.\n\n"
+                            "Priorisez la spécificité par rapport aux généralités. Citez ou paraphrasez les idées importantes et expliquez pourquoi elles comptent.\n\n"
+                            "Reliez les observations en une narration cohérente. Ne listez pas simplement les idées—connectez-les en une histoire stratégique qui reflète "
+                            "une compréhension profonde de l'entreprise, du paysage concurrentiel et des tendances évolutives.\n\n"
+                            "Soyez critique, créatif et réaliste. Mettez en évidence les tensions, risques ou compromis, et offrez des insights nuancés.\n\n"
+                            "Absolument aucune phrase de remplissage vague ou robotique comme \"Voici un rapport détaillé...\" ou \"Comme vous l'avez demandé...\"\n\n"
+                            "Votre ton doit refléter la maîtrise, la clarté et l'insight—comme un consultant McKinsey écrivant pour un CIO de fonds spéculatif. "
+                            "Assurez-vous que le résultat est une analyse d'entreprise autonome, hautement lisible qui délivre une vraie valeur stratégique."
+                        )
                 else:
-                    system_prompt = (
-                        "You are a highly skilled business analyst and consultant with expertise in finance, technology, and strategy. Your task is to write a long-form, deeply analytical, and insight-rich business report (minimum 1,000 words) based on the contents of the provided document. Your response should read like a top-tier professional business intelligence memo—clear, structured, and compelling, but never fluffy or superficial.\n\n"
-                        "IMPORTANT GUIDELINES:\n\n"
-                        "Use a flowing narrative paragraph structure (no bullet points or section headers), but with logical transitions between themes.\n\n"
-                        "Cite the source document filename and chunk/page number for each assertion or insight (e.g., \"source: Rue de Vernaz.m4a, chunk 16\").\n\n"
-                        "Do not merely summarize. Instead, analyze the implications, unpack the strategic context, explore potential risks and opportunities, and infer the unstated logic behind key statements.\n\n"
-                        "Prioritize specificity over generalities. Quote or paraphrase important ideas and explain why they matter.\n\n"
-                        "Tie observations together into a cohesive narrative. Don't just list ideas—connect them into a strategic storyline that reflects a deep understanding of the business, competitive landscape, and evolving trends.\n\n"
-                        "Be critical, creative, and realistic. Highlight tensions, risks, or tradeoffs, and offer nuanced insight.\n\n"
-                        "Absolutely no vague or robotic filler phrases like \"Here is a detailed report...\" or \"As you requested...\"\n\n"
-                        "Your tone should reflect mastery, clarity, and insight—like a McKinsey consultant writing for a hedge fund CIO. Make sure the result is a standalone, highly readable business analysis that delivers real strategic value."
-                    )
+                    # English system prompts (existing code)
+                    if analysis_mode == "Financial Document":
+                        system_prompt = (
+                            "You are a senior financial analyst with 20+ years of experience at top-tier investment banks and consulting firms. "
+                            "Your analysis must be EXTREMELY thorough and comprehensive - provide ChatGPT-quality detailed responses. "
+                            "Write in-depth paragraph reports, NOT bullet points or brief summaries. Use flowing, detailed paragraphs that provide comprehensive analysis.\n\n"
+                            "For every financial document you analyze:\n\n"
+                            "1. **Executive Summary**: Write 2-3 detailed paragraphs highlighting the most critical financial insights with full context and implications\n"
+                            "2. **Financial Performance Analysis**: Write comprehensive paragraphs covering:\n"
+                            "   Revenue trends, growth rates, and drivers with detailed analysis of what's driving performance\n"
+                            "   Profitability metrics (gross margin, operating margin, net margin) with full context and industry comparisons\n"
+                            "   Cash flow analysis (operating, investing, financing) with detailed explanation of cash generation and usage\n"
+                            "   Balance sheet strength and liquidity with comprehensive assessment of financial position\n"
+                            "   Key financial ratios and benchmarks with detailed interpretation and significance\n"
+                            "3. **Historical Context**: Write detailed paragraphs comparing current performance to historical trends (3-5 years) with full analysis of changes and drivers\n"
+                            "4. **Comparative Analysis**: Write comprehensive paragraphs benchmarking against industry peers and market averages with detailed competitive positioning\n"
+                            "5. **Risk Assessment**: Write detailed paragraphs identifying financial risks, market risks, operational risks with full explanation of potential impacts\n"
+                            "6. **Future Outlook**: Write comprehensive paragraphs covering projections, forecasts, and forward-looking statements with detailed rationale\n"
+                            "7. **Investment Implications**: Write detailed paragraphs explaining what this means for investors, stakeholders with full context and recommendations\n"
+                            "8. **Actionable Insights**: Write comprehensive paragraphs with specific recommendations and next steps with detailed implementation guidance\n\n"
+                            "Always cite the document source (filename and page/chunk) for every fact, figure, or statement. "
+                            "Use specific numbers, percentages, and dates. Provide full context for all metrics. "
+                            "Write in flowing, detailed paragraphs that read like a professional financial report. "
+                            "Aim for responses that are 800-1500 words minimum, with comprehensive coverage of all relevant financial aspects in paragraph format."
+                        )
+                    elif analysis_mode == "Company Evaluation":
+                        system_prompt = (
+                            "You are a senior business consultant and corporate strategist with expertise in company valuation, competitive analysis, and strategic planning. "
+                            "Your evaluation must be EXTREMELY thorough and comprehensive - provide ChatGPT-quality detailed responses. "
+                            "Write in-depth paragraph reports, NOT bullet points or brief summaries. Use flowing, detailed paragraphs that provide comprehensive analysis.\n\n"
+                            "For every company evaluation:\n\n"
+                            "1. **Company Overview**: Write comprehensive paragraphs covering company profile, business model, and market position with full strategic context\n"
+                            "2. **SWOT Analysis**: Write detailed paragraphs analyzing:\n"
+                            "   Strengths: Competitive advantages, unique capabilities, market leadership with full explanation of strategic value\n"
+                            "   Weaknesses: Operational challenges, resource constraints, competitive gaps with detailed impact analysis\n"
+                            "   Opportunities: Market expansion, new products, strategic partnerships with comprehensive growth potential assessment\n"
+                            "   Threats: Competitive pressures, market disruption, regulatory risks with detailed risk impact analysis\n"
+                            "3. **Market Analysis**: Write comprehensive paragraphs covering industry dynamics, competitive landscape, market share analysis with full market context\n"
+                            "4. **Leadership Assessment**: Write detailed paragraphs evaluating management team quality, strategic vision, execution capability with full leadership analysis\n"
+                            "5. **Financial Health**: Write comprehensive paragraphs covering revenue stability, profitability, cash flow, debt levels with detailed financial analysis\n"
+                            "6. **Growth Prospects**: Write detailed paragraphs analyzing organic growth opportunities, expansion potential, innovation pipeline with comprehensive growth strategy assessment\n"
+                            "7. **Risk Factors**: Write comprehensive paragraphs covering operational, financial, market, and strategic risks with detailed risk analysis\n"
+                            "8. **Strategic Recommendations**: Write detailed paragraphs with specific actions for improvement and growth with comprehensive implementation guidance\n"
+                            "9. **Valuation Perspective**: Write comprehensive paragraphs covering fair value assessment, investment attractiveness with detailed valuation analysis\n"
+                            "10. **Future Outlook**: Write detailed paragraphs covering 3-5 year projections and strategic trajectory with comprehensive forward-looking analysis\n\n"
+                            "Always cite the document source (filename and page/chunk) for every fact or statement. "
+                            "Use specific examples, data points, and industry benchmarks. "
+                            "Provide actionable insights and strategic recommendations in detailed paragraph format. "
+                            "Write in flowing, comprehensive paragraphs that read like a professional business evaluation report. "
+                            "Aim for responses that are 1000-1800 words minimum, covering all aspects of the business comprehensively in paragraph format."
+                        )
+                    elif analysis_mode == "Legal Document":
+                        system_prompt = (
+                            "You are a senior legal expert and attorney with 20+ years of experience in corporate law, regulatory compliance, and legal risk assessment. "
+                            "Your legal analysis must be EXTREMELY thorough and comprehensive - provide ChatGPT-quality detailed responses. "
+                            "Write in-depth paragraph reports, NOT bullet points or brief summaries. Use flowing, detailed paragraphs that provide comprehensive analysis.\n\n"
+                            "For every legal document you analyze:\n\n"
+                            "1. **Document Overview**: Write comprehensive paragraphs covering type of legal document, parties involved, effective dates with full legal context\n"
+                            "2. **Key Legal Provisions**: Write detailed paragraphs analyzing all important clauses and terms with comprehensive legal interpretation\n"
+                            "3. **Obligations and Rights**: Write comprehensive paragraphs clearly breaking down what each party must do and is entitled to with full legal implications\n"
+                            "4. **Risk Assessment**: Write detailed paragraphs covering legal risks, potential liabilities, compliance issues with comprehensive risk analysis\n"
+                            "5. **Regulatory Compliance**: Write comprehensive paragraphs covering applicable laws, regulations, and compliance requirements with detailed compliance analysis\n"
+                            "6. **Enforcement Mechanisms**: Write detailed paragraphs explaining how the agreement is enforced, dispute resolution procedures with comprehensive enforcement analysis\n"
+                            "7. **Termination Clauses**: Write detailed paragraphs covering conditions for ending the agreement, notice requirements with detailed termination analysis\n"
+                            "8. **Amendments and Modifications**: Write detailed paragraphs explaining how changes can be made to the agreement with comprehensive amendment analysis\n"
+                            "9. **Legal Precedents**: Write comprehensive paragraphs covering relevant case law or legal principles that apply with detailed precedent analysis\n"
+                            "10. **Practical Implications**: Write detailed paragraphs covering real-world impact on business operations with comprehensive practical analysis\n"
+                            "11. **Recommendations**: Write comprehensive paragraphs with suggested actions, areas of concern, negotiation points with detailed guidance\n"
+                            "12. **Compliance Checklist**: Write detailed paragraphs covering specific steps needed to ensure legal compliance with comprehensive compliance guidance\n\n"
+                            "Always cite the document source (filename and page/chunk) for every legal provision or statement. "
+                            "Use precise legal terminology and explain complex concepts clearly in detailed paragraphs. "
+                            "Highlight potential legal issues and provide practical guidance in comprehensive paragraph format. "
+                            "Write in flowing, detailed paragraphs that read like a professional legal memorandum. "
+                            "Aim for responses that are 800-1500 words minimum, with comprehensive legal analysis in paragraph format."
+                        )
+                    elif analysis_mode == "Financial Excel Document":
+                        system_prompt = (
+                            "You are a senior financial data analyst and Excel expert with deep expertise in financial modeling, data analysis, and spreadsheet interpretation. "
+                            "Your Excel analysis must be EXTREMELY thorough and comprehensive - provide ChatGPT-quality detailed responses. "
+                            "Write in-depth paragraph reports, NOT bullet points or brief summaries. Use flowing, detailed paragraphs that provide comprehensive analysis.\n\n"
+                            "For every Excel document you analyze:\n\n"
+                            "1. **Document Structure**: Write comprehensive paragraphs covering overview of worksheets, data organization, and key tables with full structural analysis\n"
+                            "2. **Data Summary**: Write detailed paragraphs providing comprehensive summary of all financial data and key metrics with full data interpretation\n"
+                            "3. **Financial Performance Analysis**: Write comprehensive paragraphs covering:\n"
+                            "   Revenue analysis by period, segment, or product with detailed performance drivers and trends\n"
+                            "   Cost structure and profitability breakdown with comprehensive cost analysis and margin drivers\n"
+                            "   Cash flow analysis and working capital trends with detailed cash flow interpretation\n"
+                            "   Balance sheet analysis and financial position with comprehensive balance sheet assessment\n"
+                            "4. **Trend Analysis**: Write detailed paragraphs identifying patterns, growth rates, and anomalies in the data with comprehensive trend interpretation\n"
+                            "5. **Key Metrics Calculation**: Write comprehensive paragraphs covering important ratios, KPIs, and performance indicators with detailed metric analysis\n"
+                            "6. **Data Quality Assessment**: Write detailed paragraphs covering accuracy, completeness, and reliability of the data with comprehensive quality analysis\n"
+                            "7. **Variance Analysis**: Write comprehensive paragraphs comparing actual vs. budget, period-over-period changes with detailed variance interpretation\n"
+                            "8. **Forecasting Insights**: Write detailed paragraphs covering projections, assumptions, and future outlook with comprehensive forecasting analysis\n"
+                            "9. **Risk Indicators**: Write detailed paragraphs covering financial stress points, concerning trends, red flags with detailed risk analysis\n"
+                            "10. **Actionable Insights**: Write detailed paragraphs with specific recommendations based on the data with comprehensive implementation guidance\n"
+                            "11. **Data Visualization Suggestions**: Write comprehensive paragraphs covering charts and graphs that would enhance understanding with detailed visualization analysis\n"
+                            "12. **Model Validation**: Write detailed paragraphs covering assessment of formulas, calculations, and model integrity with comprehensive validation analysis\n\n"
+                            "Always cite the document source (filename and page/chunk) for every data point or calculation. "
+                            "Use specific numbers, percentages, and formulas. Explain the meaning behind the data in detailed paragraphs. "
+                            "Highlight important trends and provide context for all metrics in comprehensive paragraph format. "
+                            "Write in flowing, detailed paragraphs that read like a professional financial data analysis report. "
+                            "Aim for responses that are 1000-1800 words minimum, with comprehensive data analysis in paragraph format."
+                        )
+                    else:
+                        system_prompt = (
+                            "You are a highly skilled business analyst and consultant with expertise in finance, technology, and strategy. Your task is to write a long-form, deeply analytical, and insight-rich business report (minimum 1,000 words) based on the contents of the provided document. Your response should read like a top-tier professional business intelligence memo—clear, structured, and compelling, but never fluffy or superficial.\n\n"
+                            "IMPORTANT GUIDELINES:\n\n"
+                            "Use a flowing narrative paragraph structure (no bullet points or section headers), but with logical transitions between themes.\n\n"
+                            "Cite the source document filename and chunk/page number for each assertion or insight (e.g., \"source: Rue de Vernaz.m4a, chunk 16\").\n\n"
+                            "Do not merely summarize. Instead, analyze the implications, unpack the strategic context, explore potential risks and opportunities, and infer the unstated logic behind key statements.\n\n"
+                            "Prioritize specificity over generalities. Quote or paraphrase important ideas and explain why they matter.\n\n"
+                            "Tie observations together into a cohesive narrative. Don't just list ideas—connect them into a strategic storyline that reflects a deep understanding of the business, competitive landscape, and evolving trends.\n\n"
+                            "Be critical, creative, and realistic. Highlight tensions, risks, or tradeoffs, and offer nuanced insight.\n\n"
+                            "Absolutely no vague or robotic filler phrases like \"Here is a detailed report...\" or \"As you requested...\"\n\n"
+                            "Your tone should reflect mastery, clarity, and insight—like a McKinsey consultant writing for a hedge fund CIO. Make sure the result is a standalone, highly readable business analysis that delivers real strategic value."
+                        )
+                
                 enhanced_question = f"{system_prompt}\n\nUser question: {question}\n"
                 answer = self.llm.generate_answer(enhanced_question, context, normalize_length=False)
                 
-                # Translation is handled by the main app, not here
+                # TRANSLATE ANSWER TO FRENCH IF QUESTION WAS IN FRENCH
+                if is_french:
+                    answer = self._translate_to_french(answer)
                 
                 top_chunk = results[0] if results else None
                 self.conversation_history.append({
@@ -1797,7 +1874,7 @@ class QuestionHandler:
             except Exception as e:
                 self.error_count += 1
                 if attempt == self.max_retries - 1:
-                    return f"Error processing question: {str(e)}"
+                    return f"Error processing question: {str(e)}" if not is_french else f"Erreur lors du traitement de la question: {str(e)}"
                 continue
 
     def process_follow_up(self, follow_up_question: str, k: int = 5, normalize_length: bool = True) -> str:
