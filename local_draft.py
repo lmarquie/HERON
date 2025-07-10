@@ -14,7 +14,7 @@ import pytesseract
 from difflib import SequenceMatcher
 from config import OPENAI_API_KEY
 import logging
-import time
+import timel
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import openai
