@@ -612,10 +612,18 @@ def _is_french_question(text: str) -> bool:
     french_patterns = ['est-ce que', 'qu\'est-ce que', 'comment', 'pourquoi', 'quand', 'où']
     french_pattern_count = sum(1 for pattern in french_patterns if pattern in text_lower)
     
-    total_score = french_word_count + french_char_count + french_pattern_count
+    # Check for obvious French words that indicate French language
+    obvious_french_words = ['pourquoi', 'comment', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles', 'est', 'sont', 'un', 'une', 'des', 'le', 'la', 'les', 'bien', 'bon', 'bonne', 'mauvais', 'mauvaise', 'pour', 'quoie']
+    obvious_french_count = sum(1 for word in obvious_french_words if word in text_lower)
     
-    # Require at least 2 indicators to be more confident
-    return total_score >= 2
+    # Check for common French question starters
+    french_starters = ['pourquoi', 'comment', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles', 'pour']
+    starts_with_french = any(text_lower.startswith(starter) for starter in french_starters)
+    
+    total_score = french_word_count + french_char_count + french_pattern_count + obvious_french_count
+    
+    # If it starts with a French question word or has obvious French words, it's French
+    return total_score >= 1 or obvious_french_count >= 1 or starts_with_french
 
 def _translate_text(text: str, source_lang: str, target_lang: str) -> str:
     """Translate text between languages using Deep Translator."""
@@ -898,6 +906,7 @@ def submit_chat_message():
             with st.spinner("Thinking..."):
                 # Check if question is in French
                 is_french = _is_french_question(chat_question)
+                logger.info(f"Question: '{chat_question}' - French detected: {is_french}")
                 
                 # Process based on mode - simplified logic
                 if st.session_state.get('internet_mode', False):
@@ -972,7 +981,7 @@ with st.sidebar:
     # Document Management Section
     st.subheader("Documents")
     
-    # File uploader
+    # File uploader for individual files
     uploaded_files = st.file_uploader(
         "Upload files",
         type=['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac'],
@@ -980,9 +989,71 @@ with st.sidebar:
         key="pdf_uploader"
     )
     
-    # Process uploaded files
+    # Folder uploader (ZIP files)
+    uploaded_zip = st.file_uploader(
+        "Upload folder (ZIP file)",
+        type=['zip'],
+        accept_multiple_files=False,
+        key="zip_uploader",
+        help="Upload a ZIP file containing multiple documents. The ZIP will be extracted and all supported files will be processed."
+    )
+    
+    # Process uploaded files and ZIP
+    all_files_to_process = []
+    
+    # Add individual files
     if uploaded_files:
-        current_files = [f.name for f in uploaded_files]
+        all_files_to_process.extend(uploaded_files)
+    
+    # Process ZIP file if uploaded
+    if uploaded_zip:
+        import zipfile
+        import tempfile
+        import io
+        
+        try:
+            with st.spinner("Extracting ZIP file..."):
+                # Create a temporary directory to extract files
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    # Extract ZIP contents
+                    with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
+                        zip_ref.extractall(temp_dir)
+                    
+                    # Walk through extracted files and find supported types
+                    supported_extensions = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', 
+                                          '.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac'}
+                    
+                    extracted_files = []
+                    for root, dirs, files in os.walk(temp_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            file_ext = os.path.splitext(file)[1].lower()
+                            
+                            if file_ext in supported_extensions:
+                                # Create a file-like object that Streamlit can handle
+                                with open(file_path, 'rb') as f:
+                                    file_content = f.read()
+                                
+                                # Create a BytesIO object with the file content
+                                file_obj = io.BytesIO(file_content)
+                                file_obj.name = file  # Set the filename
+                                file_obj.seek(0)
+                                
+                                extracted_files.append(file_obj)
+                    
+                    if extracted_files:
+                        st.success(f"Extracted {len(extracted_files)} supported files from ZIP")
+                        all_files_to_process.extend(extracted_files)
+                    else:
+                        st.warning("No supported files found in ZIP")
+                        
+        except Exception as e:
+            st.error(f"Error processing ZIP file: {str(e)}")
+            logger.error(f"ZIP processing error: {str(e)}")
+    
+    # Process all files (individual + extracted from ZIP)
+    if all_files_to_process:
+        current_files = [f.name for f in all_files_to_process]
         last_files = st.session_state.get('last_uploaded_files', [])
         
         # Check if files are actually new and not currently processing
@@ -995,8 +1066,8 @@ with st.sidebar:
             st.session_state.last_upload_time = time.time()
             
             # Check for audio files
-            audio_files = [f for f in uploaded_files if f.name.lower().endswith(('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac'))]
-            document_files = [f for f in uploaded_files if f.name.lower().endswith(('.pdf', '.docx', '.pptx', '.doc', '.xls', '.xlsx', '.ppt'))]
+            audio_files = [f for f in all_files_to_process if f.name.lower().endswith(('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac'))]
+            document_files = [f for f in all_files_to_process if f.name.lower().endswith(('.pdf', '.docx', '.pptx', '.doc', '.xls', '.xlsx', '.ppt'))]
             
             if audio_files:
                 st.info(f"Found {len(audio_files)} audio file(s) - will transcribe to text")
@@ -1005,9 +1076,9 @@ with st.sidebar:
             batch_size = 3  # Process 3 files at a time
             success_count = 0
             
-            with st.spinner(f"Processing {len(uploaded_files)} files..."):
-                for i in range(0, len(uploaded_files), batch_size):
-                    batch = uploaded_files[i:i+batch_size]
+            with st.spinner(f"Processing {len(all_files_to_process)} files..."):
+                for i in range(0, len(all_files_to_process), batch_size):
+                    batch = all_files_to_process[i:i+batch_size]
                     batch_names = [f.name for f in batch]
                     
                     st.info(f"Processing batch {i//batch_size + 1}: {', '.join(batch_names)}")
@@ -1023,7 +1094,7 @@ with st.sidebar:
                         logger.error(f"Error processing batch: {str(e)}")
             
             if success_count > 0:
-                st.success(f"Successfully processed {success_count}/{len(uploaded_files)} files")
+                st.success(f"Successfully processed {success_count}/{len(all_files_to_process)} files")
                 st.session_state.documents_loaded = True
                 st.session_state.processing_status = st.session_state.rag_system.file_handler.get_processing_status()
             else:
