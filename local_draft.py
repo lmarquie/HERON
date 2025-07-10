@@ -1664,12 +1664,13 @@ class QuestionHandler:
                 
                 # Choose system prompt based on analysis_mode and language
                 if is_french:
-                    # French system prompts
+                    # French system prompts - COMPLETE AND PROPER
                     if analysis_mode == "Financial Document":
                         system_prompt = (
                             "Vous êtes un analyste financier senior avec plus de 20 ans d'expérience dans les banques d'investissement de premier plan et les cabinets de conseil. "
                             "Votre analyse doit être EXTREMEMENT approfondie et complète - fournissez des réponses détaillées de qualité ChatGPT. "
                             "Rédigez des rapports en paragraphes détaillés, PAS de points ou de résumés brefs. Utilisez des paragraphes fluides et détaillés qui fournissent une analyse complète.\n\n"
+                            "IMPORTANT: Répondez UNIQUEMENT en français. Ne mélangez jamais l'anglais et le français dans votre réponse.\n\n"
                             "Pour chaque document financier que vous analysez:\n\n"
                             "1. **Résumé exécutif**: Rédigez 2-3 paragraphes détaillés mettant en évidence les insights financiers les plus critiques avec le contexte complet et les implications\n"
                             "2. **Analyse de la performance financière**: Rédigez des paragraphes complets couvrant:\n"
@@ -1694,6 +1695,7 @@ class QuestionHandler:
                             "Vous êtes un consultant d'entreprise senior et stratège corporatif avec une expertise en évaluation d'entreprise, analyse concurrentielle et planification stratégique. "
                             "Votre évaluation doit être EXTREMEMENT approfondie et complète - fournissez des réponses détaillées de qualité ChatGPT. "
                             "Rédigez des rapports en paragraphes détaillés, PAS de points ou de résumés brefs. Utilisez des paragraphes fluides et détaillés qui fournissent une analyse complète.\n\n"
+                            "IMPORTANT: Répondez UNIQUEMENT en français. Ne mélangez jamais l'anglais et le français dans votre réponse.\n\n"
                             "Pour chaque évaluation d'entreprise:\n\n"
                             "1. **Aperçu de l'entreprise**: Rédigez des paragraphes complets couvrant le profil de l'entreprise, le modèle d'affaires et la position de marché avec le contexte stratégique complet\n"
                             "2. **Analyse SWOT**: Rédigez des paragraphes détaillés analysant:\n"
@@ -1721,6 +1723,7 @@ class QuestionHandler:
                             "Votre tâche est de rédiger un rapport d'entreprise long format, profondément analytique et riche en insights (minimum 1 000 mots) "
                             "basé sur le contenu du document fourni. Votre réponse doit se lire comme un mémo d'intelligence d'entreprise de niveau professionnel "
                             "de premier plan—clair, structuré et convaincant, mais jamais superficiel ou artificiel.\n\n"
+                            "IMPORTANT: Répondez UNIQUEMENT en français. Ne mélangez jamais l'anglais et le français dans votre réponse.\n\n"
                             "DIRECTIVES IMPORTANTES:\n\n"
                             "Utilisez une structure narrative fluide en paragraphes (pas de points ou d'en-têtes de section), mais avec des transitions logiques entre les thèmes.\n\n"
                             "Citez le nom de fichier du document source et le numéro de segment/page pour chaque affirmation ou insight (ex: \"source: Rue de Vernaz.m4a, segment 16\").\n\n"
@@ -1855,9 +1858,9 @@ class QuestionHandler:
                 enhanced_question = f"{system_prompt}\n\nUser question: {question}\n"
                 answer = self.llm.generate_answer(enhanced_question, context, normalize_length=False)
                 
-                # TRANSLATE ANSWER TO FRENCH IF QUESTION WAS IN FRENCH
-                if is_french:
-                    answer = self._translate_to_french(answer)
+                # REMOVE TRANSLATION - Let the AI generate French directly
+                # if is_french:
+                #     answer = self._translate_to_french(answer)
                 
                 top_chunk = results[0] if results else None
                 self.conversation_history.append({
