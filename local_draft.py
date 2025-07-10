@@ -1930,12 +1930,53 @@ class QuestionHandler:
         }
 
     def _is_french_question(self, text: str) -> bool:
+        """Improved French detection that's more accurate and less prone to false positives."""
         text_lower = text.lower()
-        french_words = ['le', 'la', 'les', 'un', 'une', 'des', 'et', 'ou', 'pour', 'avec', 'sur', 'dans', 'par', 'de', 'du', 'que', 'qui', 'quoi', 'quoie', 'comment', 'pourquoi', 'quand', 'où']
-        french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
         
-        french_score = sum(1 for word in french_words if word in text_lower) + sum(1 for char in french_chars if char in text)
-        return french_score > 0
+        # More specific French words and phrases that are less likely to appear in English
+        french_indicators = [
+            'est-ce que', 'qu\'est-ce que', 'comment ça va', 'bonjour', 'au revoir', 'merci',
+            's\'il vous plaît', 'excusez-moi', 'je voudrais', 'je veux', 'je peux',
+            'nous avons', 'ils ont', 'elles ont', 'c\'est', 'ce sont', 'il y a',
+            'pourquoi', 'comment', 'quand', 'où', 'qui', 'quoi', 'quel', 'quelle',
+            'combien', 'depuis quand', 'jusqu\'à quand', 'd\'accord', 'bien sûr',
+            'peut-être', 'certainement', 'absolument', 'probablement', 'sûrement'
+        ]
+        
+        # French accented characters (strong indicator)
+        french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï', 'œ', 'æ']
+        
+        # French-specific word patterns
+        french_patterns = [
+            r'\b(le|la|les|un|une|des|du|de|au|aux|dans|sur|avec|pour|par|sans|sous|chez)\b',
+            r'\b(et|ou|mais|donc|car|ni|puis)\b',
+            r'\b(je|tu|il|elle|nous|vous|ils|elles)\b',
+            r'\b(mon|ma|mes|ton|ta|tes|son|sa|ses|notre|votre|leur)\b',
+            r'\b(ce|cette|ces|celui|celle|ceux|celles)\b'
+        ]
+        
+        import re
+        
+        # Check for French indicators
+        french_score = 0
+        
+        # Strong indicators (French-specific words/phrases)
+        for indicator in french_indicators:
+            if indicator in text_lower:
+                french_score += 3  # High weight for specific French phrases
+        
+        # French accented characters (very strong indicator)
+        char_count = sum(1 for char in french_chars if char in text)
+        french_score += char_count * 2  # High weight for accented characters
+        
+        # French word patterns (medium weight)
+        for pattern in french_patterns:
+            matches = re.findall(pattern, text_lower)
+            french_score += len(matches) * 0.5  # Lower weight for common words
+        
+        # Require a higher threshold to avoid false positives
+        # At least 2 strong indicators or 1 strong + multiple weak indicators
+        return french_score >= 2
 
     def _translate_to_french(self, text: str) -> str:
         """Translate English text to French using Deep Translator with chunking for long texts."""
