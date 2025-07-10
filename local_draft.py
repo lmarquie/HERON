@@ -1621,8 +1621,7 @@ class QuestionHandler:
                     for chunk in results
                 ])
                 
-                # Check if question is in French
-                is_french = self._is_french_question(question)
+                # French detection is handled by the main app, not here
                 
                 # Choose system prompt based on analysis_mode
                 if analysis_mode == "Financial Document":
@@ -1743,9 +1742,7 @@ class QuestionHandler:
                 enhanced_question = f"{system_prompt}\n\nUser question: {question}\n"
                 answer = self.llm.generate_answer(enhanced_question, context, normalize_length=False)
                 
-                # Translate to French if question was in French
-                if is_french:
-                    answer = self._translate_to_french(answer)
+                # Translation is handled by the main app, not here
                 
                 top_chunk = results[0] if results else None
                 self.conversation_history.append({
