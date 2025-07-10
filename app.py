@@ -578,11 +578,12 @@ def _is_french_question(text: str) -> bool:
     
     # More specific French words and phrases
     french_words = [
-        'comment', 'pourquoi', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles',
-        'comment', 'pourquoi', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles',
+        'comment', 'pourquoi', 'quand', 'où', 'qui', 'quoi', 'quoie', 'combien', 'quel', 'quelle', 'quels', 'quelles',
+        'comment', 'pourquoi', 'quand', 'où', 'qui', 'quoi', 'quoie', 'combien', 'quel', 'quelle', 'quels', 'quelles',
         'est-ce', 'sont-ce', 'avez-vous', 'avez-vous', 'pouvez-vous', 'voulez-vous', 'allez-vous',
         'comment allez-vous', 'comment ça va', 'ça va', 'bonjour', 'salut', 'au revoir', 'merci',
-        's\'il vous plaît', 's\'il te plaît', 'excusez-moi', 'désolé', 'pardon'
+        's\'il vous plaît', 's\'il te plaît', 'excusez-moi', 'désolé', 'pardon',
+        'et', 'le', 'la', 'les', 'un', 'une', 'des', 'ou', 'avec', 'sur', 'dans', 'par', 'de', 'du'
     ]
     
     # French characters
@@ -878,13 +879,13 @@ def submit_chat_message():
                     # Use document search - this method already adds to conversation history
                     answer = st.session_state.rag_system.process_question_with_mode(chat_question, normalize_length=True, analysis_mode=analysis_mode)
                 
-                # Translate to French if question was in French
-                if is_french:
-                    answer = _translate_to_french(answer)
-                    # Update the conversation history with the translated answer
-                    conversation_history = st.session_state.rag_system.get_conversation_history()
-                    if conversation_history:
-                        conversation_history[-1]['answer'] = answer
+                # REMOVE THIS TRANSLATION - The QuestionHandler already generates French responses
+                # if is_french:
+                #     answer = _translate_to_french(answer)
+                #     # Update the conversation history with the translated answer
+                #     conversation_history = st.session_state.rag_system.get_conversation_history()
+                #     if conversation_history:
+                #         conversation_history[-1]['answer'] = answer
             
             # Don't add to conversation history here since the RAG methods already do it
             st.rerun()
@@ -975,6 +976,14 @@ with st.sidebar:
         
         try:
             with st.spinner("Extracting ZIP file..."):
+                # Check ZIP file size to prevent memory issues
+                zip_size_mb = uploaded_zip.size / (1024 * 1024)
+                if zip_size_mb > 500:  # 500MB warning for 1GB Streamlit memory
+                    st.warning(f"Large ZIP file detected ({zip_size_mb:.1f}MB). For optimal performance with 1GB memory limit, keep ZIP files under 500MB.")
+                if zip_size_mb > 800:  # Hard limit
+                    st.error(f"ZIP file too large ({zip_size_mb:.1f}MB). Maximum allowed size is 800MB to prevent memory issues.")
+                    st.stop()
+                
                 # Create a temporary directory to extract files
                 with tempfile.TemporaryDirectory() as temp_dir:
                     # Extract ZIP contents
@@ -992,18 +1001,41 @@ with st.sidebar:
                             file_ext = os.path.splitext(file)[1].lower()
                             
                             if file_ext in supported_extensions:
-                                # Create a file-like object that Streamlit can handle
-                                with open(file_path, 'rb') as f:
-                                    file_content = f.read()
+                                # Create a memory-efficient file-like object
+                                # Don't load entire file into memory - use file path instead
+                                class FileWrapper:
+                                    def __init__(self, file_path, filename):
+                                        self.file_path = file_path
+                                        self.name = filename
+                                        self._file = None
+                                    
+                                    def getbuffer(self):
+                                        # Only read when needed, not during extraction
+                                        if self._file is None:
+                                            with open(self.file_path, 'rb') as f:
+                                                return f.read()
+                                        return self._file.read()
+                                    
+                                    def seek(self, pos):
+                                        if self._file is None:
+                                            self._file = open(self.file_path, 'rb')
+                                        self._file.seek(pos)
+                                    
+                                    def close(self):
+                                        if self._file:
+                                            self._file.close()
+                                            self._file = None
                                 
-                                # Create a BytesIO object with the file content
-                                file_obj = io.BytesIO(file_content)
-                                file_obj.name = file  # Set the filename
-                                file_obj.seek(0)
-                                
+                                file_obj = FileWrapper(file_path, file)
                                 extracted_files.append(file_obj)
                     
                     if extracted_files:
+                        # Limit number of files to prevent memory issues
+                        max_files = 50  # Reasonable limit
+                        if len(extracted_files) > max_files:
+                            st.warning(f"Large ZIP detected with {len(extracted_files)} files. Processing first {max_files} files to prevent memory issues.")
+                            extracted_files = extracted_files[:max_files]
+                        
                         st.success(f"Extracted {len(extracted_files)} supported files from ZIP")
                         all_files_to_process.extend(extracted_files)
                     else:
