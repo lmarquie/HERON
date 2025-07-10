@@ -550,17 +550,7 @@ def is_chart_request(question: str) -> bool:
     ]
     return any(keyword in question_lower for keyword in chart_keywords)
 
-def is_translation_request(question: str) -> bool:
-    """Detect if the question is asking to translate the previous answer."""
-    question_lower = question.lower()
-    translation_keywords = [
-        'translate', 'translation', 'traduire', 'traduction',
-        'translate this', 'translate that', 'translate the answer',
-        'traduire ceci', 'traduire cela', 'traduire la réponse',
-        'in english', 'en anglais', 'to english', 'vers l\'anglais',
-        'in french', 'en français', 'to french', 'vers le français'
-    ]
-    return any(keyword in question_lower for keyword in translation_keywords)
+
 
 def is_audio_question(question: str) -> bool:
     """Detect if the question is about audio content."""
@@ -709,43 +699,7 @@ def _translate_to_english(text: str) -> str:
     """Translate French text to English."""
     return _translate_text(text, 'fr', 'en')
 
-def handle_translation_request(question: str) -> str:
-    """Handle translation requests by translating the previous answer."""
-    try:
-        # Get conversation history
-        conversation_history = st.session_state.rag_system.get_conversation_history()
-        
-        if not conversation_history:
-            return "No previous answer to translate."
-        
-        # Get the last answer
-        last_answer = conversation_history[-1]['answer']
-        
-        # Determine target language from the question
-        question_lower = question.lower()
-        
-        if any(word in question_lower for word in ['english', 'anglais', 'to english', 'vers l\'anglais']):
-            # Translate to English
-            translated = _translate_to_english(last_answer)
-            return f"**Translation to English:**\n\n{translated}"
-        
-        elif any(word in question_lower for word in ['french', 'français', 'to french', 'vers le français']):
-            # Translate to French
-            translated = _translate_to_french(last_answer)
-            return f"**Translation to French:**\n\n{translated}"
-        
-        else:
-            # Default: translate to English if asking in French, to French if asking in English
-            if _is_french_question(question):
-                translated = _translate_to_english(last_answer)
-                return f"**Translation to English:**\n\n{translated}"
-            else:
-                translated = _translate_to_french(last_answer)
-                return f"**Translation to French:**\n\n{translated}"
-                
-    except Exception as e:
-        logger.error(f"Error handling translation request: {str(e)}")
-        return f"Error translating previous answer: {str(e)}"
+
 
 # Update the submit_chat_message function
 def submit_chat_message():
@@ -779,16 +733,6 @@ def submit_chat_message():
                 answer = st.session_state.rag_system.handle_follow_up(chat_question, analysis_mode=analysis_mode)
             st.rerun()
             return
-        
-        # Check if this is a translation request
-        if is_translation_request(chat_question):
-            # Handle translation request
-            with st.spinner("Translating..."):
-                answer = handle_translation_request(chat_question)
-            
-            # Add to conversation history
-            st.session_state.rag_system.add_to_conversation_history(chat_question, answer, "translation_request", "document")
-            st.rerun()
         
         # Check if this is a chart request
         elif is_chart_request(chat_question):
@@ -1286,6 +1230,47 @@ with st.sidebar:
         st.session_state.last_uploaded_files = []
         st.session_state.processing_status = {}
         st.success("Session reset!")
+
+    # Translation Section
+    if conversation_history:
+        st.markdown("---")
+        st.subheader("Translation")
+        
+        # Get the last answer for translation
+        last_answer = conversation_history[-1]['answer'] if conversation_history else ""
+        
+        if last_answer:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🇫🇷 To French", use_container_width=True, key="translate_to_french"):
+                    with st.spinner("Translating to French..."):
+                        translated = _translate_to_french(last_answer)
+                        # Add translation to conversation history
+                        st.session_state.rag_system.add_to_conversation_history(
+                            "Translate to French",
+                            f"**Translation to French:**\n\n{translated}",
+                            "translation_request",
+                            "document"
+                        )
+                    st.success("Translated to French!")
+                    st.rerun()
+            
+            with col2:
+                if st.button("🇬🇧 To English", use_container_width=True, key="translate_to_english"):
+                    with st.spinner("Translating to English..."):
+                        translated = _translate_to_english(last_answer)
+                        # Add translation to conversation history
+                        st.session_state.rag_system.add_to_conversation_history(
+                            "Translate to English",
+                            f"**Translation to English:**\n\n{translated}",
+                            "translation_request",
+                            "document"
+                        )
+                    st.success("Translated to English!")
+                    st.rerun()
+        else:
+            st.info("No answer to translate. Ask a question first.")
 
     # Compact Performance Section
     if conversation_history or st.session_state.get('performance_metrics'):
