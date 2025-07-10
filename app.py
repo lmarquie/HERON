@@ -1,6 +1,6 @@
 import streamlit as st
 import os
-from local_draft import RAGSystem, WebFileHandler, render_chunk_source_image, OnDemandImageProcessor
+from local_draft import RAGSystem, WebFileHandler, render_chunk_source_image
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -31,12 +31,6 @@ st.set_page_config(
 # Force reload to clear cache
 if 'local_draft' in sys.modules:
     importlib.reload(sys.modules['local_draft'])
-
-# Clear Streamlit cache
-if hasattr(st, 'cache_data'):
-    st.cache_data.clear()
-if hasattr(st, 'cache_resource'):
-    st.cache_resource.clear()
 
 # Add this right after your imports at the very top of app.py
 def export_transcription_to_pdf(transcription_text: str, filename: str = "transcription"):
@@ -144,12 +138,6 @@ def export_transcription_to_pdf(transcription_text: str, filename: str = "transc
 
 # Initialize RAG system with improved session management
 def initialize_rag_system():
-    # Force reload the local_draft module to ensure we have the latest version
-    if 'local_draft' in sys.modules:
-        importlib.reload(sys.modules['local_draft'])
-        # Re-import RAGSystem to get the updated version
-        from local_draft import RAGSystem
-    
     if 'rag_system' not in st.session_state:
         st.session_state.rag_system = RAGSystem(is_web=True, use_vision_api=False)
         st.session_state.documents_loaded = False
@@ -584,8 +572,6 @@ def is_audio_question(question: str) -> bool:
     ]
     return any(keyword in question_lower for keyword in audio_keywords)
 
-
-
 def _is_french_question(text: str) -> bool:
     """Detect if the question is in French."""
     text_lower = text.lower()
@@ -612,18 +598,10 @@ def _is_french_question(text: str) -> bool:
     french_patterns = ['est-ce que', 'qu\'est-ce que', 'comment', 'pourquoi', 'quand', 'où']
     french_pattern_count = sum(1 for pattern in french_patterns if pattern in text_lower)
     
-    # Check for obvious French words that indicate French language
-    obvious_french_words = ['pourquoi', 'comment', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles', 'est', 'sont', 'un', 'une', 'des', 'le', 'la', 'les', 'bien', 'bon', 'bonne', 'mauvais', 'mauvaise', 'pour', 'quoie']
-    obvious_french_count = sum(1 for word in obvious_french_words if word in text_lower)
+    total_score = french_word_count + french_char_count + french_pattern_count
     
-    # Check for common French question starters
-    french_starters = ['pourquoi', 'comment', 'quand', 'où', 'qui', 'quoi', 'combien', 'quel', 'quelle', 'quels', 'quelles', 'pour']
-    starts_with_french = any(text_lower.startswith(starter) for starter in french_starters)
-    
-    total_score = french_word_count + french_char_count + french_pattern_count + obvious_french_count
-    
-    # If it starts with a French question word or has obvious French words, it's French
-    return total_score >= 1 or obvious_french_count >= 1 or starts_with_french
+    # Require at least 2 indicators to be more confident
+    return total_score >= 2
 
 def _translate_text(text: str, source_lang: str, target_lang: str) -> str:
     """Translate text between languages using Deep Translator."""
@@ -707,24 +685,9 @@ def _translate_text(text: str, source_lang: str, target_lang: str) -> str:
                                 time.sleep(0.2)
                             except Exception as sub_error:
                                 logger.error(f"Error translating sub-chunk: {str(sub_error)}")
-                                # If translation fails for sub-chunk, try one more time with smaller size
-                                try:
-                                    smaller_chunks = [sub_chunk[j:j+800] for j in range(0, len(sub_chunk), 800)]
-                                    for small_chunk in smaller_chunks:
-                                        try:
-                                            translated_small_chunk = translator.translate(small_chunk)
-                                            translated_chunks.append(translated_small_chunk)
-                                            time.sleep(0.2)
-                                        except Exception as small_error:
-                                            logger.error(f"Error translating small chunk: {str(small_error)}")
-                                            # If all translation attempts fail, return original text to avoid mixed language
-                                            return text
-                                except Exception as final_error:
-                                    logger.error(f"Final translation attempt failed: {str(final_error)}")
-                                    return text
+                                translated_chunks.append(sub_chunk)  # Keep original
                     else:
-                        # If translation fails completely, return original text to avoid mixed language
-                        return text
+                        translated_chunks.append(chunk)  # Keep original if translation fails
             
             return ' '.join(translated_chunks)
         else:
@@ -906,7 +869,6 @@ def submit_chat_message():
             with st.spinner("Thinking..."):
                 # Check if question is in French
                 is_french = _is_french_question(chat_question)
-                logger.info(f"Question: '{chat_question}' - French detected: {is_french}")
                 
                 # Process based on mode - simplified logic
                 if st.session_state.get('internet_mode', False):
@@ -981,7 +943,7 @@ with st.sidebar:
     # Document Management Section
     st.subheader("Documents")
     
-    # File uploader for individual files
+    # File uploader
     uploaded_files = st.file_uploader(
         "Upload files",
         type=['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac'],
@@ -989,71 +951,9 @@ with st.sidebar:
         key="pdf_uploader"
     )
     
-    # Folder uploader (ZIP files)
-    uploaded_zip = st.file_uploader(
-        "Upload folder (ZIP file)",
-        type=['zip'],
-        accept_multiple_files=False,
-        key="zip_uploader",
-        help="Upload a ZIP file containing multiple documents. The ZIP will be extracted and all supported files will be processed."
-    )
-    
-    # Process uploaded files and ZIP
-    all_files_to_process = []
-    
-    # Add individual files
+    # Process uploaded files
     if uploaded_files:
-        all_files_to_process.extend(uploaded_files)
-    
-    # Process ZIP file if uploaded
-    if uploaded_zip:
-        import zipfile
-        import tempfile
-        import io
-        
-        try:
-            with st.spinner("Extracting ZIP file..."):
-                # Create a temporary directory to extract files
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    # Extract ZIP contents
-                    with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
-                        zip_ref.extractall(temp_dir)
-                    
-                    # Walk through extracted files and find supported types
-                    supported_extensions = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', 
-                                          '.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac'}
-                    
-                    extracted_files = []
-                    for root, dirs, files in os.walk(temp_dir):
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            file_ext = os.path.splitext(file)[1].lower()
-                            
-                            if file_ext in supported_extensions:
-                                # Create a file-like object that Streamlit can handle
-                                with open(file_path, 'rb') as f:
-                                    file_content = f.read()
-                                
-                                # Create a BytesIO object with the file content
-                                file_obj = io.BytesIO(file_content)
-                                file_obj.name = file  # Set the filename
-                                file_obj.seek(0)
-                                
-                                extracted_files.append(file_obj)
-                    
-                    if extracted_files:
-                        st.success(f"Extracted {len(extracted_files)} supported files from ZIP")
-                        all_files_to_process.extend(extracted_files)
-                    else:
-                        st.warning("No supported files found in ZIP")
-                        
-        except Exception as e:
-            st.error(f"Error processing ZIP file: {str(e)}")
-            logger.error(f"ZIP processing error: {str(e)}")
-    
-    # Process all files (individual + extracted from ZIP)
-    if all_files_to_process:
-        current_files = [f.name for f in all_files_to_process]
+        current_files = [f.name for f in uploaded_files]
         last_files = st.session_state.get('last_uploaded_files', [])
         
         # Check if files are actually new and not currently processing
@@ -1066,8 +966,8 @@ with st.sidebar:
             st.session_state.last_upload_time = time.time()
             
             # Check for audio files
-            audio_files = [f for f in all_files_to_process if f.name.lower().endswith(('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac'))]
-            document_files = [f for f in all_files_to_process if f.name.lower().endswith(('.pdf', '.docx', '.pptx', '.doc', '.xls', '.xlsx', '.ppt'))]
+            audio_files = [f for f in uploaded_files if f.name.lower().endswith(('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac'))]
+            document_files = [f for f in uploaded_files if f.name.lower().endswith(('.pdf', '.docx', '.pptx', '.doc', '.xls', '.xlsx', '.ppt'))]
             
             if audio_files:
                 st.info(f"Found {len(audio_files)} audio file(s) - will transcribe to text")
@@ -1076,9 +976,9 @@ with st.sidebar:
             batch_size = 3  # Process 3 files at a time
             success_count = 0
             
-            with st.spinner(f"Processing {len(all_files_to_process)} files..."):
-                for i in range(0, len(all_files_to_process), batch_size):
-                    batch = all_files_to_process[i:i+batch_size]
+            with st.spinner(f"Processing {len(uploaded_files)} files..."):
+                for i in range(0, len(uploaded_files), batch_size):
+                    batch = uploaded_files[i:i+batch_size]
                     batch_names = [f.name for f in batch]
                     
                     st.info(f"Processing batch {i//batch_size + 1}: {', '.join(batch_names)}")
@@ -1094,7 +994,7 @@ with st.sidebar:
                         logger.error(f"Error processing batch: {str(e)}")
             
             if success_count > 0:
-                st.success(f"Successfully processed {success_count}/{len(all_files_to_process)} files")
+                st.success(f"Successfully processed {success_count}/{len(uploaded_files)} files")
                 st.session_state.documents_loaded = True
                 st.session_state.processing_status = st.session_state.rag_system.file_handler.get_processing_status()
             else:
@@ -1260,96 +1160,6 @@ with st.sidebar:
             st.info("No audio transcriptions found. Upload an audio file to create transcriptions.")
     else:
         st.info("No file handler available. Upload an audio file first.")
-
-    # Add PDF Translation section
-    st.markdown("---")
-    st.subheader("PDF Translation")
-    
-    # Add formatting options
-    col1, col2 = st.columns(2)
-    with col1:
-        preserve_formatting = st.checkbox("Preserve Formatting", value=True, help="Keep bold, italic, headings, and layout structure")
-    with col2:
-        show_original = st.checkbox("Include Original Text", value=True, help="Include original text in the translated PDF")
-    
-    # Always show the button, but check for PDF files when clicked
-    translate_button = st.button("Translate PDF to French", use_container_width=True, type="primary")
-    
-    # Show status of available PDF files
-    if hasattr(st.session_state.rag_system, 'file_handler') and st.session_state.rag_system.file_handler:
-        saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
-        pdf_files = [path for path in saved_paths if path.lower().endswith('.pdf') and '_transcript.txt' not in path]
-        
-        if pdf_files:
-            st.success(f"✅ {len(pdf_files)} PDF file(s) available for translation")
-            for pdf_file in pdf_files:
-                st.caption(f"📄 {os.path.basename(pdf_file)}")
-        else:
-            st.warning("⚠️ No PDF files found. Upload a PDF file first.")
-    else:
-        st.warning("⚠️ No file handler available. Upload a PDF file first.")
-    
-    # Handle button click
-    if translate_button:
-        # Check if there are any PDF files available for translation
-        if hasattr(st.session_state.rag_system, 'file_handler') and st.session_state.rag_system.file_handler:
-            saved_paths = st.session_state.rag_system.file_handler.get_saved_pdf_paths()
-            pdf_files = [path for path in saved_paths if path.lower().endswith('.pdf') and '_transcript.txt' not in path]
-            
-            if pdf_files:
-                # Use the first PDF file found
-                pdf_path = pdf_files[0]
-                filename = os.path.basename(pdf_path)
-                
-                with st.spinner(f"Translating {filename} to French..."):
-                    # Check if method exists, if not use standalone approach
-                    if hasattr(st.session_state.rag_system, 'translate_uploaded_pdf_to_french'):
-                        # Use the RAG system's PDF translation method
-                        result = st.session_state.rag_system.translate_uploaded_pdf_to_french(pdf_path)
-                    else:
-                        # Fallback to standalone translation
-                        try:
-                            from local_draft import PDFTranslationProcessor
-                            translator = PDFTranslationProcessor()
-                            result = translator.translate_pdf_to_french(pdf_path)
-                        except Exception as e:
-                            st.error(f"Translation error: {str(e)}")
-                            result = {'success': False, 'error': str(e)}
-                    
-                    if result['success']:
-                        st.success(f"Translation completed! {result['characters_original']:,} → {result['characters_translated']:,} characters")
-                        
-                        # Create download button for translated PDF
-                        if os.path.exists(result['translated_pdf_path']):
-                            with open(result['translated_pdf_path'], "rb") as pdf_file:
-                                pdf_bytes = pdf_file.read()
-                            st.download_button(
-                                label=f"Download {result['translated_filename']}",
-                                data=pdf_bytes,
-                                file_name=result['translated_filename'],
-                                mime="application/pdf",
-                                use_container_width=True,
-                                key="download_translated_pdf"
-                            )
-                            
-                            # Show translation stats
-                            st.info(f"""
-                            **Translation Statistics:**
-                            - Original: {result['characters_original']:,} characters
-                            - Translated: {result['characters_translated']:,} characters
-                            - Date: {result['translation_date'][:19]}
-                            """)
-                        else:
-                            st.error("Translated PDF file not found")
-                    else:
-                        st.error(f"Translation failed: {result.get('error', 'Unknown error')}")
-            else:
-                st.error("No PDF files found. Please upload a PDF file first.")
-        else:
-            st.error("No file handler available. Please upload a PDF file first.")
-    
-    # Show info about the feature
-    st.caption("Upload a PDF file, then click this button to translate it to French and download the translated version.")
 
     # Session Management Section
     st.markdown("---")
