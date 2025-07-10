@@ -1329,13 +1329,10 @@ class VectorStore:
                 except Exception as e1:
                     logger.warning(f"Method 1 failed: {e1}")
                     try:
-                        # Method 2: Load normally then move to CPU with to_empty
+                        # Method 2: Load normally then move to CPU
                         VectorStore._model = SentenceTransformer('all-MiniLM-L6-v2')
-                        if hasattr(VectorStore._model, 'to_empty'):
-                            VectorStore._model.to_empty(device='cpu')
-                        else:
-                            VectorStore._model.to('cpu')
-                        logger.info("Method 2 successful: Used to_empty")
+                        VectorStore._model.to('cpu')
+                        logger.info("Method 2 successful: Loaded normally and moved to CPU")
                         
                     except Exception as e2:
                         logger.warning(f"Method 2 failed: {e2}")
@@ -1354,14 +1351,26 @@ class VectorStore:
                                 VectorStore._model.to('cpu')
                                 logger.info("Method 4 successful: Used alternative model")
                             except Exception as e4:
-                                logger.error(f"All methods failed. Last error: {e4}")
-                                self.initialized = False
-                                return
+                                logger.warning(f"Method 4 failed: {e4}")
+                                # Method 5: Try with even simpler model
+                                try:
+                                    VectorStore._model = SentenceTransformer('distiluse-base-multilingual-cased-v2')
+                                    VectorStore._model.to('cpu')
+                                    logger.info("Method 5 successful: Used multilingual model")
+                                except Exception as e5:
+                                    logger.error(f"All methods failed. Last error: {e5}")
+                                    self.initialized = False
+                                    return
                 
                 # Verify the model is working
                 try:
                     test_embedding = VectorStore._model.encode(['test'], convert_to_tensor=False)
-                    logger.info(f"Model test successful. Embedding shape: {test_embedding.shape}")
+                    if test_embedding is not None and len(test_embedding) > 0:
+                        logger.info(f"Model test successful. Embedding shape: {test_embedding.shape}")
+                    else:
+                        logger.error("Model test failed: Empty embedding returned")
+                        self.initialized = False
+                        return
                 except Exception as e:
                     logger.error(f"Model test failed: {e}")
                     self.initialized = False
@@ -1384,9 +1393,38 @@ class VectorStore:
                 logger.error("Model not initialized")
                 return None
 
+            # Validate input texts
+            if not texts or len(texts) == 0:
+                logger.error("No texts provided for embedding")
+                return None
+            
+            # Filter out empty texts
+            valid_texts = [text for text in texts if text and text.strip()]
+            if len(valid_texts) != len(texts):
+                logger.warning(f"Filtered out {len(texts) - len(valid_texts)} empty texts")
+
+            if not valid_texts:
+                logger.error("No valid texts after filtering")
+                return None
+
             # Get embeddings for all texts at once
-            embeddings = self.model.encode(texts, convert_to_tensor=False)
-            return embeddings.tolist() if hasattr(embeddings, 'tolist') else embeddings
+            embeddings = self.model.encode(valid_texts, convert_to_tensor=False)
+            
+            # Validate embeddings
+            if embeddings is None or len(embeddings) == 0:
+                logger.error("Model returned empty embeddings")
+                return None
+                
+            # Convert to list format
+            if hasattr(embeddings, 'tolist'):
+                embeddings = embeddings.tolist()
+            
+            # Ensure we have the right number of embeddings
+            if len(embeddings) != len(valid_texts):
+                logger.error(f"Embedding count mismatch: {len(embeddings)} embeddings for {len(valid_texts)} texts")
+                return None
+                
+            return embeddings
             
         except Exception as e:
             logger.error(f"Error getting Hugging Face embeddings: {str(e)}")
@@ -1813,7 +1851,7 @@ class QuestionHandler:
 
     def _is_french_question(self, text: str) -> bool:
         text_lower = text.lower()
-        french_words = ['le', 'la', 'les', 'un', 'une', 'des', 'et', 'ou', 'pour', 'avec', 'sur', 'dans', 'par', 'de', 'du', 'que', 'qui', 'quoi', 'comment', 'pourquoi', 'quand', 'où']
+        french_words = ['le', 'la', 'les', 'un', 'une', 'des', 'et', 'ou', 'pour', 'avec', 'sur', 'dans', 'par', 'de', 'du', 'que', 'qui', 'quoi', 'quoie', 'comment', 'pourquoi', 'quand', 'où']
         french_chars = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ô', 'ù', 'û', 'ç', 'î', 'ï']
         
         french_score = sum(1 for word in french_words if word in text_lower) + sum(1 for char in french_chars if char in text)
