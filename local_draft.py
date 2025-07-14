@@ -1509,7 +1509,7 @@ class VectorStore:
         )
 
 ### =================== Claude Handler =================== ###
-class OPENAIHandler:
+class ClaudeHandler:
     def __init__(self, system_prompt=None):
         self.api_url = "https://api.openai.com/v1/chat/completions"
         self.headers = {
